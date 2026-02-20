@@ -42,6 +42,13 @@ uv run cryptobot events status                # 查看事件监控配置
 uv run cryptobot backtest evaluate            # 评估近30天信号质量
 uv run cryptobot backtest evaluate --json-output  # JSON 格式输出
 uv run cryptobot backtest replay <signal_id>  # 单信号 K 线复盘
+uv run cryptobot doctor                       # 环境健康检查 (12项)
+uv run cryptobot doctor --json-output         # JSON 格式健康检查
+uv run cryptobot init                         # 初始化运行环境 (创建目录+.env+doctor)
+
+# Docker (Freqtrade + Dashboard)
+docker compose build                          # 构建镜像
+docker compose up -d                          # 启动服务
 ```
 
 ## 架构
@@ -80,12 +87,14 @@ execute                         5m 指标确认?
 | `indicators/multi_timeframe.py` | 多时间框架共振、量价分析、支撑阻力 |
 | `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API) |
 | `risk/` | 仓位计算(Kelly)、爆仓距离计算 |
-| `notify.py` | Telegram 通知：信号/风控/告警/错误推送（silent fallback） |
+| `notify.py` | Telegram 通知：信号/风控/告警/日报/错误推送（silent fallback） |
 | `journal/` | 交易记录与绩效：SignalRecord 生命周期 + 胜率/盈亏比/置信度校准 + prompt 注入 |
 | `events/` | 价格异动监控：30s 轮询检测 5min/15min 大幅波动 → 紧急复审 + 通知 |
-| `cli/scheduler.py` | APScheduler 调度器：5 个定时任务 + 可选事件监控线程 |
+| `cli/scheduler.py` | APScheduler 调度器：7 个定时任务(含日报 cron) + 可选事件监控线程 |
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
-| `cli/` | Click 命令组，13 个子命令 |
+| `cli/doctor.py` | 12 项环境健康检查（Python/TA-Lib/API/目录等） |
+| `cli/init_cmd.py` | 环境初始化：创建目录 + .env + 交互 API key + doctor |
+| `cli/` | Click 命令组，15 个子命令 |
 | `freqtrade_strategies/AgentSignalStrategy.py` | Freqtrade 策略：动态止损(含 Agent 尾随)、分批止盈(adjust_trade_position)、仓位控制 |
 
 ### 数据文件路径约定

@@ -1,0 +1,34 @@
+services:
+  freqtrade:
+    build: .
+    command: >
+      freqtrade trade
+      -c /app/config/freqtrade/config_dry_run.json
+      -s AgentSignalStrategy
+      --strategy-path /app/freqtrade_strategies
+    volumes:
+      - ./config:/app/config:ro
+      - ./data/output:/app/data/output
+      - ./user_data:/app/user_data
+      - ./freqtrade_strategies:/app/freqtrade_strategies:ro
+    ports:
+      - "8080:8080"
+    env_file: .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/ping"]
+      interval: 30s
+      retries: 3
+
+  dashboard:
+    build: .
+    command: cryptobot web start --host 0.0.0.0 --port 8000
+    volumes:
+      - ./config:/app/config:ro
+      - ./data/output:/app/data/output:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      freqtrade:
+        condition: service_healthy
+    restart: unless-stopped

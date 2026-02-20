@@ -16,6 +16,7 @@ from cryptobot.cli.scheduler import (
     job_workflow_run,
     _maybe_reload_config,
     _maybe_reschedule,
+    _format_daily_report,
 )
 
 
@@ -200,8 +201,8 @@ class TestDaemonCLI:
 
         assert result.exit_code == 0
         assert "调度器启动" in result.output
-        # 验证 6 个 job 被添加 (含 config_reload)
-        assert mock_sched.add_job.call_count == 6
+        # 验证 7 个 job 被添加 (含 config_reload + daily_report)
+        assert mock_sched.add_job.call_count == 7
         job_ids = {
             call.kwargs.get("id") or call[2].get("id")
             for call in mock_sched.add_job.call_args_list
@@ -211,6 +212,7 @@ class TestDaemonCLI:
         assert "re_review" in job_ids
         assert "cleanup" in job_ids
         assert "journal_sync" in job_ids
+        assert "daily_report" in job_ids
 
     @patch("cryptobot.cli.scheduler.job_check_alerts")
     @patch("cryptobot.cli.scheduler.job_workflow_run")
@@ -228,3 +230,52 @@ class TestDaemonCLI:
         assert result.exit_code == 0
         mock_workflow.assert_called_once()
         mock_alerts.assert_called_once()
+
+
+# ─── 每日绩效日报 ────────────────────────────────────────────────────────
+
+class TestDailyReport:
+    def test_format_daily_report_with_trades(self):
+        """有交易数据时应包含统计信息"""
+        today = {
+            "closed": 3,
+            "win_rate": 0.667,
+            "avg_pnl_pct": 0.77,
+            "total_pnl_usdt": 230,
+        }
+        weekly = {
+            "closed": 10,
+            "win_rate": 0.65,
+            "profit_factor": 1.9,
+            "total_pnl_usdt": 1200,
+        }
+        positions = [
+            {"pair": "BTC/USDT:USDT", "is_short": False, "leverage": 3, "profit_ratio": 0.015},
+            {"pair": "ETH/USDT:USDT", "is_short": True, "leverage": 2, "profit_ratio": -0.003},
+        ]
+        accuracy = {
+            "technical": {"total": 20, "correct": 14, "accuracy": 0.72},
+            "onchain": {"total": 15, "correct": 10, "accuracy": 0.65},
+            "sentiment": {"total": 10, "correct": 5, "accuracy": 0.48},
+            "fundamental": {"total": 12, "correct": 7, "accuracy": 0.60},
+        }
+
+        text = _format_daily_report(today, weekly, positions, accuracy)
+
+        assert "日报" in text
+        assert "3 笔" in text
+        assert "BTCUSDT LONG 3x" in text
+        assert "ETHUSDT SHORT 2x" in text
+        assert "technical 72%" in text
+        assert "持仓 2 个" in text
+
+    def test_format_daily_report_empty(self):
+        """无交易数据时输出简洁格式"""
+        today = {"closed": 0, "win_rate": 0, "avg_pnl_pct": 0, "total_pnl_usdt": 0}
+        weekly = {"closed": 0, "win_rate": 0, "profit_factor": 0, "total_pnl_usdt": 0}
+
+        text = _format_daily_report(today, weekly, [], {})
+
+        assert "日报" in text
+        assert "今日无交易记录" in text
+        assert "持仓: 0 个" in text

@@ -109,6 +109,11 @@ def notify_alert(level: str, message: str) -> bool:
     return send_message(text)
 
 
+def notify_daily_report(text: str) -> bool:
+    """通知: 每日绩效日报"""
+    return send_message(text, parse_mode="Markdown")
+
+
 def notify_workflow_error(error_count: int, errors: list[str]) -> bool:
     """通知: 工作流异常"""
     detail = "\n".join(f"• {e[:100]}" for e in errors[:5])

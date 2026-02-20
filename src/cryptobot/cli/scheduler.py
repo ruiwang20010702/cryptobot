@@ -187,6 +187,87 @@ def job_cleanup() -> None:
         logger.error("[调度] 清理失败: %s", e, exc_info=True)
 
 
+def _format_daily_report(today: dict, weekly: dict,
+                         positions: list, accuracy: dict) -> str:
+    """格式化每日绩效报告"""
+    from datetime import date
+
+    lines = [f"\U0001f4ca CryptoBot 日报 ({date.today().isoformat()})"]
+
+    # 今日统计
+    t_closed = today.get("closed", 0)
+    if t_closed > 0:
+        t_wins = round(today.get("win_rate", 0) * t_closed)
+        t_losses = t_closed - t_wins
+        t_pnl_pct = today.get("avg_pnl_pct", 0) * t_closed
+        t_pnl_usdt = today.get("total_pnl_usdt", 0)
+        lines.append("")
+        lines.append(
+            f"今日: {t_closed} 笔 ({t_wins}胜 {t_losses}负) "
+            f"{t_pnl_pct:+.1f}% ({t_pnl_usdt:+.0f} USDT)"
+        )
+    else:
+        lines.append("")
+        lines.append("今日无交易记录")
+
+    # 本周统计
+    w_closed = weekly.get("closed", 0)
+    if w_closed > 0:
+        w_wr = weekly.get("win_rate", 0) * 100
+        w_pf = weekly.get("profit_factor", 0)
+        w_pnl_usdt = weekly.get("total_pnl_usdt", 0)
+        lines.append(
+            f"本周: 胜率 {w_wr:.0f}% 盈亏比 {w_pf}:1 {w_pnl_usdt:+.0f} USDT"
+        )
+
+    # 持仓列表
+    if positions:
+        lines.append(f"\n持仓 {len(positions)} 个:")
+        for p in positions:
+            pair = p.get("pair", "?")
+            symbol = pair.replace("/", "").replace(":USDT", "")
+            is_short = p.get("is_short", False)
+            direction = "SHORT" if is_short else "LONG"
+            leverage = p.get("leverage", "?")
+            profit = (p.get("profit_ratio", 0) or 0) * 100
+            lines.append(f"  {symbol} {direction} {leverage}x {profit:+.1f}%")
+    else:
+        lines.append("\n持仓: 0 个")
+
+    # 分析师准确率
+    if accuracy:
+        parts = []
+        for role in ("technical", "onchain", "sentiment", "fundamental"):
+            info = accuracy.get(role)
+            if info and info.get("total", 0) > 0:
+                acc_pct = info.get("accuracy", 0) * 100
+                parts.append(f"{role} {acc_pct:.0f}%")
+        if parts:
+            lines.append(f"\n分析师30天: {' | '.join(parts)}")
+
+    return "\n".join(lines)
+
+
+def job_daily_report() -> None:
+    """定时: 每日绩效日报推送 Telegram"""
+    from cryptobot.journal.analytics import calc_performance, calc_analyst_accuracy
+    from cryptobot.freqtrade_api import ft_api_get
+    from cryptobot.notify import send_message
+
+    try:
+        today = calc_performance(days=1)
+        weekly = calc_performance(days=7)
+        positions = ft_api_get("/status") or []
+        accuracy = calc_analyst_accuracy(days=30)
+
+        text = _format_daily_report(today, weekly, positions, accuracy)
+        if text:
+            send_message(text)
+        logger.info("[调度] 日报已推送")
+    except Exception as e:
+        logger.error("[调度] 日报推送失败: %s", e, exc_info=True)
+
+
 def job_journal_sync() -> None:
     """定时: 同步 Freqtrade 平仓数据到交易日志"""
     from cryptobot.journal.storage import get_records_by_status, update_record
@@ -306,6 +387,16 @@ def start(run_now: bool, verbose: bool):
         minutes=30,
         id="journal_sync",
         name="交易日志同步 (每30min)",
+        max_instances=1,
+    )
+
+    # 每日绩效日报: UTC 0:05
+    scheduler.add_job(
+        job_daily_report,
+        "cron",
+        hour=0, minute=5,
+        id="daily_report",
+        name="每日绩效日报",
         max_instances=1,
     )
 

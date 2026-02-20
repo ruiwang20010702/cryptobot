@@ -14,6 +14,8 @@ from cryptobot.cli.journal import journal
 from cryptobot.cli.events import events
 from cryptobot.cli.backtest import backtest
 from cryptobot.cli.web import web
+from cryptobot.cli.doctor import doctor
+from cryptobot.cli.init_cmd import init_cmd
 
 
 @click.group()
@@ -35,3 +37,5 @@ cli.add_command(journal)
 cli.add_command(events)
 cli.add_command(backtest)
 cli.add_command(web)
+cli.add_command(doctor)
+cli.add_command(init_cmd)

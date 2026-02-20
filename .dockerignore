@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+logs/
+.env
+user_data/data/
+data/output/
+tests/
+docs/
+deploy/
