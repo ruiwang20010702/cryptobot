@@ -25,6 +25,16 @@ from cryptobot.cli.workflow import workflow
 # ─── llm wrapper ─────────────────────────────────────────────────────────
 
 class TestCallClaude:
+    def setup_method(self):
+        """固定 provider 为 claude，避免路由到 API 后端"""
+        from cryptobot.workflow import llm as llm_mod
+        self._original_cache = llm_mod._provider_cache
+        llm_mod._provider_cache = "claude"
+
+    def teardown_method(self):
+        from cryptobot.workflow import llm as llm_mod
+        llm_mod._provider_cache = self._original_cache
+
     @patch("cryptobot.workflow.llm.subprocess.run")
     def test_returns_parsed_json(self, mock_run):
         """claude 返回 JSON 时应解析为 dict"""

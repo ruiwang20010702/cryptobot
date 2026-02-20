@@ -6,6 +6,27 @@ from pathlib import Path
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _load_dotenv() -> None:
+    """从项目根目录加载 .env 文件（不覆盖已有环境变量）"""
+    env_path = PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if not os.environ.get(key):
+            os.environ[key] = value
+
+
+_load_dotenv()
 CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
 FREQTRADE_DATA_DIR = PROJECT_ROOT / "user_data" / "data" / "binance" / "futures"

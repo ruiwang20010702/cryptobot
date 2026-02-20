@@ -29,6 +29,24 @@ MAX_RETRIES = 3         # 最大重试次数
 RETRY_BASE_DELAY = 10   # 重试基础延迟 (秒)
 
 
+_provider_cache: str | None = None
+
+
+def _get_provider() -> str:
+    """读取 settings.yaml 中的 llm.provider，默认 'claude'"""
+    global _provider_cache
+    if _provider_cache is None:
+        from cryptobot.config import load_settings
+        _provider_cache = load_settings().get("llm", {}).get("provider", "claude")
+    return _provider_cache
+
+
+def reset_provider_cache() -> None:
+    """重置 provider 缓存，用于测试或动态切换"""
+    global _provider_cache
+    _provider_cache = None
+
+
 def call_claude(
     prompt: str,
     *,
@@ -38,7 +56,7 @@ def call_claude(
     max_budget: float | None = None,
     _retries: int = MAX_RETRIES,
 ) -> dict | str:
-    """调用 Claude CLI，返回解析后的 JSON 或原始文本。
+    """调用 LLM，根据配置路由到 Claude CLI 或 OpenAI 兼容 API。
 
     内置重试机制: 遇到速率限制或临时错误时自动指数退避重试。
 
@@ -47,12 +65,20 @@ def call_claude(
         model: 模型名 (haiku / sonnet)
         system_prompt: 系统提示词
         json_schema: JSON Schema 约束输出格式
-        max_budget: 单次预算上限 (USD)
+        max_budget: 单次预算上限 (USD)，仅 Claude CLI 模式有效
         _retries: 剩余重试次数 (内部使用)
 
     Returns:
         解析后的 dict（如果输出是 JSON）或原始字符串
     """
+    # 路由: 如果配置了 API provider，走 api_llm
+    if _get_provider() == "api":
+        from cryptobot.workflow.api_llm import call_api
+        return call_api(
+            prompt, model=model, system_prompt=system_prompt,
+            json_schema=json_schema, _retries=_retries,
+        )
+
     if max_budget is None:
         max_budget = BUDGET_DEFAULT
 

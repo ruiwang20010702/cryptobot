@@ -114,6 +114,42 @@ market_regime:
     max_leverage: 2           # 高波动最大杠杆
     trailing_stop: true       # 启用尾随止损
 
+# LLM 提供商配置
+llm:
+  provider: "api"                 # "claude" (CLI) 或 "api" (OpenAI 兼容)
+  api:
+    base_url: "https://api.deepseek.com/v1"
+    api_key_env: "DEEPSEEK_API_KEY"   # 从此环境变量读取 API key
+    models:                           # 逻辑名 → 实际模型名映射
+      haiku: "deepseek-chat"          # 轻量分析用
+      sonnet: "deepseek-chat"         # 深度推理用
+    max_concurrent: 10                # API 并发数
+    timeout: 60                       # 单次请求超时 (秒)
+  # 常见配置示例:
+  # DeepSeek Reasoner:
+  #   base_url: "https://api.deepseek.com/v1"
+  #   models: { haiku: "deepseek-chat", sonnet: "deepseek-reasoner" }
+  # OpenAI:
+  #   base_url: "https://api.openai.com/v1"
+  #   api_key_env: "OPENAI_API_KEY"
+  #   models: { haiku: "gpt-4o-mini", sonnet: "gpt-4o" }
+  # Groq:
+  #   base_url: "https://api.groq.com/openai/v1"
+  #   api_key_env: "GROQ_API_KEY"
+  #   models: { haiku: "llama-3.1-8b-instant", sonnet: "llama-3.3-70b-versatile" }
+  # 智谱 (GLM):
+  #   base_url: "https://open.bigmodel.cn/api/paas/v4"
+  #   api_key_env: "ZHIPU_API_KEY"
+  #   models: { haiku: "glm-4-flash", sonnet: "glm-4-plus" }
+  # MiniMax:
+  #   base_url: "https://api.minimax.chat/v1/text"
+  #   api_key_env: "MINIMAX_API_KEY"
+  #   models: { haiku: "MiniMax-Text-01", sonnet: "MiniMax-Text-01" }
+  # Ollama 本地:
+  #   base_url: "http://localhost:11434/v1"
+  #   api_key_env: ""
+  #   models: { haiku: "qwen2.5:7b", sonnet: "qwen2.5:32b" }
+
 # 实时入场监控
 realtime:
   enabled: false                    # 默认关闭，向后兼容

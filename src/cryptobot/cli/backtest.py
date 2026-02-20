@@ -81,6 +81,84 @@ def evaluate(days: int, json_output: bool):
         console.print(f"  最大连败: {streak.get('max_consecutive_losses', 0)}")
 
 
+@backtest.command("simulate")
+@click.option("--days", default=14, help="模拟天数")
+@click.option("--interval", default=12, help="分析间隔(小时)")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+@click.confirmation_option(prompt="模拟需要大量 Claude 调用，确认开始?")
+def simulate(days: int, interval: int, json_output: bool):
+    """历史回放模拟: 用过去数据跑 AI 工作流并评估"""
+    from cryptobot.backtest.simulator import run_simulation
+
+    total_cycles = days * 24 // interval
+    console.print("\n[bold]历史回放模拟[/bold]")
+    console.print(f"  回溯: {days} 天 | 间隔: {interval}h | 共 {total_cycles} 个周期\n")
+
+    def on_cycle(idx, total, as_of, signals):
+        n_sig = len(signals)
+        ts = as_of.strftime("%Y-%m-%d %H:%M")
+        console.print(f"  [{idx + 1}/{total}] {ts} — {n_sig} 信号")
+
+    console.print("下载历史 K 线...")
+    result = run_simulation(days=days, interval_hours=interval, on_cycle_done=on_cycle)
+
+    if json_output:
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return
+
+    overview = result.get("overview", {})
+    total = overview.get("total", 0)
+    console.print(f"\n模拟完成! 共 {total} 信号\n")
+
+    if total == 0:
+        console.print("[yellow]无信号生成[/yellow]")
+        return
+
+    console.print(f"总信号: {total}")
+    console.print(f"止损触发: {overview.get('sl_hit', 0)} ({overview.get('sl_hit', 0) / total * 100:.0f}%)")
+    tp_any = overview.get("tp_hit_any", 0)
+    console.print(f"止盈触发: {tp_any} ({tp_any / total * 100:.0f}%)")
+    console.print(f"胜率(MFE): {overview.get('win_rate_by_mfe', 0) * 100:.0f}%")
+    console.print(f"平均 MFE: +{overview.get('avg_mfe_pct', 0):.1f}%")
+    console.print(f"平均 MAE: -{overview.get('avg_mae_pct', 0):.1f}%")
+
+    # 按币种
+    by_symbol = result.get("by_symbol", {})
+    if by_symbol:
+        table = Table(title="按币种")
+        table.add_column("币种")
+        table.add_column("笔数", justify="right")
+        table.add_column("胜率", justify="right")
+        table.add_column("MFE", justify="right")
+        table.add_column("MAE", justify="right")
+        for sym, stats in by_symbol.items():
+            table.add_row(
+                sym, str(stats["count"]),
+                f"{stats['win_rate'] * 100:.0f}%",
+                f"+{stats['avg_mfe_pct']:.1f}%",
+                f"-{stats['avg_mae_pct']:.1f}%",
+            )
+        console.print(table)
+
+    # 按方向
+    by_dir = result.get("by_direction", {})
+    if by_dir:
+        dir_table = Table(title="按方向")
+        dir_table.add_column("方向")
+        dir_table.add_column("笔数", justify="right")
+        dir_table.add_column("胜率", justify="right")
+        dir_table.add_column("MFE", justify="right")
+        dir_table.add_column("MAE", justify="right")
+        for d, stats in by_dir.items():
+            dir_table.add_row(
+                d, str(stats["count"]),
+                f"{stats['win_rate'] * 100:.0f}%",
+                f"+{stats['avg_mfe_pct']:.1f}%",
+                f"-{stats['avg_mae_pct']:.1f}%",
+            )
+        console.print(dir_table)
+
+
 @backtest.command("ab-test")
 @click.option("--days", default=90, help="回溯天数")
 @click.option("--json-output", is_flag=True, help="JSON 输出")

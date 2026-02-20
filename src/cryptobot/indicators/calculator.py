@@ -6,6 +6,7 @@
 
 import logging
 import math
+from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,21 @@ from cryptobot.config import FREQTRADE_DATA_DIR, FREQTRADE_DATA_DIR_ALT
 logger = logging.getLogger(__name__)
 
 BINANCE_FAPI = "https://fapi.binance.com"
+
+# ─── 历史模拟: K 线数据覆盖 ──────────────────────────────────────────────
+
+_klines_override: dict[tuple[str, str], pd.DataFrame] | None = None
+
+
+@contextmanager
+def klines_override(cache: dict[tuple[str, str], pd.DataFrame]):
+    """临时覆盖 load_klines 数据源，用于历史模拟"""
+    global _klines_override
+    _klines_override = cache
+    try:
+        yield
+    finally:
+        _klines_override = None
 
 # 缓存 TTL (秒): 不同时间框架不同间隔
 _CACHE_TTL = {
@@ -72,8 +88,40 @@ def _fetch_klines_from_api(
     return df
 
 
+def download_klines(symbol: str, timeframe: str, limit: int = 500) -> pd.DataFrame:
+    """从 Binance API 下载历史 K 线（不走缓存，用于历史模拟）"""
+    import httpx
+
+    resp = httpx.get(
+        f"{BINANCE_FAPI}/fapi/v1/klines",
+        params={"symbol": symbol, "interval": timeframe, "limit": limit},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    raw = resp.json()
+
+    records = [
+        {
+            "datetime": k[0],
+            "open": float(k[1]),
+            "high": float(k[2]),
+            "low": float(k[3]),
+            "close": float(k[4]),
+            "volume": float(k[5]),
+        }
+        for k in raw
+    ]
+    df = pd.DataFrame(records)
+    df["datetime"] = pd.to_datetime(df["datetime"], unit="ms")
+    df = df.set_index("datetime")
+    return df
+
+
 def load_klines(symbol: str = "BTCUSDT", timeframe: str = "4h") -> pd.DataFrame:
-    """加载 K 线数据: 优先本地 feather，回退 Binance API"""
+    """加载 K 线数据: 优先 override → 本地 feather → Binance API"""
+    if _klines_override and (symbol, timeframe) in _klines_override:
+        return _klines_override[(symbol, timeframe)]
+
     # 1) 尝试本地 Freqtrade feather 文件
     base = symbol.replace("USDT", "")
     filename = f"{base}_USDT_USDT-{timeframe}-futures.feather"
