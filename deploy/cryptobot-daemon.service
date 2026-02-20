@@ -1,0 +1,28 @@
+[Unit]
+Description=CryptoBot AI Trading Daemon
+After=network.target freqtrade.service
+Wants=freqtrade.service
+
+[Service]
+Type=simple
+User=ruiwang
+WorkingDirectory=/Users/ruiwang/Desktop/bian
+EnvironmentFile=/Users/ruiwang/Desktop/bian/.env
+ExecStart=/Users/ruiwang/Desktop/bian/.venv/bin/cryptobot daemon start
+Restart=on-failure
+RestartSec=30
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cryptobot
+
+# 安全
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/Users/ruiwang/Desktop/bian/data
+
+[Install]
+WantedBy=multi-user.target

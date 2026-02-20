@@ -1,0 +1,206 @@
+"""实时入场监控
+
+轮询 Binance 价格，等待 pending 信号价格进入 entry_price_range 后，
+经 5m 指标确认再写入 signal.json 供 Freqtrade 执行。
+"""
+
+import logging
+import time
+from datetime import datetime, timezone, timedelta
+
+import httpx
+import numpy as np
+import pandas as pd
+
+from cryptobot.config import (
+    load_settings,
+    FREQTRADE_DATA_DIR,
+    FREQTRADE_DATA_DIR_ALT,
+)
+from cryptobot.signal.bridge import (
+    read_pending_signals,
+    remove_pending_signal,
+    write_signal,
+)
+
+logger = logging.getLogger(__name__)
+
+BINANCE_TICKER_URL = "https://fapi.binance.com/fapi/v1/ticker/price"
+
+
+def _fetch_price(symbol: str) -> float | None:
+    """从 Binance 获取最新价格"""
+    try:
+        resp = httpx.get(
+            BINANCE_TICKER_URL,
+            params={"symbol": symbol},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return float(resp.json()["price"])
+    except Exception as e:
+        logger.warning("获取 %s 价格失败: %s", symbol, e)
+        return None
+
+
+def _check_entry(signal: dict, price: float, tolerance_pct: float = 0.1) -> bool:
+    """判断当前价格是否在 entry_price_range 内（含容忍度）"""
+    entry_range = signal.get("entry_price_range")
+    if not entry_range or len(entry_range) != 2:
+        # 无入场区间，直接通过
+        return True
+
+    low, high = entry_range
+    if low is None or high is None:
+        return True
+
+    # 容忍度扩展
+    margin = (high - low) * tolerance_pct / 100 if tolerance_pct else 0
+    return (low - margin) <= price <= (high + margin)
+
+
+def _load_5m_indicators(symbol: str) -> dict | None:
+    """读取 Freqtrade 5m feather 数据，计算 RSI14 + EMA7/EMA25"""
+    try:
+        import talib
+    except ImportError:
+        logger.warning("TA-Lib 未安装，跳过指标确认")
+        return None
+
+    base = symbol.replace("USDT", "")
+    filename = f"{base}_USDT_USDT-5m-futures.feather"
+    path = FREQTRADE_DATA_DIR / filename
+    if not path.exists():
+        path = FREQTRADE_DATA_DIR_ALT / filename
+    if not path.exists():
+        logger.warning("5m 数据不存在: %s", filename)
+        return None
+
+    df = pd.read_feather(path)
+    close = df["close"].values.astype(np.float64)
+
+    if len(close) < 30:
+        return None
+
+    rsi = talib.RSI(close, timeperiod=14)
+    ema7 = talib.EMA(close, timeperiod=7)
+    ema25 = talib.EMA(close, timeperiod=25)
+
+    return {
+        "rsi": float(rsi[-1]) if not np.isnan(rsi[-1]) else None,
+        "ema7": float(ema7[-1]) if not np.isnan(ema7[-1]) else None,
+        "ema25": float(ema25[-1]) if not np.isnan(ema25[-1]) else None,
+    }
+
+
+def _confirm_indicators(symbol: str, action: str) -> bool:
+    """5m 指标确认：RSI 不极端 + EMA7 方向与交易方向一致"""
+    indicators = _load_5m_indicators(symbol)
+    if indicators is None:
+        # 无法加载指标时通过（降级处理）
+        return True
+
+    rsi = indicators.get("rsi")
+    ema7 = indicators.get("ema7")
+    ema25 = indicators.get("ema25")
+
+    if rsi is None or ema7 is None or ema25 is None:
+        return True
+
+    if action == "long":
+        if rsi >= 75:
+            logger.info("%s RSI=%.1f 严重超买，暂不入场", symbol, rsi)
+            return False
+        if ema7 <= ema25:
+            logger.info("%s EMA7 <= EMA25，短期趋势向下，暂不做多", symbol)
+            return False
+    elif action == "short":
+        if rsi <= 25:
+            logger.info("%s RSI=%.1f 严重超卖，暂不入场", symbol, rsi)
+            return False
+        if ema7 >= ema25:
+            logger.info("%s EMA7 >= EMA25，短期趋势向上，暂不做空", symbol)
+            return False
+
+    return True
+
+
+def _promote_signal(signal: dict) -> None:
+    """将 pending 信号写入 signal.json，供 Freqtrade 读取"""
+    write_signal(signal)
+    remove_pending_signal(signal["symbol"])
+
+    # 更新交易日志: pending → active
+    try:
+        from cryptobot.journal.storage import find_active_record_for_symbol, update_record
+        record = find_active_record_for_symbol(signal["symbol"])
+        if record:
+            update_record(record.signal_id, status="active")
+    except Exception as e:
+        logger.warning("更新交易日志失败: %s", e)
+
+
+def run_monitor() -> None:
+    """主循环：每 N 秒轮询，检查所有 pending 信号"""
+    settings = load_settings()
+    rt_cfg = settings.get("realtime", {})
+    poll_interval = rt_cfg.get("poll_interval_seconds", 10)
+    tolerance_pct = rt_cfg.get("price_tolerance_pct", 0.1)
+    require_confirm = rt_cfg.get("require_indicator_confirm", True)
+    max_wait = rt_cfg.get("max_wait_minutes", 120)
+
+    logger.info(
+        "实时监控启动: 轮询=%ds, 容忍度=%.1f%%, 指标确认=%s, 最大等待=%dmin",
+        poll_interval, tolerance_pct, require_confirm, max_wait,
+    )
+
+    while True:
+        try:
+            pending = read_pending_signals(filter_expired=False)
+            if not pending:
+                time.sleep(poll_interval)
+                continue
+
+            now = datetime.now(timezone.utc)
+
+            for signal in pending:
+                symbol = signal["symbol"]
+
+                # 1. 过期检查 (expires_at 或 max_wait)
+                expires_at = datetime.fromisoformat(signal["expires_at"])
+                created_at = datetime.fromisoformat(signal["timestamp"])
+                wait_deadline = created_at + timedelta(minutes=max_wait)
+                if now > expires_at or now > wait_deadline:
+                    logger.info("信号过期: %s", symbol)
+                    remove_pending_signal(symbol)
+                    continue
+
+                # 2. 获取当前价
+                price = _fetch_price(symbol)
+                if price is None:
+                    continue
+
+                # 3. 价格在入场区间内？
+                if not _check_entry(signal, price, tolerance_pct):
+                    entry_range = signal.get("entry_price_range", [])
+                    logger.debug(
+                        "%s 价格 %.2f 不在入场区间 %s", symbol, price, entry_range
+                    )
+                    continue
+
+                # 4. 5m 指标确认
+                if require_confirm:
+                    if not _confirm_indicators(symbol, signal.get("action", "")):
+                        continue
+
+                # 5. 写入 signal.json
+                _promote_signal(signal)
+                logger.info("信号激活: %s @ %.2f", symbol, price)
+
+        except KeyboardInterrupt:
+            logger.info("监控停止")
+            break
+        except Exception as e:
+            logger.error("监控循环异常: %s", e, exc_info=True)
+
+        time.sleep(poll_interval)

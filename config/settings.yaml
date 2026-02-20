@@ -1,0 +1,123 @@
+# 加密货币合约量化交易系统 - 全局配置
+# 敏感信息请设置环境变量，不要直接写入此文件
+
+system:
+  name: "CryptoBot"
+  version: "0.1.0"
+  log_level: "INFO"
+
+# Binance API (通过环境变量设置)
+# BINANCE_API_KEY, BINANCE_API_SECRET
+binance:
+  futures: true
+  margin_mode: "isolated"  # isolated / cross
+  testnet: false
+
+# 外部数据 API (通过环境变量设置)
+# COINGLASS_API_KEY, CRYPTOQUANT_API_KEY
+data_sources:
+  coinglass:
+    base_url: "https://open-api-v3.coinglass.com"
+    cache_ttl: 900  # 15 分钟
+  fear_greed:
+    base_url: "https://api.alternative.me/fng"
+    cache_ttl: 3600  # 1 小时
+  news:
+    cache_ttl: 1800  # 30 分钟
+  cryptonews_api:
+    base_url: "https://cryptonews-api.com/api/v1"
+    cache_ttl: 1800  # 30 分钟
+
+# 风控参数
+risk:
+  max_leverage: 5
+  max_single_position_pct: 25       # 单币种最大仓位 (保证金占比 %)
+  max_total_position_pct: 80        # 总持仓上限 (保证金占比 %)
+  min_cash_reserve_pct: 20          # 最低现金保留 %
+  max_same_category_pct: 40         # 同类别最大仓位 %
+  max_same_direction_pct: 50        # 同方向总仓位上限 %
+  max_correlated_same_direction: 3  # 高相关组内同向持仓上限
+
+  # 止损规则
+  stoploss:
+    low_volatility_pct: 3           # ATR/价格 < 1.5%
+    mid_volatility_pct: 4           # ATR/价格 1.5-3%
+    high_volatility_pct: 5          # ATR/价格 > 3%
+
+  # 最大亏损限制
+  max_loss:
+    per_trade_pct: 2                # 单笔最大亏损
+    daily_pct: 5                    # 日度最大亏损
+    weekly_pct: 8                   # 周度最大亏损
+    monthly_drawdown_pct: 15        # 月度最大回撤 → 暂停 24h
+
+  # 爆仓预警阈值
+  liquidation_alert:
+    safe: 50          # > 50% 安全
+    caution: 30       # 30-50% 注意
+    warning: 20       # 20-30% 警告 → Telegram 告警
+    danger: 10        # 10-20% 危险 → 自动减仓 50%
+    critical: 10      # < 10% 紧急 → 自动全部平仓
+
+# 分析调度
+schedule:
+  full_cycle_hours: 2               # 完整分析周期间隔
+  monitor_interval_minutes: 5       # 监控检查间隔
+  re_review_hours: 4                # 持仓复审间隔
+  cleanup_hours: 24                 # 过期信号清理间隔
+  quick_scan_coins: 10              # 快速筛选币种数
+  deep_analysis_coins: 5            # 深度分析币种数
+
+# Telegram 通知 (通过环境变量或此处配置)
+# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+telegram:
+  enabled: false
+  bot_token: ""       # 或设置环境变量 TELEGRAM_BOT_TOKEN
+  chat_id: ""         # 或设置环境变量 TELEGRAM_CHAT_ID
+
+# 信号配置
+signal:
+  output_dir: "data/output/signals"
+  signal_file: "signal.json"
+  expiry_hours: 2                   # 信号过期时间
+
+# Freqtrade
+freqtrade:
+  config_path: "config/freqtrade/config.json"
+  dry_run_config_path: "config/freqtrade/config_dry_run.json"
+  username: "freqtrader"
+  password: ""
+  api_server:
+    host: "127.0.0.1"
+    port: 8080
+
+# 价格异动事件监控
+events:
+  enabled: false                    # 默认关闭
+  poll_interval_seconds: 30         # 轮询间隔
+  threshold_5min_pct: 3.0           # 5 分钟涨跌幅触发阈值
+  threshold_15min_pct: 5.0          # 15 分钟涨跌幅触发阈值
+  cooldown_minutes: 30              # 同币种同窗口冷却时间
+
+# 市场状态策略参数 (可覆盖 _REGIME_PARAMS 默认值)
+market_regime:
+  trending:
+    min_confidence: 55        # 趋势市最低置信度
+    max_leverage: 5           # 趋势市最大杠杆
+    trailing_stop: true       # 启用尾随止损
+  ranging:
+    min_confidence: 65        # 震荡市最低置信度
+    max_leverage: 3           # 震荡市最大杠杆
+    trailing_stop: false      # 不启用尾随
+  volatile:
+    min_confidence: 70        # 高波动最低置信度
+    max_leverage: 2           # 高波动最大杠杆
+    trailing_stop: true       # 启用尾随止损
+
+# 实时入场监控
+realtime:
+  enabled: false                    # 默认关闭，向后兼容
+  poll_interval_seconds: 10         # 轮询间隔
+  price_tolerance_pct: 0.1          # 价格容忍度（entry_range 外 0.1% 也算进入）
+  require_indicator_confirm: true   # 是否需要 5m 指标确认
+  max_wait_minutes: 120             # 单信号最长等待时间（超过则放弃）

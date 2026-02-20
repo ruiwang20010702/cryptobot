@@ -1,0 +1,98 @@
+# Top 10 永续合约交易对配置 (USDT 保证金)
+
+pairs:
+  - symbol: BTCUSDT
+    base: BTC
+    leverage_range: [1, 5]
+    default_leverage: 3
+    min_amount_usdt: 100
+    category: store_of_value
+
+  - symbol: ETHUSDT
+    base: ETH
+    leverage_range: [1, 5]
+    default_leverage: 3
+    min_amount_usdt: 50
+    category: smart_contract
+
+  - symbol: SOLUSDT
+    base: SOL
+    leverage_range: [1, 3]
+    default_leverage: 2
+    min_amount_usdt: 50
+    category: layer1
+
+  - symbol: XRPUSDT
+    base: XRP
+    leverage_range: [1, 3]
+    default_leverage: 2
+    min_amount_usdt: 50
+    category: payment
+
+  - symbol: BNBUSDT
+    base: BNB
+    leverage_range: [1, 3]
+    default_leverage: 2
+    min_amount_usdt: 50
+    category: exchange
+
+  - symbol: ADAUSDT
+    base: ADA
+    leverage_range: [1, 3]
+    default_leverage: 2
+    min_amount_usdt: 50
+    category: layer1
+
+  - symbol: DOGEUSDT
+    base: DOGE
+    leverage_range: [1, 2]
+    default_leverage: 2
+    min_amount_usdt: 50
+    category: meme
+
+  - symbol: AVAXUSDT
+    base: AVAX
+    leverage_range: [1, 3]
+    default_leverage: 2
+    min_amount_usdt: 50
+    category: layer1
+
+  - symbol: LINKUSDT
+    base: LINK
+    leverage_range: [1, 3]
+    default_leverage: 2
+    min_amount_usdt: 50
+    category: oracle
+
+  - symbol: SUIUSDT
+    base: SUI
+    leverage_range: [1, 3]
+    default_leverage: 2
+    min_amount_usdt: 50
+    category: layer1
+
+# BTC 相关性分组 (用于组合风控)
+correlation_groups:
+  high:   # 与 BTC 相关性 > 0.8
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - LINKUSDT
+    - SUIUSDT
+  medium: # 0.5-0.8
+    - BNBUSDT
+    - XRPUSDT
+  low:    # < 0.5
+    - DOGEUSDT
+
+# 类别限制 (同类别最大仓位不超过总资金 40%)
+categories:
+  store_of_value: [BTCUSDT]
+  smart_contract: [ETHUSDT]
+  layer1: [SOLUSDT, ADAUSDT, AVAXUSDT, SUIUSDT]
+  payment: [XRPUSDT]
+  exchange: [BNBUSDT]
+  meme: [DOGEUSDT]
+  oracle: [LINKUSDT]
