@@ -389,6 +389,218 @@ cryptobot backtest ab-test --days 30
 
 ---
 
+## P6 路线图 — 自我进化
+
+> 基于 P5 积累的交易数据，实现系统自动学习和优化，逐步减少人工干预。
+
+### 第一层: 分析师级进化
+
+#### 11.1 分析师动态权重
+
+当前分析师准确率已有追踪（`calc_analyst_accuracy()`），但仅注入 prompt 供参考。改进为自动化闭环:
+
+- 每日统计各分析师近 30 天准确率
+- 准确率 < 45% 的分析师自动降权（trade prompt 中标注"近期准确率偏低，仅供参考"）
+- 准确率 > 70% 的分析师自动升权（trade prompt 中标注"近期表现优异，重点参考"）
+- 权重变化记录到 `data/output/evolution/weights.json`
+
+#### 11.2 分析师级模型选择
+
+利用 LLM 抽象层，为不同角色分配最优模型:
+
+```yaml
+# config/settings.yaml
+llm:
+  role_models:                        # 按角色指定模型 (可选，覆盖默认)
+    technical_analyst: "deepseek-chat"
+    sentiment_analyst: "deepseek-chat"
+    bull_researcher: "deepseek-reasoner"
+    bear_researcher: "deepseek-reasoner"
+    trader: "deepseek-reasoner"
+    risk_reviewer: "deepseek-reasoner"
+```
+
+- `call_claude()` 新增 `role` 参数，根据 `role_models` 映射实际模型
+- 默认不配置时走全局 `models.haiku/sonnet` 映射（向后兼容）
+- 支持为同一角色配置不同厂商（如技术分析用 DeepSeek，研究辩论用 Claude）
+
+### 第二层: 市场状态自适应
+
+#### 11.3 Prompt 集按市场状态切换
+
+当前 `market_regime` 仅影响杠杆和置信度阈值。扩展为 prompt 集切换:
+
+```yaml
+# config/settings.yaml
+market_regime:
+  trending:
+    prompt_version: "v1.0-trend"      # 趋势市专用 prompt
+    min_confidence: 55
+    max_leverage: 5
+  ranging:
+    prompt_version: "v1.0-range"      # 震荡市专用 prompt
+    min_confidence: 65
+    max_leverage: 3
+  volatile:
+    prompt_version: "v1.0-volatile"   # 高波动专用 prompt
+    min_confidence: 70
+    max_leverage: 2
+```
+
+- 趋势市 prompt 侧重突破、趋势跟踪、动量指标
+- 震荡市 prompt 侧重支撑阻力、超买超卖、均值回归
+- 高波动 prompt 侧重风控、缩小仓位、宽止损
+
+#### 11.4 市场状态检测增强
+
+当前市场状态检测在 `workflow/nodes/screen.py` 中。增强:
+
+- 多时间框架状态聚合（4h + 1d + 1w）
+- 状态转换平滑（连续 3 个周期确认后才切换，避免频繁跳转）
+- 状态转换时自动通知（Telegram: "市场状态从 trending → volatile"）
+
+### 第三层: 自动进化闭环
+
+#### 11.5 绩效驱动的自动 Prompt 迭代
+
+基于 10.8 的 Prompt A/B 框架，增加自动触发机制:
+
+```
+绩效下降检测 → 自动创建新 prompt 版本 → A/B 测试 → 择优上线
+```
+
+- 每日检查: 近 7 天胜率 < 近 30 天胜率 × 0.8 → 触发优化
+- AI 自动分析失败案例，生成改进版 prompt（用 sonnet 分析 + 生成）
+- 新 prompt 自动进入 A/B 测试（50% 流量）
+- 10 笔交易后自动对比，胜率更高者全量上线
+- 全过程记录到 `data/output/evolution/iterations.json`
+
+#### 11.6 多模型竞赛
+
+同时运行多个模型生成交易决策，择优执行:
+
+- 每个分析周期，交易决策节点同时调用 2-3 个模型（如 DeepSeek + Qwen）
+- 各模型独立输出信号，不互相参考
+- 短期（< 50 笔）: 取共识信号（多数模型同意才执行）
+- 长期（50+ 笔）: 按历史胜率加权，淘汰最差模型，引入新模型
+- 竞赛结果记录到 `data/output/evolution/competition.json`
+
+---
+
+## P7 路线图 — 数据源增强
+
+> 补充当前缺失的关键影响因子，提升 AI 决策的信息完备性。
+
+### 高优先级
+
+#### 12.1 宏观经济日历
+
+FOMC 利率决议、CPI、非农就业等宏观事件前后市场波动剧烈。接入经济日历实现自动风控:
+
+- 数据源: [ForexFactory](https://www.forexfactory.com/) 或 [Investing.com](https://www.investing.com/economic-calendar/) 公开日历
+- 每日检查未来 24h 内的高影响力事件
+- 高影响事件前 2h 自动降低杠杆上限（max_leverage × 0.5）
+- 事件期间暂停新信号生成（可配置）
+- 注入到情绪分析师和风控经理的 prompt 中: "注意: 今日 22:30 有 FOMC 利率决议"
+
+```yaml
+# config/settings.yaml
+macro_calendar:
+  enabled: true
+  pre_event_hours: 2              # 事件前多久开始降杠杆
+  pause_on_high_impact: true      # 高影响事件期间暂停交易
+  data_source: "forexfactory"     # forexfactory / investing
+```
+
+#### 12.2 清算热力图
+
+清算挂单聚集区是价格磁吸目标，对止盈止损设置极有参考价值:
+
+- 数据源: CoinGlass Liquidation Heatmap API（已有 CoinGlass 接入）
+- 获取上方/下方清算聚集价位和预估清算量
+- 注入到技术分析师: 作为关键价位补充（与 Pivot/Fibonacci 并列）
+- 注入到交易员: 止盈目标参考（"上方 $98,500 有 $2.3 亿清算挂单"）
+- 新增 `data/liquidation_heatmap.py`
+
+#### 12.3 稳定币流入流出
+
+USDT/USDC 铸造量是资金入场的领先指标:
+
+- 数据源: CoinGlass Stablecoin 数据 或 [DefiLlama](https://defillama.com/) Stablecoins API
+- 追踪 24h/7d USDT 铸造/销毁净额
+- 大额铸造（> $1 亿/天）= 资金入场信号 → 注入情绪分析师
+- 持续销毁 = 资金离场 → 提高风控敏感度
+- 新增 `data/stablecoin.py`
+
+### 中优先级
+
+#### 12.4 期权市场数据
+
+机构通过期权表达方向性观点，Put/Call 比率和 Max Pain 是重要参考:
+
+- 数据源: CoinGlass 或 Deribit 公开 API
+- 关键指标:
+  - Put/Call 比率: > 1.2 市场偏恐慌，< 0.7 市场偏乐观
+  - Max Pain（最大痛点）: 期权到期日价格倾向收敛到此价位
+  - 隐含波动率 (IV): IV 飙升预示大幅波动即将来临
+- 注入到链上分析师 prompt 中
+- 新增 `data/options.py`
+
+#### 12.5 订单簿深度
+
+大额挂单墙是短期支撑阻力的重要参考:
+
+- 数据源: Binance Order Book API（depth endpoint，已有 Binance 接入）
+- 计算 bid/ask 不平衡比: buy_wall / sell_wall
+- 不平衡 > 2.0 = 强买盘支撑；< 0.5 = 强卖压
+- 大额挂单价位注入到技术分析师的支撑阻力列表
+- 新增 `data/orderbook.py`
+
+#### 12.6 交易所储备量
+
+交易所 BTC/ETH 存量变化反映潜在抛压:
+
+- 数据源: CoinGlass Exchange Reserve 或 CryptoQuant
+- 储备上升 = 潜在卖压增加（空头信号）
+- 储备下降 = 囤币提走（多头信号）
+- 7 天趋势比单日更有参考价值
+- 注入到链上分析师 prompt 中
+- 新增 `data/exchange_reserve.py`
+
+#### 12.7 代币解锁日历
+
+大额代币解锁前后容易引发抛压:
+
+- 数据源: [Token Unlocks](https://token.unlocks.app/) 公开 API
+- 检查监控币种未来 7 天内的解锁事件
+- 解锁量 > 流通量 1% 标记为"重大解锁风险"
+- 注入到基本面分析师: "注意: SUI 3 天后解锁 2% 流通量"
+- 在 screen 节点中作为负面因子扣分
+- 新增 `data/token_unlocks.py`
+
+### 低优先级
+
+#### 12.8 美元指数 (DXY) 关联
+
+- 数据源: TradingView 或 Yahoo Finance API
+- DXY 上涨通常利空加密货币，下跌利多
+- 作为宏观背景注入情绪分析师（不单独作为交易信号）
+
+#### 12.9 巨鲸钱包追踪
+
+- 数据源: Whale Alert API 或 Arkham Intelligence
+- 大额转入交易所 = 潜在抛售信号
+- 数据噪声较大，仅作为辅助参考
+- 注入到链上分析师
+
+#### 12.10 DeFi TVL 趋势
+
+- 数据源: DefiLlama API
+- 特定链 TVL 持续流出 = 生态恶化（利空该链代币）
+- 更适合中长期判断，对 2h 周期波段交易参考价值有限
+
+---
+
 ## 七、实施优先级
 
 | 编号 | 内容 | 复杂度 | 收益 | 前置条件 |
@@ -402,8 +614,24 @@ cryptobot backtest ab-test --days 30
 | **10.7** | 结构化日志 | 小 | 运维 | 无 |
 | **10.8** | Prompt 迭代工具 | 中 | 长期优化 | 50+ 已平仓记录 |
 | **10.9** | 动态置信度阈值 | 中 | 信号质量 | 50+ 已平仓记录 |
+| **11.1** | 分析师动态权重 | 小 | 信号质量 | 10.5 (准确率数据) |
+| **11.2** | 分析师级模型选择 | 中 | 灵活性 | LLM 抽象层 (已完成) |
+| **11.3** | Prompt 集市场状态切换 | 中 | 适应性 | 10.8 |
+| **11.4** | 市场状态检测增强 | 小 | 稳定性 | 无 |
+| **11.5** | 绩效驱动自动迭代 | 大 | 自动化 | 10.8 + 10.9 + 50+ 记录 |
+| **11.6** | 多模型竞赛 | 大 | 信号质量 | 11.2 + 50+ 记录 |
+| **12.1** | 宏观经济日历 | 中 | 风控 | 无 |
+| **12.2** | 清算热力图 | 小 | 信号质量 | CoinGlass API (已接入) |
+| **12.3** | 稳定币流入流出 | 小 | 资金面判断 | CoinGlass API (已接入) |
+| **12.4** | 期权市场数据 | 中 | 机构预期 | 无 |
+| **12.5** | 订单簿深度 | 小 | 短期支撑阻力 | Binance API (已接入) |
+| **12.6** | 交易所储备量 | 小 | 抛压预判 | CoinGlass API (已接入) |
+| **12.7** | 代币解锁日历 | 小 | 供应冲击 | 无 |
+| **12.8** | DXY 美元指数 | 小 | 宏观参考 | 无 |
+| **12.9** | 巨鲸钱包追踪 | 中 | 大资金动向 | 无 |
+| **12.10** | DeFi TVL 趋势 | 小 | 生态健康 | 无 |
 
-**建议顺序:** 10.1 → 10.2 → 10.3 → 启动 dry_run 积累数据 → 10.4 → 10.5 → 其余并行推进。
+**建议顺序:** 10.1 → 10.2 → 10.3 → 启动 dry_run 积累数据 → 10.4 → 10.5 → 其余并行推进。P6 在积累 50+ 已平仓记录后启动: 11.1 → 11.2 → 11.4 → 11.3 → 11.5 → 11.6。P7 可随时启动，建议优先: 12.1 (防黑天鹅) → 12.2 + 12.3 (已有 API) → 12.5 (已有 API) → 其余按需。
 
 ---
 

@@ -85,12 +85,19 @@ def evaluate(days: int, json_output: bool):
 @click.option("--days", default=14, help="模拟天数")
 @click.option("--interval", default=12, help="分析间隔(小时)")
 @click.option("--json-output", is_flag=True, help="JSON 输出")
-@click.confirmation_option(prompt="模拟需要大量 Claude 调用，确认开始?")
-def simulate(days: int, interval: int, json_output: bool):
+@click.option("--yes", "-y", is_flag=True, help="跳过确认")
+def simulate(days: int, interval: int, json_output: bool, yes: bool):
     """历史回放模拟: 用过去数据跑 AI 工作流并评估"""
     from cryptobot.backtest.simulator import run_simulation
 
     total_cycles = days * 24 // interval
+
+    if not yes:
+        click.confirm(
+            f"模拟将运行 {total_cycles} 个周期 (约 {total_cycles * 45 // 60} 分钟)，确认?",
+            abort=True,
+        )
+
     console.print("\n[bold]历史回放模拟[/bold]")
     console.print(f"  回溯: {days} 天 | 间隔: {interval}h | 共 {total_cycles} 个周期\n")
 
