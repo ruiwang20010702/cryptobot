@@ -69,26 +69,29 @@ execute                         5m 指标确认?
 
 ### LLM 调用方式
 
-通过 `claude -p` 子进程调用 Claude Code 订阅额度（`workflow/llm.py`），**不需要 Anthropic API key**。工作流每轮约 40 次调用：
+通过 `claude -p` 子进程调用 Claude Code 订阅额度（`workflow/llm.py`），**不需要 Anthropic API key**。支持 OpenAI 兼容 API 后端（`workflow/api_llm.py`），通过 `llm.provider` 切换。工作流每轮约 40 次调用：
 - 4 分析师 × 5 币 = 20 个 haiku
 - 2 研究员 × 5 币 = 10 个 sonnet
 - 5 交易决策 + 5 风控审核 = 10 个 sonnet
+
+**角色级模型选择**: `call_claude()` / `call_api()` 支持 `role` 参数，可在 `settings.yaml` 的 `llm.api.role_models` 中按角色指定不同模型（如 trader 用 reasoner，analyst 用 chat）。未配置时行为不变。
 
 ### 模块职责
 
 | 模块 | 职责 |
 |------|------|
 | `workflow/graph.py` | LangGraph 7 节点状态图 + 独立 `re_review()` 持仓复审流程 |
-| `workflow/llm.py` | Claude CLI 子进程封装，内置速率限制和重试 |
+| `workflow/llm.py` | Claude CLI 子进程封装，内置速率限制和重试，支持 `role` 参数路由模型 |
+| `workflow/api_llm.py` | OpenAI 兼容 API 后端（DeepSeek/OpenAI/Groq 等），支持角色级模型选择 + token 用量追踪 |
 | `workflow/prompts.py` | 7 个 AI 角色的 system prompt + JSON schema（含 RE_REVIEWER） |
 | `signal/bridge.py` | signal.json / pending_signals.json 读写校验 + `update_signal_field` 动态更新 |
 | `realtime/monitor.py` | 轮询 Binance 价格，等待入场区间 + 5m 指标确认后 promote 信号 |
 | `indicators/calculator.py` | 技术指标计算（TA-Lib），K 线数据加载（feather 优先 + Binance API fallback） |
 | `indicators/multi_timeframe.py` | 多时间框架共振、量价分析、支撑阻力 |
-| `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API) |
+| `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API)、稳定币流(DefiLlama)、订单簿(Binance)、交易所储备(CoinGlass) |
 | `risk/` | 仓位计算(Kelly)、爆仓距离计算 |
 | `notify.py` | Telegram 通知：信号/风控/告警/日报/错误推送（silent fallback） |
-| `journal/` | 交易记录与绩效：SignalRecord 生命周期 + 胜率/盈亏比/置信度校准 + prompt 注入 |
+| `journal/` | 交易记录与绩效：SignalRecord 生命周期 + 胜率/盈亏比/置信度校准 + prompt 注入 + 分析师动态权重 |
 | `events/` | 价格异动监控：30s 轮询检测 5min/15min 大幅波动 → 紧急复审 + 通知 |
 | `cli/scheduler.py` | APScheduler 调度器：7 个定时任务(含日报 cron) + 可选事件监控线程 |
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
@@ -101,7 +104,8 @@ execute                         5m 指标确认?
 
 - Freqtrade K 线 feather: `user_data/data/binance/futures/{BASE}_USDT_USDT-{tf}-futures.feather`（备选路径 `user_data/data/futures/`）
 - 信号输出: `data/output/signals/signal.json`、`pending_signals.json`
-- 缓存: `data/output/.cache/`
+- 缓存: `data/output/.cache/`（各数据源子目录: `stablecoin/`、`exchange_reserve/`、`orderbook/`、`coinglass/` 等）
+- 分析师权重: `data/output/evolution/weights.json`
 - 配置: `config/settings.yaml`、`config/pairs.yaml`
 
 ### 交易对配置
@@ -115,5 +119,5 @@ execute                         5m 指标确认?
 - 信号文件原子写入：先写 `.json.tmp` 再 rename
 - 交易对格式：代码中用 Binance 格式 `BTCUSDT`，Freqtrade 用 `BTC/USDT:USDT`
 - 交易记录路径: `data/output/journal/records.json`
-- 环境变量：`BINANCE_API_KEY`、`BINANCE_API_SECRET`、`COINGLASS_API_KEY`、`CRYPTONEWS_API_KEY`、`COINGECKO_DEMO_KEY`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`
+- 环境变量：`BINANCE_API_KEY`、`BINANCE_API_SECRET`、`COINGLASS_API_KEY`、`CRYPTONEWS_API_KEY`、`COINGECKO_DEMO_KEY`、`DEEPSEEK_API_KEY`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`
 - 测试中网络请求全部 mock，标记 `@pytest.mark.network` 的测试需要真实网络
