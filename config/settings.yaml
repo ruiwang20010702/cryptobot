@@ -33,6 +33,10 @@ data_sources:
   cryptonews_api:
     base_url: "https://cryptonews-api.com/api/v1"
     cache_ttl: 1800  # 30 分钟
+  economic_calendar:
+    base_url: "https://finnhub.io/api/v1"
+    cache_ttl: 3600
+    pre_event_hours: 6
 
 # 风控参数
 risk:

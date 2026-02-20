@@ -46,6 +46,7 @@ def analyze(state: WorkflowState) -> dict:
         liquidation = data.get("liquidation", {})
         btc_correlation = data.get("btc_correlation", {})
         coin_news = data.get("coin_news", {})
+        dilution_risk = data.get("dilution_risk", {})
 
         orderbook = data.get("orderbook", {})
         coinglass_liq = data.get("coinglass_liq", {})
@@ -59,25 +60,31 @@ def analyze(state: WorkflowState) -> dict:
             "support_resistance": support_resistance,
             "orderbook": orderbook,
         }
-        # 链上分析师: crypto + liquidation + coinglass_liq + exchange_reserve
+        options_sentiment = data.get("options_sentiment", {})
+
+        # 链上分析师: crypto + liquidation + coinglass_liq + exchange_reserve + options
         onchain_data = {
             "derivatives": crypto,
             "liquidation": liquidation,
             "coinglass_liquidation": coinglass_liq,
             "exchange_reserve": exchange_reserve,
+            "options_sentiment": options_sentiment,
         }
-        # 情绪分析师: fear_greed + market_overview + global_news + stablecoin_flows
+        # 情绪分析师: fear_greed + market_overview + global_news + stablecoin_flows + macro_events
+        macro_events = state.get("macro_events", {})
         sentiment_data = {
             "fear_greed": fear_greed,
             "market_overview": market_overview,
             "global_news": global_news,
             "stablecoin_flows": stablecoin_flows,
+            "macro_events": macro_events,
         }
         # 基本面分析师: coin_info + btc_correlation + coin_news
         fundamental_data = {
             "coin_info": coin_info,
             "btc_correlation": btc_correlation,
             "coin_news": coin_news,
+            "dilution_risk": dilution_risk,
         }
 
         tasks_for_symbol = [

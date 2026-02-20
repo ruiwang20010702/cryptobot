@@ -88,10 +88,10 @@ execute                         5m 指标确认?
 | `realtime/monitor.py` | 轮询 Binance 价格，等待入场区间 + 5m 指标确认后 promote 信号 |
 | `indicators/calculator.py` | 技术指标计算（TA-Lib），K 线数据加载（feather 优先 + Binance API fallback） |
 | `indicators/multi_timeframe.py` | 多时间框架共振、量价分析、支撑阻力 |
-| `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API)、稳定币流(DefiLlama)、订单簿(Binance)、交易所储备(CoinGlass) |
+| `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API)、稳定币流(DefiLlama)、订单簿(Binance)、交易所储备(CoinGlass)、宏观日历(FinnHub)、期权(Deribit)、代币稀释(CoinGecko) |
 | `risk/` | 仓位计算(Kelly)、爆仓距离计算 |
 | `notify.py` | Telegram 通知：信号/风控/告警/日报/错误推送（silent fallback） |
-| `journal/` | 交易记录与绩效：SignalRecord 生命周期 + 胜率/盈亏比/置信度校准 + prompt 注入 + 分析师动态权重 |
+| `journal/` | 交易记录与绩效：SignalRecord 生命周期 + 胜率/盈亏比/置信度校准 + prompt 注入 + 分析师动态权重 + 动态置信度阈值 |
 | `events/` | 价格异动监控：30s 轮询检测 5min/15min 大幅波动 → 紧急复审 + 通知 |
 | `cli/scheduler.py` | APScheduler 调度器：7 个定时任务(含日报 cron) + 可选事件监控线程 |
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
@@ -119,5 +119,5 @@ execute                         5m 指标确认?
 - 信号文件原子写入：先写 `.json.tmp` 再 rename
 - 交易对格式：代码中用 Binance 格式 `BTCUSDT`，Freqtrade 用 `BTC/USDT:USDT`
 - 交易记录路径: `data/output/journal/records.json`
-- 环境变量：`BINANCE_API_KEY`、`BINANCE_API_SECRET`、`COINGLASS_API_KEY`、`CRYPTONEWS_API_KEY`、`COINGECKO_DEMO_KEY`、`DEEPSEEK_API_KEY`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`
+- 环境变量：`BINANCE_API_KEY`、`BINANCE_API_SECRET`、`COINGLASS_API_KEY`、`CRYPTONEWS_API_KEY`、`COINGECKO_DEMO_KEY`、`DEEPSEEK_API_KEY`、`FINNHUB_API_KEY`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`
 - 测试中网络请求全部 mock，标记 `@pytest.mark.network` 的测试需要真实网络

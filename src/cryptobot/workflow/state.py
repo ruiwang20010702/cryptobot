@@ -10,6 +10,7 @@ class WorkflowState(TypedDict, total=False):
     global_news: dict        # collect_data: 全局新闻情绪
     stablecoin_flows: dict   # collect_data: 稳定币流入流出 (全局)
     market_regime: dict      # collect_data: {regime, confidence, params, description}
+    macro_events: dict       # collect_data: 宏观经济日历事件
     screened_symbols: list   # screen: 筛选出的 3-5 个币种
     analyses: dict           # analyze: {symbol: {tech, onchain, sentiment, fundamental}}
     research: dict           # research: {symbol: {bull, bear}}

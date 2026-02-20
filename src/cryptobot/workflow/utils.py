@@ -79,17 +79,18 @@ def _build_portfolio_context() -> str:
 
 
 def _fetch_global(symbols: list[str]) -> tuple:
-    """获取全局市场数据 (恐惧贪婪、市场概览、全局新闻、稳定币流)
+    """获取全局市场数据 (恐惧贪婪、市场概览、全局新闻、稳定币流、宏观日历)
 
     Returns:
-        (fear_greed, market_overview, global_news, stablecoin_flows, errors)
+        (fear_greed, market_overview, global_news, stablecoin_flows, macro_events, errors)
     """
     from cryptobot.data.sentiment import get_fear_greed_index
     from cryptobot.data.news import get_market_overview
     from cryptobot.data.crypto_news import get_crypto_news
     from cryptobot.data.stablecoin import get_stablecoin_flows
+    from cryptobot.data.economic_calendar import get_upcoming_events
 
-    _fg, _mo, _gn, _sf = None, None, None, None
+    _fg, _mo, _gn, _sf, _me = None, None, None, None, None
     _errs = []
     try:
         _fg = get_fear_greed_index()
@@ -108,7 +109,11 @@ def _fetch_global(symbols: list[str]) -> tuple:
         _sf = get_stablecoin_flows()
     except Exception as e:
         _errs.append(f"stablecoin_flows: {e}")
-    return _fg, _mo, _gn, _sf, _errs
+    try:
+        _me = get_upcoming_events()
+    except Exception as e:
+        _errs.append(f"macro_events: {e}")
+    return _fg, _mo, _gn, _sf, _me, _errs
 
 
 def _fetch_symbol(symbol: str) -> tuple[str, dict, list]:
@@ -183,14 +188,28 @@ def _fetch_symbol(symbol: str) -> tuple[str, dict, list]:
         logger.warning("交易所储备量失败 %s: %s", symbol, e)
         data["exchange_reserve"] = None
         errs.append(f"reserve_{symbol}: {e}")
+    try:
+        from cryptobot.data.token_unlocks import get_dilution_risk
+        data["dilution_risk"] = get_dilution_risk(symbol)
+    except Exception as e:
+        logger.warning("稀释风险失败 %s: %s", symbol, e)
+        data["dilution_risk"] = None
+        errs.append(f"dilution_{symbol}: {e}")
+    try:
+        from cryptobot.data.options import get_options_sentiment
+        data["options_sentiment"] = get_options_sentiment(symbol)
+    except Exception as e:
+        logger.warning("期权情绪失败 %s: %s", symbol, e)
+        data["options_sentiment"] = None
+        errs.append(f"options_{symbol}: {e}")
     return symbol, data, errs
 
 
-def fetch_market_data(symbols: list[str]) -> tuple[dict, dict, dict, dict, dict, list]:
+def fetch_market_data(symbols: list[str]) -> tuple[dict, dict, dict, dict, dict, dict, list]:
     """并行采集全局和每币种数据
 
     Returns:
-        (market_data, fear_greed, market_overview, global_news, stablecoin_flows, errors)
+        (market_data, fear_greed, market_overview, global_news, stablecoin_flows, macro_events, errors)
     """
     from cryptobot.indicators.market_structure import calc_btc_correlation
 
@@ -199,13 +218,14 @@ def fetch_market_data(symbols: list[str]) -> tuple[dict, dict, dict, dict, dict,
     market_overview = {}
     global_news = {}
     stablecoin_flows = {}
+    macro_events = {}
     errors = []
 
     with ThreadPoolExecutor(max_workers=6) as executor:
         global_future = executor.submit(_fetch_global, symbols)
         symbol_futures = {executor.submit(_fetch_symbol, s): s for s in symbols}
 
-        fg, mo, gn, sf, g_errs = global_future.result()
+        fg, mo, gn, sf, me, g_errs = global_future.result()
         if fg:
             fear_greed = fg
         if mo:
@@ -214,6 +234,8 @@ def fetch_market_data(symbols: list[str]) -> tuple[dict, dict, dict, dict, dict,
             global_news = gn
         if sf:
             stablecoin_flows = sf
+        if me:
+            macro_events = me
         errors.extend(g_errs)
 
         for future in as_completed(symbol_futures):
@@ -234,4 +256,4 @@ def fetch_market_data(symbols: list[str]) -> tuple[dict, dict, dict, dict, dict,
                 market_data[symbol]["btc_correlation"] = None
                 errors.append(f"btc_corr_{symbol}: {e}")
 
-    return market_data, fear_greed, market_overview, global_news, stablecoin_flows, errors
+    return market_data, fear_greed, market_overview, global_news, stablecoin_flows, macro_events, errors

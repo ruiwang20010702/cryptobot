@@ -108,7 +108,7 @@ def collect_data(state: WorkflowState) -> dict:
     _stage(1, f"数据采集 — {len(symbols)} 个币种 (扩展数据)")
     t0 = time.time()
 
-    market_data, fear_greed, market_overview, global_news, stablecoin_flows, fetch_errors = (
+    market_data, fear_greed, market_overview, global_news, stablecoin_flows, macro_events, fetch_errors = (
         fetch_market_data(symbols)
     )
     errors.extend(fetch_errors)
@@ -133,12 +133,22 @@ def collect_data(state: WorkflowState) -> dict:
     regime = _detect_market_regime(market_data, fear_greed)
     _console.print(f"    市场状态: {regime['regime']} (置信度 {regime['confidence']}%)")
 
+    # 宏观风险标注
+    if macro_events.get("has_high_impact"):
+        regime["macro_risk"] = True
+        next_ev = macro_events.get("next_high_impact")
+        if next_ev:
+            regime["description"] += (
+                f" (宏观风险: {next_ev['event']} in {next_ev['hours_until']}h)"
+            )
+
     return {
         "market_data": market_data,
         "market_overview": market_overview,
         "fear_greed": fear_greed,
         "global_news": global_news,
         "stablecoin_flows": stablecoin_flows,
+        "macro_events": macro_events,
         "market_regime": regime,
         "errors": errors,
     }

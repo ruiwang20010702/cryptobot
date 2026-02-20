@@ -57,6 +57,14 @@ def trade(state: WorkflowState) -> dict:
             f"- 建议最大杠杆: {regime.get('params', {}).get('max_leverage', 5)}x\n\n"
         )
 
+    # 置信度校准上下文
+    confidence_ctx = ""
+    try:
+        from cryptobot.journal.confidence_tuner import build_threshold_context
+        confidence_ctx = build_threshold_context(regime, 30)
+    except Exception as e:
+        logger.warning("置信度校准失败: %s", e)
+
     all_tasks = []
     task_meta = []  # (symbol, current_price)
 
@@ -79,6 +87,7 @@ def trade(state: WorkflowState) -> dict:
                 f"{perf_ctx}"
                 f"{weights_ctx}"
                 f"{regime_ctx}"
+                f"{confidence_ctx}"
                 f"### 看多研究员观点\n{json.dumps(bull, ensure_ascii=False, indent=2)}\n\n"
                 f"### 看空研究员观点\n{json.dumps(bear, ensure_ascii=False, indent=2)}\n\n"
                 f"### 分析师数据\n{json.dumps(analysis, ensure_ascii=False, indent=2)}\n\n"

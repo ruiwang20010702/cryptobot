@@ -140,6 +140,26 @@ def risk_review(state: WorkflowState) -> dict:
             f"- 建议最大杠杆: {regime.get('params', {}).get('max_leverage', 5)}x\n\n"
         )
 
+    # 置信度校准上下文（注入到风控 prompt）
+    confidence_ctx = ""
+    try:
+        from cryptobot.journal.confidence_tuner import build_threshold_context
+        confidence_ctx = build_threshold_context(regime, 30)
+    except Exception as e:
+        logger.warning("置信度校准失败: %s", e)
+
+    # 宏观事件风险提示
+    macro_events = state.get("macro_events", {})
+    macro_ctx = ""
+    if macro_events.get("has_high_impact"):
+        next_ev = macro_events.get("next_high_impact")
+        if next_ev:
+            macro_ctx = (
+                f"### 宏观风险提示\n"
+                f"- 注意: {next_ev['hours_until']:.0f} 小时后有 {next_ev['event']}，建议降低杠杆\n"
+                f"- 高影响事件数: {macro_events.get('event_count', 0)}\n\n"
+            )
+
     # 计算当前仓位占比（用于硬性规则）
     long_used = sum(float(p.get("stake_amount", 0) or 0) for p in positions if not p.get("is_short"))
     short_used = sum(float(p.get("stake_amount", 0) or 0) for p in positions if p.get("is_short"))
@@ -182,6 +202,24 @@ def risk_review(state: WorkflowState) -> dict:
                 _console.print(f"    [red]拒绝 {symbol}: {dir_name}仓位已达上限 {dir_pct:.0f}%[/red]")
                 continue
 
+        # 置信度硬性检查
+        try:
+            from cryptobot.journal.confidence_tuner import calc_dynamic_threshold
+            threshold = calc_dynamic_threshold(30)
+            min_conf = threshold["recommended_min_confidence"]
+            decision_conf = decision.get("confidence", 0)
+            if decision_conf < min_conf and threshold["sample_size"] >= 15:
+                logger.info(
+                    "硬性拒绝 %s: 置信度 %d < 动态阈值 %d",
+                    symbol, decision_conf, min_conf,
+                )
+                _console.print(
+                    f"    [red]拒绝 {symbol}: 置信度 {decision_conf} < 动态阈值 {min_conf}[/red]"
+                )
+                continue
+        except Exception as e:
+            logger.warning("动态置信度检查失败: %s", e)
+
         # 计算爆仓距离
         liq_info = ""
         if entry_range and len(entry_range) == 2 and entry_range[0]:
@@ -198,6 +236,8 @@ def risk_review(state: WorkflowState) -> dict:
                 f"{portfolio_ctx}"
                 f"{perf_ctx}"
                 f"{regime_ctx}"
+                f"{confidence_ctx}"
+                f"{macro_ctx}"
                 f"### 交易决策\n{json.dumps(decision, ensure_ascii=False, indent=2)}\n\n"
                 f"### 风控参数\n"
                 f"- 最大杠杆: {pair_cfg.get('leverage_range', [1, 5])[1]}x\n"
