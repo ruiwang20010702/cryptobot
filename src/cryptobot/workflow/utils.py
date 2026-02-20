@@ -79,16 +79,17 @@ def _build_portfolio_context() -> str:
 
 
 def _fetch_global(symbols: list[str]) -> tuple:
-    """获取全局市场数据 (恐惧贪婪、市场概览、全局新闻)
+    """获取全局市场数据 (恐惧贪婪、市场概览、全局新闻、稳定币流)
 
     Returns:
-        (fear_greed, market_overview, global_news, errors)
+        (fear_greed, market_overview, global_news, stablecoin_flows, errors)
     """
     from cryptobot.data.sentiment import get_fear_greed_index
     from cryptobot.data.news import get_market_overview
     from cryptobot.data.crypto_news import get_crypto_news
+    from cryptobot.data.stablecoin import get_stablecoin_flows
 
-    _fg, _mo, _gn = None, None, None
+    _fg, _mo, _gn, _sf = None, None, None, None
     _errs = []
     try:
         _fg = get_fear_greed_index()
@@ -103,7 +104,11 @@ def _fetch_global(symbols: list[str]) -> tuple:
         _gn = get_crypto_news(currencies)
     except Exception as e:
         _errs.append(f"global_news: {e}")
-    return _fg, _mo, _gn, _errs
+    try:
+        _sf = get_stablecoin_flows()
+    except Exception as e:
+        _errs.append(f"stablecoin_flows: {e}")
+    return _fg, _mo, _gn, _sf, _errs
 
 
 def _fetch_symbol(symbol: str) -> tuple[str, dict, list]:
@@ -171,30 +176,44 @@ def _fetch_symbol(symbol: str) -> tuple[str, dict, list]:
         logger.warning("CoinGlass清算失败 %s: %s", symbol, e)
         data["coinglass_liq"] = None
         errs.append(f"coinglass_{symbol}: {e}")
+    try:
+        from cryptobot.data.exchange_reserve import get_exchange_reserve
+        data["exchange_reserve"] = get_exchange_reserve(symbol)
+    except Exception as e:
+        logger.warning("交易所储备量失败 %s: %s", symbol, e)
+        data["exchange_reserve"] = None
+        errs.append(f"reserve_{symbol}: {e}")
     return symbol, data, errs
 
 
-def fetch_market_data(symbols: list[str]) -> tuple[dict, dict, dict, dict, list]:
-    """并行采集全局和每币种数据，返回 (market_data, fear_greed, market_overview, global_news, errors)"""
+def fetch_market_data(symbols: list[str]) -> tuple[dict, dict, dict, dict, dict, list]:
+    """并行采集全局和每币种数据
+
+    Returns:
+        (market_data, fear_greed, market_overview, global_news, stablecoin_flows, errors)
+    """
     from cryptobot.indicators.market_structure import calc_btc_correlation
 
     market_data = {}
     fear_greed = {"current_value": 50, "current_classification": "Neutral"}
     market_overview = {}
     global_news = {}
+    stablecoin_flows = {}
     errors = []
 
     with ThreadPoolExecutor(max_workers=6) as executor:
         global_future = executor.submit(_fetch_global, symbols)
         symbol_futures = {executor.submit(_fetch_symbol, s): s for s in symbols}
 
-        fg, mo, gn, g_errs = global_future.result()
+        fg, mo, gn, sf, g_errs = global_future.result()
         if fg:
             fear_greed = fg
         if mo:
             market_overview = mo
         if gn:
             global_news = gn
+        if sf:
+            stablecoin_flows = sf
         errors.extend(g_errs)
 
         for future in as_completed(symbol_futures):
@@ -215,4 +234,4 @@ def fetch_market_data(symbols: list[str]) -> tuple[dict, dict, dict, dict, list]
                 market_data[symbol]["btc_correlation"] = None
                 errors.append(f"btc_corr_{symbol}: {e}")
 
-    return market_data, fear_greed, market_overview, global_news, errors
+    return market_data, fear_greed, market_overview, global_news, stablecoin_flows, errors

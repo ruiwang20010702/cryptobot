@@ -37,6 +37,14 @@ def trade(state: WorkflowState) -> dict:
     except Exception as e:
         logger.warning("绩效摘要生成失败: %s", e)
 
+    # 分析师权重上下文
+    weights_ctx = ""
+    try:
+        from cryptobot.journal.analyst_weights import build_weights_context
+        weights_ctx = build_weights_context(30)
+    except Exception as e:
+        logger.warning("分析师权重生成失败: %s", e)
+
     # 市场状态上下文
     regime = state.get("market_regime", {})
     regime_ctx = ""
@@ -69,6 +77,7 @@ def trade(state: WorkflowState) -> dict:
                 f"最大杠杆: {max_leverage}x\n\n"
                 f"{portfolio_ctx}"
                 f"{perf_ctx}"
+                f"{weights_ctx}"
                 f"{regime_ctx}"
                 f"### 看多研究员观点\n{json.dumps(bull, ensure_ascii=False, indent=2)}\n\n"
                 f"### 看空研究员观点\n{json.dumps(bear, ensure_ascii=False, indent=2)}\n\n"
@@ -76,6 +85,7 @@ def trade(state: WorkflowState) -> dict:
                 f"请做出交易决策。"
             ),
             "model": "sonnet",
+            "role": "trader",
             "system_prompt": TRADER,
             "json_schema": TRADE_SCHEMA,
         })

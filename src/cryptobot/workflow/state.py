@@ -8,6 +8,7 @@ class WorkflowState(TypedDict, total=False):
     market_overview: dict    # collect_data: 全局市场概览
     fear_greed: dict         # collect_data: 恐惧贪婪指数
     global_news: dict        # collect_data: 全局新闻情绪
+    stablecoin_flows: dict   # collect_data: 稳定币流入流出 (全局)
     market_regime: dict      # collect_data: {regime, confidence, params, description}
     screened_symbols: list   # screen: 筛选出的 3-5 个币种
     analyses: dict           # analyze: {symbol: {tech, onchain, sentiment, fundamental}}

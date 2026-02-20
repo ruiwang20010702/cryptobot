@@ -152,8 +152,15 @@ def _load_api_config() -> dict:
     return api_cfg
 
 
-def _resolve_model(logical_name: str, api_cfg: dict) -> str:
-    """将逻辑名 (haiku/sonnet) 映射到实际模型名"""
+def _resolve_model(logical_name: str, api_cfg: dict, role: str | None = None) -> str:
+    """将逻辑名 (haiku/sonnet) 映射到实际模型名
+
+    优先级: role_models.{role} → models.{logical_name} → logical_name
+    """
+    if role:
+        role_models = api_cfg.get("role_models", {})
+        if role in role_models:
+            return role_models[role]
     models = api_cfg.get("models", {})
     return models.get(logical_name, logical_name)
 
@@ -162,6 +169,7 @@ def call_api(
     prompt: str,
     *,
     model: str = "haiku",
+    role: str | None = None,
     system_prompt: str | None = None,
     json_schema: dict | None = None,
     _retries: int = MAX_RETRIES,
@@ -171,6 +179,7 @@ def call_api(
     Args:
         prompt: 用户提示词
         model: 逻辑模型名 (haiku / sonnet)，映射到实际模型
+        role: AI 角色名，用于角色级模型选择 (优先于 model 映射)
         system_prompt: 系统提示词
         json_schema: JSON Schema 约束输出格式
         _retries: 剩余重试次数 (内部使用)
@@ -182,7 +191,7 @@ def call_api(
     base_url = api_cfg["base_url"].rstrip("/")
     api_key_env = api_cfg.get("api_key_env", "")
     api_key = os.environ.get(api_key_env, "") if api_key_env else ""
-    actual_model = _resolve_model(model, api_cfg)
+    actual_model = _resolve_model(model, api_cfg, role=role)
     timeout = api_cfg.get("timeout", 60)
 
     # 构建 messages
@@ -225,7 +234,7 @@ def call_api(
             logger.warning("API 超时, %d秒后重试 (剩余%d次)", delay, _retries)
             time.sleep(delay)
             return call_api(
-                prompt, model=model, system_prompt=system_prompt,
+                prompt, model=model, role=role, system_prompt=system_prompt,
                 json_schema=json_schema, _retries=_retries - 1,
             )
         raise

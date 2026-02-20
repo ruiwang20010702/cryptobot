@@ -247,7 +247,7 @@ def test_call_claude_routes_to_api():
 
     assert result == {"routed": True}
     mock_api.assert_called_once_with(
-        "test prompt", model="sonnet", system_prompt="sys",
+        "test prompt", model="sonnet", role=None, system_prompt="sys",
         json_schema=None, _retries=3,
     )
     reset_provider_cache()

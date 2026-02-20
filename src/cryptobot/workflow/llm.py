@@ -51,6 +51,7 @@ def call_claude(
     prompt: str,
     *,
     model: str = "haiku",
+    role: str | None = None,
     system_prompt: str | None = None,
     json_schema: dict | None = None,
     max_budget: float | None = None,
@@ -63,6 +64,7 @@ def call_claude(
     Args:
         prompt: 用户提示词
         model: 模型名 (haiku / sonnet)
+        role: AI 角色名 (technical/trader/risk_manager 等)，用于角色级模型选择
         system_prompt: 系统提示词
         json_schema: JSON Schema 约束输出格式
         max_budget: 单次预算上限 (USD)，仅 Claude CLI 模式有效
@@ -75,7 +77,7 @@ def call_claude(
     if _get_provider() == "api":
         from cryptobot.workflow.api_llm import call_api
         return call_api(
-            prompt, model=model, system_prompt=system_prompt,
+            prompt, model=model, role=role, system_prompt=system_prompt,
             json_schema=json_schema, _retries=_retries,
         )
 
@@ -119,7 +121,7 @@ def call_claude(
             logger.warning("Claude CLI 超时, %d秒后重试 (剩余%d次)", delay, _retries)
             time.sleep(delay)
             return call_claude(
-                prompt, model=model, system_prompt=system_prompt,
+                prompt, model=model, role=role, system_prompt=system_prompt,
                 json_schema=json_schema, max_budget=max_budget, _retries=_retries - 1,
             )
         raise
@@ -136,7 +138,7 @@ def call_claude(
                            result.returncode, delay, _retries)
             time.sleep(delay)
             return call_claude(
-                prompt, model=model, system_prompt=system_prompt,
+                prompt, model=model, role=role, system_prompt=system_prompt,
                 json_schema=json_schema, max_budget=max_budget, _retries=_retries - 1,
             )
         logger.error("Claude CLI 失败: returncode=%d, stderr=%s", result.returncode, stderr)

@@ -28,6 +28,7 @@ def analyze(state: WorkflowState) -> dict:
     fear_greed = state.get("fear_greed", {})
     market_overview = state.get("market_overview", {})
     global_news = state.get("global_news", {})
+    stablecoin_flows = state.get("stablecoin_flows", {})
     errors = list(state.get("errors", []))
 
     # 打平所有任务: [(symbol, analyst_type, task_dict), ...]
@@ -46,23 +47,31 @@ def analyze(state: WorkflowState) -> dict:
         btc_correlation = data.get("btc_correlation", {})
         coin_news = data.get("coin_news", {})
 
-        # 技术分析师: tech + multi_tf + volume_analysis + support_resistance
+        orderbook = data.get("orderbook", {})
+        coinglass_liq = data.get("coinglass_liq", {})
+        exchange_reserve = data.get("exchange_reserve", {})
+
+        # 技术分析师: tech + multi_tf + volume_analysis + support_resistance + orderbook
         tech_data = {
             "tech_indicators": tech,
             "multi_timeframe": multi_tf,
             "volume_analysis": volume_analysis,
             "support_resistance": support_resistance,
+            "orderbook": orderbook,
         }
-        # 链上分析师: crypto + liquidation
+        # 链上分析师: crypto + liquidation + coinglass_liq + exchange_reserve
         onchain_data = {
             "derivatives": crypto,
             "liquidation": liquidation,
+            "coinglass_liquidation": coinglass_liq,
+            "exchange_reserve": exchange_reserve,
         }
-        # 情绪分析师: fear_greed + market_overview + global_news
+        # 情绪分析师: fear_greed + market_overview + global_news + stablecoin_flows
         sentiment_data = {
             "fear_greed": fear_greed,
             "market_overview": market_overview,
             "global_news": global_news,
+            "stablecoin_flows": stablecoin_flows,
         }
         # 基本面分析师: coin_info + btc_correlation + coin_news
         fundamental_data = {
@@ -75,24 +84,28 @@ def analyze(state: WorkflowState) -> dict:
             ("technical", {
                 "prompt": f"分析 {symbol} 的技术指标数据:\n{json.dumps(tech_data, ensure_ascii=False, indent=2)}",
                 "model": "haiku",
+                "role": "technical",
                 "system_prompt": TECHNICAL_ANALYST,
                 "json_schema": ANALYST_SCHEMA,
             }),
             ("onchain", {
                 "prompt": f"分析 {symbol} 的链上与衍生品数据:\n{json.dumps(onchain_data, ensure_ascii=False, indent=2)}",
                 "model": "haiku",
+                "role": "onchain",
                 "system_prompt": ONCHAIN_ANALYST,
                 "json_schema": ANALYST_SCHEMA,
             }),
             ("sentiment", {
                 "prompt": f"分析 {symbol} 的市场情绪:\n{json.dumps(sentiment_data, ensure_ascii=False, indent=2)}",
                 "model": "haiku",
+                "role": "sentiment",
                 "system_prompt": SENTIMENT_ANALYST,
                 "json_schema": ANALYST_SCHEMA,
             }),
             ("fundamental", {
                 "prompt": f"分析 {symbol} 的基本面数据:\n{json.dumps(fundamental_data, ensure_ascii=False, indent=2)}",
                 "model": "haiku",
+                "role": "fundamental",
                 "system_prompt": FUNDAMENTAL_ANALYST,
                 "json_schema": ANALYST_SCHEMA,
             }),

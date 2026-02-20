@@ -108,7 +108,7 @@ def collect_data(state: WorkflowState) -> dict:
     _stage(1, f"数据采集 — {len(symbols)} 个币种 (扩展数据)")
     t0 = time.time()
 
-    market_data, fear_greed, market_overview, global_news, fetch_errors = (
+    market_data, fear_greed, market_overview, global_news, stablecoin_flows, fetch_errors = (
         fetch_market_data(symbols)
     )
     errors.extend(fetch_errors)
@@ -138,6 +138,7 @@ def collect_data(state: WorkflowState) -> dict:
         "market_overview": market_overview,
         "fear_greed": fear_greed,
         "global_news": global_news,
+        "stablecoin_flows": stablecoin_flows,
         "market_regime": regime,
         "errors": errors,
     }

@@ -162,7 +162,7 @@ def _run_single_cycle(
 
     # b. 在 override 上下文中获取市场数据
     with klines_override_cm(sliced):
-        market_data, fg, _, _, errors = fetch_market_data(symbols)
+        market_data, fg, _, _, _, errors = fetch_market_data(symbols)
 
     # c. 覆盖 fear_greed 为历史值
     if fg_history:

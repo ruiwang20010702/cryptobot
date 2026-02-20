@@ -131,6 +131,15 @@ llm:
       sonnet: "deepseek-chat"         # 深度推理用
     max_concurrent: 10                # API 并发数
     timeout: 60                       # 单次请求超时 (秒)
+    # role_models:                    # 按角色指定模型 (可选，覆盖 models 映射)
+    #   technical: "deepseek-chat"
+    #   onchain: "deepseek-chat"
+    #   sentiment: "deepseek-chat"
+    #   fundamental: "deepseek-chat"
+    #   bull_researcher: "deepseek-chat"
+    #   bear_researcher: "deepseek-chat"
+    #   trader: "deepseek-reasoner"
+    #   risk_manager: "deepseek-reasoner"
   # 常见配置示例:
   # DeepSeek Reasoner:
   #   base_url: "https://api.deepseek.com/v1"

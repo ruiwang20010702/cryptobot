@@ -29,14 +29,15 @@ def research(state: WorkflowState) -> dict:
     for symbol, analysis in analyses.items():
         analysis_text = json.dumps(analysis, ensure_ascii=False, indent=2)
 
-        for role, prompt_prefix, sys_prompt, schema in [
+        for role_name, prompt_prefix, sys_prompt, schema in [
             ("bull", "构建看涨论据", BULL_RESEARCHER, BULL_SCHEMA),
             ("bear", "构建看跌论据", BEAR_RESEARCHER, BEAR_SCHEMA),
         ]:
-            task_index.append((symbol, role))
+            task_index.append((symbol, role_name))
             all_tasks.append({
                 "prompt": f"基于以下 {symbol} 的分析师报告，{prompt_prefix}:\n{analysis_text}",
                 "model": "sonnet",
+                "role": f"{role_name}_researcher",
                 "system_prompt": sys_prompt,
                 "json_schema": schema,
             })

@@ -208,6 +208,7 @@ def risk_review(state: WorkflowState) -> dict:
                 f"请进行风控审核。"
             ),
             "model": "sonnet",
+            "role": "risk_manager",
             "system_prompt": RISK_MANAGER,
             "json_schema": RISK_SCHEMA,
         })
