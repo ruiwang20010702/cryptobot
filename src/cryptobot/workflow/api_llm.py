@@ -13,14 +13,16 @@ import time
 
 import httpx
 
-from cryptobot.config import load_settings
+from cryptobot.config import DATA_OUTPUT_DIR, load_settings
 
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 5
 
-# ─── Token 用量追踪 ─────────────────────────────────────────────────
+# ─── Token 用量追踪（内存 + 文件持久化）────────────────────────────
+
+_USAGE_FILE = DATA_OUTPUT_DIR / "llm_usage.json"
 
 _usage_lock = threading.Lock()
 _usage_stats = {
@@ -31,6 +33,7 @@ _usage_stats = {
     "total_cost_yuan": 0.0,
     "by_model": {},  # model_name → {calls, prompt_tokens, completion_tokens, cost}
 }
+_stats_loaded = False
 
 # DeepSeek 定价 (元/百万 tokens) — 2026-02
 _PRICING = {
@@ -41,8 +44,39 @@ _PRICING = {
 _DEFAULT_PRICING = {"input": 2.0, "input_cached": 0.5, "output": 4.0}
 
 
+def _load_stats_from_disk() -> None:
+    """首次访问时从文件加载历史统计"""
+    global _stats_loaded
+    if _stats_loaded:
+        return
+    _stats_loaded = True
+    if not _USAGE_FILE.exists():
+        return
+    try:
+        saved = json.loads(_USAGE_FILE.read_text())
+        _usage_stats["total_calls"] = saved.get("total_calls", 0)
+        _usage_stats["total_prompt_tokens"] = saved.get("total_prompt_tokens", 0)
+        _usage_stats["total_completion_tokens"] = saved.get("total_completion_tokens", 0)
+        _usage_stats["total_cached_tokens"] = saved.get("total_cached_tokens", 0)
+        _usage_stats["total_cost_yuan"] = saved.get("total_cost_yuan", 0.0)
+        _usage_stats["by_model"] = saved.get("by_model", {})
+    except Exception:
+        pass
+
+
+def _save_stats_to_disk() -> None:
+    """将统计写入文件"""
+    try:
+        _USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _USAGE_FILE.write_text(
+            json.dumps(_usage_stats, indent=2, ensure_ascii=False)
+        )
+    except Exception:
+        pass
+
+
 def _track_usage(model: str, usage: dict) -> None:
-    """记录单次调用的 token 用量和费用"""
+    """记录单次调用的 token 用量和费用（内存 + 文件持久化）"""
     prompt_tokens = usage.get("prompt_tokens", 0)
     completion_tokens = usage.get("completion_tokens", 0)
 
@@ -58,6 +92,8 @@ def _track_usage(model: str, usage: dict) -> None:
     )
 
     with _usage_lock:
+        _load_stats_from_disk()
+
         _usage_stats["total_calls"] += 1
         _usage_stats["total_prompt_tokens"] += prompt_tokens
         _usage_stats["total_completion_tokens"] += completion_tokens
@@ -75,6 +111,8 @@ def _track_usage(model: str, usage: dict) -> None:
         m["completion_tokens"] += completion_tokens
         m["cost_yuan"] += cost
 
+        _save_stats_to_disk()
+
     logger.info(
         "API 用量: model=%s, prompt=%d (cached=%d), completion=%d, cost=¥%.4f",
         model, prompt_tokens, cached_tokens, completion_tokens, cost,
@@ -82,8 +120,9 @@ def _track_usage(model: str, usage: dict) -> None:
 
 
 def get_usage_stats() -> dict:
-    """获取累计 token 用量统计（线程安全副本）"""
+    """获取累计 token 用量统计（从文件加载，线程安全副本）"""
     with _usage_lock:
+        _load_stats_from_disk()
         stats = {
             **_usage_stats,
             "by_model": {k: {**v} for k, v in _usage_stats["by_model"].items()},
@@ -93,7 +132,7 @@ def get_usage_stats() -> dict:
 
 
 def reset_usage_stats() -> None:
-    """重置用量统计"""
+    """重置用量统计（内存 + 文件）"""
     with _usage_lock:
         _usage_stats["total_calls"] = 0
         _usage_stats["total_prompt_tokens"] = 0
@@ -101,6 +140,7 @@ def reset_usage_stats() -> None:
         _usage_stats["total_cached_tokens"] = 0
         _usage_stats["total_cost_yuan"] = 0.0
         _usage_stats["by_model"].clear()
+        _save_stats_to_disk()
 
 
 def _load_api_config() -> dict:
