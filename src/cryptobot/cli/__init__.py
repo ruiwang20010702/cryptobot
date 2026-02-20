@@ -13,6 +13,7 @@ from cryptobot.cli.scheduler import daemon
 from cryptobot.cli.journal import journal
 from cryptobot.cli.events import events
 from cryptobot.cli.backtest import backtest
+from cryptobot.cli.web import web
 
 
 @click.group()
@@ -33,3 +34,4 @@ cli.add_command(daemon)
 cli.add_command(journal)
 cli.add_command(events)
 cli.add_command(backtest)
+cli.add_command(web)

@@ -56,6 +56,25 @@ def calc_performance(days: int = 30) -> dict:
         },
     }
 
+    # 按币种分组
+    by_symbol: dict[str, dict] = {}
+    for r in closed:
+        sym = r.symbol or "UNKNOWN"
+        if sym not in by_symbol:
+            by_symbol[sym] = {"count": 0, "wins": 0, "total_pnl_pct": 0.0}
+        by_symbol[sym]["count"] += 1
+        if (r.actual_pnl_pct or 0) > 0:
+            by_symbol[sym]["wins"] += 1
+        by_symbol[sym]["total_pnl_pct"] += r.actual_pnl_pct or 0
+
+    by_symbol_result = {}
+    for sym, stats in by_symbol.items():
+        by_symbol_result[sym] = {
+            "count": stats["count"],
+            "win_rate": round(stats["wins"] / stats["count"], 3) if stats["count"] > 0 else 0,
+            "avg_pnl_pct": round(stats["total_pnl_pct"] / stats["count"], 2) if stats["count"] > 0 else 0,
+        }
+
     return {
         "period_days": days,
         "total_signals": total_signals,
@@ -68,6 +87,7 @@ def calc_performance(days: int = 30) -> dict:
         "total_pnl_usdt": round(sum(r.actual_pnl_usdt or 0 for r in closed), 2),
         "confidence_calibration": calibration,
         "by_direction": by_direction,
+        "by_symbol": by_symbol_result,
     }
 
 
@@ -96,6 +116,50 @@ def _calc_confidence_calibration(closed_records: list) -> dict:
         result[name] = {
             "count": b["count"],
             "actual_win_rate": round(b["wins"] / b["count"], 3) if b["count"] > 0 else None,
+        }
+
+    return result
+
+
+def calc_analyst_accuracy(days: int = 30) -> dict:
+    """按分析师角色计算投票方向与交易结果的准确率
+
+    Returns:
+        {role: {total, correct, accuracy}, ...}
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    all_records = get_all_records()
+
+    closed = [
+        r for r in all_records
+        if r.status == "closed" and r.timestamp >= cutoff
+        and r.analyst_votes and r.actual_pnl_pct is not None
+    ]
+
+    role_stats: dict[str, dict] = {}
+
+    for r in closed:
+        is_win = r.actual_pnl_pct > 0
+        # 判断"正确"：分析师方向与交易结果一致
+        # long + bullish = 正确（盈利时）；short + bearish = 正确（盈利时）
+        # 简化逻辑：投票方向与 action 一致且盈利，或方向相反且亏损
+        action_direction = "bullish" if r.action == "long" else "bearish"
+
+        for role, vote in r.analyst_votes.items():
+            if role not in role_stats:
+                role_stats[role] = {"total": 0, "correct": 0}
+
+            role_stats[role]["total"] += 1
+            vote_agrees = (vote == action_direction)
+            if (vote_agrees and is_win) or (not vote_agrees and not is_win):
+                role_stats[role]["correct"] += 1
+
+    result = {}
+    for role, stats in role_stats.items():
+        result[role] = {
+            "total": stats["total"],
+            "correct": stats["correct"],
+            "accuracy": round(stats["correct"] / stats["total"], 3) if stats["total"] > 0 else 0,
         }
 
     return result
@@ -149,6 +213,17 @@ def build_performance_summary(days: int = 30) -> str:
                 )
     if cal_notes:
         lines.append("- 置信度校准: " + "; ".join(cal_notes))
+
+    # 分析师准确率（样本 >= 10 时展示）
+    if perf["closed"] >= 10:
+        analyst_acc = calc_analyst_accuracy(days)
+        acc_parts = []
+        for role in ("technical", "onchain", "sentiment", "fundamental"):
+            info = analyst_acc.get(role)
+            if info and info["total"] >= 5:
+                acc_parts.append(f"{role}: {info['accuracy'] * 100:.0f}%")
+        if acc_parts:
+            lines.append(f"- 分析师准确率: {', '.join(acc_parts)}")
 
     # 最近 5 笔已平仓交易
     all_records = get_all_records()

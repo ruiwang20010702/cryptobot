@@ -36,6 +36,10 @@ class SignalRecord:
     exit_reason: str | None = None   # tp_hit / sl_hit / manual / expired
     duration_hours: float | None = None
 
+    # AI 分析元数据
+    analyst_votes: dict | None = None    # {"technical": "bullish", "onchain": "bearish", ...}
+    prompt_version: str | None = None    # "v1.0"
+
     # 状态
     status: str = "pending"  # pending / active / closed / expired
 
@@ -64,5 +68,7 @@ class SignalRecord:
             position_size_usdt=signal.get("position_size_usdt"),
             reasoning=summary.get("reasoning", ""),
             risk_score=summary.get("risk_score"),
+            analyst_votes=signal.get("analyst_votes"),
+            prompt_version=signal.get("prompt_version"),
             status="pending",
         )

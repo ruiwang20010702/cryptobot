@@ -14,6 +14,8 @@ from cryptobot.cli.scheduler import (
     job_cleanup,
     job_re_review,
     job_workflow_run,
+    _maybe_reload_config,
+    _maybe_reschedule,
 )
 
 
@@ -106,6 +108,66 @@ class TestJobCleanup:
         assert "清理过期信号" not in caplog.text
 
 
+# ─── 配置热更新 ───────────────────────────────────────────────────────────
+
+class TestConfigReload:
+    def test_mtime_unchanged_no_parse(self, tmp_path, monkeypatch):
+        """mtime 未变时不解析 yaml"""
+        import cryptobot.cli.scheduler as sched_mod
+
+        config_file = tmp_path / "settings.yaml"
+        config_file.write_text("schedule:\n  full_cycle_hours: 2\n")
+
+        monkeypatch.setattr(sched_mod, "_CONFIG_PATH", str(config_file))
+        monkeypatch.setattr(sched_mod, "_last_mtime", config_file.stat().st_mtime)
+        monkeypatch.setattr(sched_mod, "_last_config", {"schedule": {"full_cycle_hours": 2}})
+
+        mock_sched = MagicMock()
+        _maybe_reload_config(mock_sched)
+
+        # 不应 reschedule
+        mock_sched.reschedule_job.assert_not_called()
+
+    def test_interval_change_triggers_reschedule(self, tmp_path, monkeypatch):
+        """interval 变更触发 reschedule_job"""
+        import cryptobot.cli.scheduler as sched_mod
+
+        config_file = tmp_path / "settings.yaml"
+        config_file.write_text("schedule:\n  full_cycle_hours: 4\n")
+
+        monkeypatch.setattr(sched_mod, "_CONFIG_PATH", str(config_file))
+        monkeypatch.setattr(sched_mod, "_last_mtime", 0.0)  # 强制触发
+        monkeypatch.setattr(sched_mod, "_last_config", {"schedule": {"full_cycle_hours": 2}})
+
+        mock_sched = MagicMock()
+        _maybe_reload_config(mock_sched)
+
+        mock_sched.reschedule_job.assert_called_once_with(
+            "workflow_run", trigger="interval", hours=4,
+        )
+
+    def test_file_not_exist_no_error(self, tmp_path, monkeypatch):
+        """文件不存在不报错"""
+        import cryptobot.cli.scheduler as sched_mod
+
+        monkeypatch.setattr(sched_mod, "_CONFIG_PATH", str(tmp_path / "nonexistent.yaml"))
+        monkeypatch.setattr(sched_mod, "_last_mtime", 0.0)
+
+        mock_sched = MagicMock()
+        _maybe_reload_config(mock_sched)  # 不应抛异常
+        mock_sched.reschedule_job.assert_not_called()
+
+    def test_reschedule_multiple_keys(self):
+        """多个配置项同时变更"""
+        mock_sched = MagicMock()
+        old = {"schedule": {"full_cycle_hours": 2, "monitor_interval_minutes": 5}}
+        new = {"schedule": {"full_cycle_hours": 3, "monitor_interval_minutes": 10}}
+
+        _maybe_reschedule(mock_sched, new, old)
+
+        assert mock_sched.reschedule_job.call_count == 2
+
+
 # ─── CLI 命令 ──────────────────────────────────────────────────────────────
 
 class TestDaemonCLI:
@@ -138,8 +200,8 @@ class TestDaemonCLI:
 
         assert result.exit_code == 0
         assert "调度器启动" in result.output
-        # 验证 5 个 job 被添加
-        assert mock_sched.add_job.call_count == 5
+        # 验证 6 个 job 被添加 (含 config_reload)
+        assert mock_sched.add_job.call_count == 6
         job_ids = {
             call.kwargs.get("id") or call[2].get("id")
             for call in mock_sched.add_job.call_args_list

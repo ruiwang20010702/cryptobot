@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>CryptoBot Dashboard</h1>
+
+<div id="dashboard-content" hx-get="/api/dashboard" hx-trigger="load, every 30s"
+     hx-swap="innerHTML" hx-target="#dashboard-data">
+</div>
+
+<div id="dashboard-data">
+    <p id="loading">Loading...</p>
+</div>
+
+<script>
+document.body.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail.target.id === 'dashboard-data' && evt.detail.successful) {
+        try {
+            const data = JSON.parse(evt.detail.xhr.responseText);
+            renderDashboard(data);
+        } catch(e) {
+            document.getElementById('dashboard-data').innerHTML =
+                '<p class="red">Failed to load data</p>';
+        }
+    }
+});
+
+function renderDashboard(d) {
+    const perf = d.performance || {};
+    const positions = d.positions || [];
+    const signals = d.signals || [];
+    const pending = d.pending_signals || [];
+
+    let html = `
+    <div class="stats-row">
+        <div class="stat-box">
+            <div class="stat blue">${d.account_balance?.toFixed(0) || '—'}</div>
+            <div class="stat-label">USDT Balance</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat">${positions.length}</div>
+            <div class="stat-label">Positions</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat">${signals.length} / ${pending.length}</div>
+            <div class="stat-label">Signals / Pending</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat ${(perf.win_rate||0) >= 0.5 ? 'green' : 'red'}">
+                ${perf.closed ? (perf.win_rate * 100).toFixed(1) + '%' : '—'}
+            </div>
+            <div class="stat-label">Win Rate (${perf.period_days || 30}d)</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat ${(perf.total_pnl_usdt||0) >= 0 ? 'green' : 'red'}">
+                ${perf.total_pnl_usdt != null ? (perf.total_pnl_usdt >= 0 ? '+' : '') + perf.total_pnl_usdt.toFixed(0) : '—'}
+            </div>
+            <div class="stat-label">PnL USDT</div>
+        </div>
+    </div>
+
+    <div class="grid">`;
+
+    // Positions
+    html += `<div class="card"><h2>Positions</h2>`;
+    if (positions.length === 0) {
+        html += '<p style="color:#8b949e">No open positions</p>';
+    } else {
+        html += `<table><tr><th>Pair</th><th>Side</th><th>PnL</th><th>Leverage</th></tr>`;
+        for (const p of positions) {
+            const pnl = (p.profit_pct || 0);
+            const cls = pnl >= 0 ? 'green' : 'red';
+            const side = p.is_short ? 'SHORT' : 'LONG';
+            html += `<tr><td>${p.pair||''}</td><td>${side}</td>
+                     <td class="${cls}">${pnl >= 0 ? '+' : ''}${(pnl*100).toFixed(2)}%</td>
+                     <td>${p.leverage||1}x</td></tr>`;
+        }
+        html += '</table>';
+    }
+    html += '</div>';
+
+    // Signals
+    html += `<div class="card"><h2>Active Signals</h2>`;
+    if (signals.length === 0) {
+        html += '<p style="color:#8b949e">No active signals</p>';
+    } else {
+        html += `<table><tr><th>Symbol</th><th>Action</th><th>Confidence</th><th>Entry</th></tr>`;
+        for (const s of signals) {
+            const entry = s.entry_price_range ?
+                s.entry_price_range.map(p => p?.toFixed(1)).join(' - ') : '—';
+            html += `<tr><td>${s.symbol}</td><td>${s.action}</td>
+                     <td>${s.confidence}%</td><td>${entry}</td></tr>`;
+        }
+        html += '</table>';
+    }
+    html += '</div>';
+
+    // Pending
+    if (pending.length > 0) {
+        html += `<div class="card"><h2>Pending Signals</h2>
+                 <table><tr><th>Symbol</th><th>Action</th><th>Entry Range</th></tr>`;
+        for (const s of pending) {
+            const entry = s.entry_price_range ?
+                s.entry_price_range.map(p => p?.toFixed(1)).join(' - ') : '—';
+            html += `<tr><td>${s.symbol}</td><td>${s.action}</td><td>${entry}</td></tr>`;
+        }
+        html += '</table></div>';
+    }
+
+    html += '</div>';
+    document.getElementById('dashboard-data').innerHTML = html;
+}
+</script>
+{% endblock %}

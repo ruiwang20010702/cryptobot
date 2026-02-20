@@ -29,7 +29,15 @@ BINANCE_TICKER_URL = "https://fapi.binance.com/fapi/v1/ticker/price"
 
 
 def _fetch_price(symbol: str) -> float | None:
-    """从 Binance 获取最新价格"""
+    """获取最新价格：优先 WS 缓存，fallback REST"""
+    try:
+        from cryptobot.realtime.ws_price_feed import get_cached_price
+        cached = get_cached_price(symbol)
+        if cached is not None:
+            return cached
+    except ImportError:
+        pass
+
     try:
         resp = httpx.get(
             BINANCE_TICKER_URL,
@@ -140,8 +148,12 @@ def _promote_signal(signal: dict) -> None:
         logger.warning("更新交易日志失败: %s", e)
 
 
-def run_monitor() -> None:
-    """主循环：每 N 秒轮询，检查所有 pending 信号"""
+def run_monitor(*, stop_event=None) -> None:
+    """主循环：每 N 秒轮询，检查所有 pending 信号
+
+    Args:
+        stop_event: threading.Event，设置后停止循环
+    """
     settings = load_settings()
     rt_cfg = settings.get("realtime", {})
     poll_interval = rt_cfg.get("poll_interval_seconds", 10)
@@ -154,7 +166,7 @@ def run_monitor() -> None:
         poll_interval, tolerance_pct, require_confirm, max_wait,
     )
 
-    while True:
+    while not (stop_event and stop_event.is_set()):
         try:
             pending = read_pending_signals(filter_expired=False)
             if not pending:

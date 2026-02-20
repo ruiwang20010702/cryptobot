@@ -21,7 +21,7 @@ from cryptobot.journal.storage import (
     RECORDS_FILE,
     JOURNAL_DIR,
 )
-from cryptobot.journal.analytics import calc_performance, build_performance_summary
+from cryptobot.journal.analytics import calc_performance, build_performance_summary, calc_analyst_accuracy
 from cryptobot.cli.journal import journal
 
 
@@ -71,6 +71,44 @@ class TestSignalRecord:
         record = SignalRecord.from_dict(d)
         assert record.signal_id == "x"
         assert record.symbol == "BTC"
+
+    def test_analyst_votes_roundtrip(self):
+        """analyst_votes 序列化/反序列化"""
+        votes = {"technical": "bullish", "onchain": "bearish", "sentiment": "neutral"}
+        record = SignalRecord(signal_id="v1", analyst_votes=votes)
+        d = record.to_dict()
+        assert d["analyst_votes"] == votes
+
+        restored = SignalRecord.from_dict(d)
+        assert restored.analyst_votes == votes
+
+    def test_prompt_version_roundtrip(self):
+        """prompt_version 序列化/反序列化"""
+        record = SignalRecord(signal_id="p1", prompt_version="v1.0")
+        d = record.to_dict()
+        assert d["prompt_version"] == "v1.0"
+
+        restored = SignalRecord.from_dict(d)
+        assert restored.prompt_version == "v1.0"
+
+    def test_new_fields_default_none(self):
+        """新字段默认 None，向后兼容"""
+        record = SignalRecord(signal_id="n1")
+        assert record.analyst_votes is None
+        assert record.prompt_version is None
+
+    def test_from_signal_with_new_fields(self):
+        """from_signal 透传 analyst_votes 和 prompt_version"""
+        signal = {
+            "symbol": "ETHUSDT",
+            "action": "short",
+            "analyst_votes": {"technical": "bearish"},
+            "prompt_version": "v1.0",
+            "analysis_summary": {},
+        }
+        record = SignalRecord.from_signal(signal)
+        assert record.analyst_votes == {"technical": "bearish"}
+        assert record.prompt_version == "v1.0"
 
 
 # ─── Storage ──────────────────────────────────────────────────────────────
@@ -233,6 +271,108 @@ class TestAnalytics:
 
         perf = calc_performance(30)
         assert perf["profit_factor"] == 2.0
+
+
+# ─── Analyst Accuracy ─────────────────────────────────────────────────────
+
+class TestAnalystAccuracy:
+    @pytest.fixture(autouse=True)
+    def setup_records(self, tmp_path, monkeypatch):
+        journal_dir = tmp_path / "journal"
+        journal_dir.mkdir()
+        records_file = journal_dir / "records.json"
+        monkeypatch.setattr("cryptobot.journal.storage.JOURNAL_DIR", journal_dir)
+        monkeypatch.setattr("cryptobot.journal.storage.RECORDS_FILE", records_file)
+
+    def test_correct_and_incorrect_votes(self):
+        """正确/错误投票计数"""
+        # long + bullish + 盈利 → 正确
+        save_record(SignalRecord(
+            signal_id="a1", status="closed", action="long",
+            timestamp="2026-02-15T00:00:00",
+            actual_pnl_pct=5.0,
+            analyst_votes={"technical": "bullish", "onchain": "bearish"},
+        ))
+        # short + bearish + 盈利 → 正确
+        save_record(SignalRecord(
+            signal_id="a2", status="closed", action="short",
+            timestamp="2026-02-15T01:00:00",
+            actual_pnl_pct=3.0,
+            analyst_votes={"technical": "bearish", "onchain": "bearish"},
+        ))
+        # long + bullish + 亏损 → 错误
+        save_record(SignalRecord(
+            signal_id="a3", status="closed", action="long",
+            timestamp="2026-02-15T02:00:00",
+            actual_pnl_pct=-2.0,
+            analyst_votes={"technical": "bullish", "onchain": "neutral"},
+        ))
+
+        result = calc_analyst_accuracy(30)
+        # technical: a1 正确, a2 正确, a3 错误 → 2/3
+        assert result["technical"]["total"] == 3
+        assert result["technical"]["correct"] == 2
+        assert result["technical"]["accuracy"] == pytest.approx(0.667, abs=0.01)
+        # onchain: a1 bearish+long+win → 错误, a2 bearish+short+win → 正确,
+        #          a3 neutral+long+loss → neutral≠bullish, not agree, loss → 正确
+        assert result["onchain"]["total"] == 3
+        assert result["onchain"]["correct"] == 2
+
+    def test_no_votes_skipped(self):
+        """无 analyst_votes 的记录被跳过"""
+        save_record(SignalRecord(
+            signal_id="n1", status="closed", action="long",
+            timestamp="2026-02-15T00:00:00",
+            actual_pnl_pct=5.0,
+            analyst_votes=None,
+        ))
+        result = calc_analyst_accuracy(30)
+        assert result == {}
+
+    def test_empty_records(self):
+        """空记录返回空 dict"""
+        result = calc_analyst_accuracy(30)
+        assert result == {}
+
+
+# ─── By Symbol ────────────────────────────────────────────────────────────
+
+class TestBySymbol:
+    @pytest.fixture(autouse=True)
+    def setup_records(self, tmp_path, monkeypatch):
+        journal_dir = tmp_path / "journal"
+        journal_dir.mkdir()
+        records_file = journal_dir / "records.json"
+        monkeypatch.setattr("cryptobot.journal.storage.JOURNAL_DIR", journal_dir)
+        monkeypatch.setattr("cryptobot.journal.storage.RECORDS_FILE", records_file)
+
+    def test_by_symbol_grouping(self):
+        """按币种分组统计"""
+        save_record(SignalRecord(
+            signal_id="s1", status="closed", symbol="BTCUSDT",
+            timestamp="2026-02-15T00:00:00",
+            actual_pnl_pct=5.0, actual_pnl_usdt=500,
+        ))
+        save_record(SignalRecord(
+            signal_id="s2", status="closed", symbol="BTCUSDT",
+            timestamp="2026-02-15T01:00:00",
+            actual_pnl_pct=-2.0, actual_pnl_usdt=-200,
+        ))
+        save_record(SignalRecord(
+            signal_id="s3", status="closed", symbol="ETHUSDT",
+            timestamp="2026-02-15T02:00:00",
+            actual_pnl_pct=3.0, actual_pnl_usdt=300,
+        ))
+
+        perf = calc_performance(30)
+        by_sym = perf["by_symbol"]
+        assert "BTCUSDT" in by_sym
+        assert by_sym["BTCUSDT"]["count"] == 2
+        assert by_sym["BTCUSDT"]["win_rate"] == 0.5
+        assert by_sym["BTCUSDT"]["avg_pnl_pct"] == 1.5
+        assert "ETHUSDT" in by_sym
+        assert by_sym["ETHUSDT"]["count"] == 1
+        assert by_sym["ETHUSDT"]["win_rate"] == 1.0
 
 
 # ─── Performance Summary ──────────────────────────────────────────────────

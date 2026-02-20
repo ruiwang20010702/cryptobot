@@ -356,3 +356,83 @@ class TestRealtimeCLI:
         data = json.loads(result.output)
         assert len(data) == 1
         assert data[0]["symbol"] == "BTCUSDT"
+
+
+# ─── WS Price Feed ──────────────────────────────────────────────────────
+
+class TestWSPriceFeed:
+    def test_process_message_updates_cache(self):
+        from cryptobot.realtime.ws_price_feed import _process_message, price_cache, _lock
+
+        # 清空缓存
+        with _lock:
+            price_cache.clear()
+
+        _process_message({"s": "BTCUSDT", "c": "95000.50"})
+        from cryptobot.realtime.ws_price_feed import get_cached_price
+        assert get_cached_price("BTCUSDT") == 95000.50
+
+    def test_invalid_message_no_crash(self):
+        from cryptobot.realtime.ws_price_feed import _process_message
+
+        # 无 symbol
+        _process_message({"c": "95000"})
+        # 无 price
+        _process_message({"s": "BTCUSDT"})
+        # 空 dict
+        _process_message({})
+        # 非数字 price
+        _process_message({"s": "BTCUSDT", "c": "not_a_number"})
+
+    def test_cache_empty_rest_fallback(self, monkeypatch):
+        """缓存为空时 _fetch_price 应 fallback REST"""
+        from cryptobot.realtime import ws_price_feed as ws_mod
+        from cryptobot.realtime.ws_price_feed import _lock
+
+        # 清空缓存
+        with _lock:
+            ws_mod.price_cache.clear()
+
+        # _fetch_price 应 fallback 到 REST
+        from cryptobot.realtime.monitor import _fetch_price
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"price": "42000.0"}
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: mock_resp)
+
+        price = _fetch_price("ETHUSDT")
+        assert price == 42000.0
+
+    def test_cache_hit_no_rest(self, monkeypatch):
+        """缓存命中时不走 REST"""
+        from cryptobot.realtime.ws_price_feed import _process_message, _lock, price_cache
+
+        with _lock:
+            price_cache.clear()
+
+        _process_message({"s": "SOLUSDT", "c": "150.0"})
+
+        from cryptobot.realtime.monitor import _fetch_price
+
+        # 如果走了 REST 会抛异常
+        import httpx
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("should not call REST")))
+
+        price = _fetch_price("SOLUSDT")
+        assert price == 150.0
+
+    def test_get_all_cached_prices(self):
+        from cryptobot.realtime.ws_price_feed import _process_message, get_all_cached_prices, _lock, price_cache
+
+        with _lock:
+            price_cache.clear()
+
+        _process_message({"s": "BTCUSDT", "c": "95000"})
+        _process_message({"s": "ETHUSDT", "c": "3500"})
+
+        cached = get_all_cached_prices()
+        assert cached["BTCUSDT"] == 95000.0
+        assert cached["ETHUSDT"] == 3500.0

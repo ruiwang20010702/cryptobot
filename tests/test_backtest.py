@@ -13,7 +13,9 @@ from cryptobot.backtest.evaluator import (
     _calc_risk_reward,
     _calc_streak,
 )
+from cryptobot.backtest.ab_test import run_ab_test
 from cryptobot.journal.models import SignalRecord
+from cryptobot.journal.storage import save_record
 from cryptobot.cli.backtest import backtest
 
 
@@ -173,6 +175,67 @@ class TestReplaySignal:
         assert result["tp_hits"] == 1  # 最高 102000 > 止盈 100000
 
 
+# ─── A/B Test ─────────────────────────────────────────────────────────────
+
+class TestABTest:
+    @pytest.fixture(autouse=True)
+    def setup_journal(self, tmp_path, monkeypatch):
+        journal_dir = tmp_path / "journal"
+        journal_dir.mkdir()
+        monkeypatch.setattr("cryptobot.journal.storage.JOURNAL_DIR", journal_dir)
+        monkeypatch.setattr("cryptobot.journal.storage.RECORDS_FILE", journal_dir / "records.json")
+
+    def test_empty_records(self):
+        result = run_ab_test(90)
+        assert result["total_samples"] == 0
+        assert result["versions"] == {}
+
+    def test_groups_by_version(self):
+        save_record(SignalRecord(
+            signal_id="ab1", status="closed", prompt_version="v1.0",
+            timestamp="2026-02-15T00:00:00", actual_pnl_pct=5.0,
+        ))
+        save_record(SignalRecord(
+            signal_id="ab2", status="closed", prompt_version="v1.0",
+            timestamp="2026-02-15T01:00:00", actual_pnl_pct=-2.0,
+        ))
+        save_record(SignalRecord(
+            signal_id="ab3", status="closed", prompt_version="v2.0",
+            timestamp="2026-02-15T02:00:00", actual_pnl_pct=3.0,
+        ))
+
+        result = run_ab_test(90)
+        assert result["total_samples"] == 3
+        assert "v1.0" in result["versions"]
+        assert "v2.0" in result["versions"]
+        assert result["versions"]["v1.0"]["count"] == 2
+        assert result["versions"]["v1.0"]["win_rate"] == 0.5
+        assert result["versions"]["v2.0"]["count"] == 1
+        assert result["versions"]["v2.0"]["win_rate"] == 1.0
+
+    def test_unknown_version_for_missing(self):
+        """无 prompt_version 归类为 unknown"""
+        save_record(SignalRecord(
+            signal_id="ab4", status="closed",
+            timestamp="2026-02-15T00:00:00", actual_pnl_pct=1.0,
+        ))
+        result = run_ab_test(90)
+        assert "unknown" in result["versions"]
+
+    def test_win_rate_calculation(self):
+        for i, pnl in enumerate([5.0, -1.0, 3.0, -2.0]):
+            save_record(SignalRecord(
+                signal_id=f"wr{i}", status="closed", prompt_version="v1.0",
+                timestamp=f"2026-02-15T0{i}:00:00", actual_pnl_pct=pnl,
+            ))
+        result = run_ab_test(90)
+        v1 = result["versions"]["v1.0"]
+        assert v1["wins"] == 2
+        assert v1["losses"] == 2
+        assert v1["win_rate"] == 0.5
+        assert v1["avg_pnl_pct"] == 1.25
+
+
 # ─── CLI ──────────────────────────────────────────────────────────────────
 
 class TestBacktestCLI:
@@ -200,3 +263,17 @@ class TestBacktestCLI:
         runner = CliRunner()
         result = runner.invoke(backtest, ["replay", "--help"])
         assert result.exit_code == 0
+
+    def test_ab_test_help(self):
+        runner = CliRunner()
+        result = runner.invoke(backtest, ["ab-test", "--help"])
+        assert result.exit_code == 0
+        assert "--days" in result.output
+
+    @patch("cryptobot.backtest.ab_test.get_all_records", return_value=[])
+    def test_ab_test_empty_json(self, mock_get):
+        runner = CliRunner()
+        result = runner.invoke(backtest, ["ab-test", "--json-output"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["total_samples"] == 0

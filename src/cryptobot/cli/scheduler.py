@@ -6,9 +6,11 @@
 - 持仓复审 (默认每 4h)
 - 过期信号清理 (默认每 24h)
 - 可选: 实时入场监控 (后台线程)
+- 配置热更新检查 (每 2min)
 """
 
 import logging
+import os
 import threading
 
 import click
@@ -18,6 +20,68 @@ from cryptobot.config import load_settings
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+# ─── 配置热更新 ──────────────────────────────────────────────────────────
+
+_last_mtime: float = 0.0
+_last_config: dict = {}
+_CONFIG_PATH = os.path.join("config", "settings.yaml")
+
+
+def _maybe_reload_config(scheduler) -> None:
+    """检查 settings.yaml 是否变更，变更时热更新调度间隔"""
+    global _last_mtime, _last_config
+
+    try:
+        mtime = os.path.getmtime(_CONFIG_PATH)
+    except OSError:
+        return  # 文件不存在不报错
+
+    if mtime == _last_mtime:
+        return
+
+    _last_mtime = mtime
+
+    try:
+        import yaml
+        with open(_CONFIG_PATH) as f:
+            new_config = yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning("配置文件解析失败: %s", e)
+        return
+
+    old_config = _last_config
+    _last_config = new_config
+
+    if not old_config:
+        return  # 首次加载，不触发 reschedule
+
+    _maybe_reschedule(scheduler, new_config, old_config)
+
+
+def _maybe_reschedule(scheduler, new: dict, old: dict) -> None:
+    """对比新旧配置中的 schedule 区段，变化时调用 reschedule_job"""
+    new_sched = new.get("schedule", {})
+    old_sched = old.get("schedule", {})
+
+    mapping = {
+        "full_cycle_hours": ("workflow_run", "hours"),
+        "monitor_interval_minutes": ("check_alerts", "minutes"),
+        "re_review_hours": ("re_review", "hours"),
+        "cleanup_hours": ("cleanup", "hours"),
+    }
+
+    for key, (job_id, unit) in mapping.items():
+        new_val = new_sched.get(key)
+        old_val = old_sched.get(key)
+        if new_val is not None and new_val != old_val:
+            try:
+                scheduler.reschedule_job(
+                    job_id, trigger="interval", **{unit: new_val},
+                )
+                logger.info("热更新 %s: %s=%s", job_id, unit, new_val)
+            except Exception as e:
+                logger.warning("热更新 %s 失败: %s", job_id, e)
 
 
 # ─── 定时任务函数 ──────────────────────────────────────────────────────────
@@ -245,18 +309,63 @@ def start(run_now: bool, verbose: bool):
         max_instances=1,
     )
 
+    # 配置热更新检查: 每 2min
+    scheduler.add_job(
+        _maybe_reload_config,
+        "interval",
+        minutes=2,
+        args=[scheduler],
+        id="config_reload",
+        name="配置热更新 (每2min)",
+        max_instances=1,
+    )
+
+    # 初始化配置快照
+    global _last_mtime, _last_config
+    try:
+        _last_mtime = os.path.getmtime(_CONFIG_PATH)
+        import yaml
+        with open(_CONFIG_PATH) as f:
+            _last_config = yaml.safe_load(f) or {}
+    except OSError:
+        pass
+
     console.print("[cyan]调度器启动[/cyan]")
     console.print(f"  完整分析: 每 {full_cycle_hours}h")
     console.print(f"  告警检查: 每 {monitor_interval_min}min")
     console.print(f"  持仓复审: 每 {re_review_hours}h")
     console.print(f"  信号清理: 每 {cleanup_hours}h")
 
+    # 用于优雅停止监控线程
+    stop_event = threading.Event()
+    evt_enabled = settings.get("events", {}).get("enabled", False)
+
+    # WebSocket 价格推送 (后台线程，优先于 realtime/events)
+    ws_enabled = settings.get("websocket", {}).get("enabled", True)
+    if ws_enabled and (rt_enabled or evt_enabled):
+        from cryptobot.config import get_all_symbols
+        from cryptobot.realtime.ws_price_feed import run_ws_price_feed
+
+        ws_symbols = get_all_symbols()
+        ws_thread = threading.Thread(
+            target=run_ws_price_feed,
+            args=[ws_symbols],
+            kwargs={"stop_event": stop_event},
+            daemon=True,
+            name="ws-price-feed",
+        )
+        ws_thread.start()
+        console.print(f"  WS 价格推送: 已启用 ({len(ws_symbols)} 币种)")
+    else:
+        console.print("  WS 价格推送: 未启用")
+
     # 实时入场监控 (后台线程)
     if rt_enabled:
         from cryptobot.realtime.monitor import run_monitor
 
         rt_thread = threading.Thread(
-            target=run_monitor, daemon=True, name="realtime-monitor",
+            target=run_monitor, kwargs={"stop_event": stop_event},
+            daemon=True, name="realtime-monitor",
         )
         rt_thread.start()
         console.print("  实时监控: 已启用 (后台线程)")
@@ -264,12 +373,12 @@ def start(run_now: bool, verbose: bool):
         console.print("  实时监控: 未启用")
 
     # 价格异动事件监控 (后台线程)
-    evt_enabled = settings.get("events", {}).get("enabled", False)
     if evt_enabled:
         from cryptobot.events.price_monitor import run_price_monitor
 
         evt_thread = threading.Thread(
-            target=run_price_monitor, daemon=True, name="event-monitor",
+            target=run_price_monitor, kwargs={"stop_event": stop_event},
+            daemon=True, name="event-monitor",
         )
         evt_thread.start()
         console.print("  事件监控: 已启用 (后台线程)")
@@ -288,4 +397,5 @@ def start(run_now: bool, verbose: bool):
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
+        stop_event.set()
         console.print("\n[yellow]调度器已停止[/yellow]")

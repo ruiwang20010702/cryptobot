@@ -81,6 +81,46 @@ def evaluate(days: int, json_output: bool):
         console.print(f"  最大连败: {streak.get('max_consecutive_losses', 0)}")
 
 
+@backtest.command("ab-test")
+@click.option("--days", default=90, help="回溯天数")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def ab_test(days: int, json_output: bool):
+    """Prompt A/B 测试: 按 prompt_version 对比绩效"""
+    from cryptobot.backtest.ab_test import run_ab_test
+
+    result = run_ab_test(days)
+
+    if json_output:
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+
+    total = result["total_samples"]
+    if total == 0:
+        console.print(f"[yellow]近 {days} 天无已平仓交易记录[/yellow]")
+        return
+
+    console.print(f"\n[bold]Prompt A/B 测试 (近 {days} 天, {total} 笔)[/bold]\n")
+
+    table = Table(title="按 Prompt 版本")
+    table.add_column("版本")
+    table.add_column("笔数", justify="right")
+    table.add_column("胜率", justify="right")
+    table.add_column("平均盈亏", justify="right")
+    table.add_column("盈亏比", justify="right")
+
+    for version, stats in result["versions"].items():
+        pf = str(stats["profit_factor"]) if stats["profit_factor"] != float("inf") else "∞"
+        table.add_row(
+            version,
+            str(stats["count"]),
+            f"{stats['win_rate'] * 100:.1f}%",
+            f"{stats['avg_pnl_pct']:+.2f}%",
+            pf,
+        )
+
+    console.print(table)
+
+
 @backtest.command("replay")
 @click.argument("signal_id")
 def replay(signal_id: str):

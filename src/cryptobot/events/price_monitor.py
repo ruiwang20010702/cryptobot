@@ -72,21 +72,36 @@ class PriceEvent:
 
 
 def fetch_all_prices(symbols: list[str]) -> dict[str, float]:
-    """批量获取价格"""
+    """批量获取价格：优先 WS 缓存，覆盖率 < 80% 时 fallback REST"""
+    prices = {}
+
+    try:
+        from cryptobot.realtime.ws_price_feed import get_all_cached_prices
+        cached = get_all_cached_prices()
+        for s in symbols:
+            if s in cached:
+                prices[s] = cached[s]
+    except ImportError:
+        pass
+
+    # 缓存覆盖率足够则直接返回
+    if len(prices) >= len(symbols) * 0.8:
+        return prices
+
+    # Fallback REST
     try:
         resp = httpx.get(BINANCE_TICKER_URL, timeout=5)
         resp.raise_for_status()
         data = resp.json()
-        prices = {}
         symbol_set = set(symbols)
         for item in data:
             s = item.get("symbol")
-            if s in symbol_set:
+            if s in symbol_set and s not in prices:
                 prices[s] = float(item["price"])
-        return prices
     except Exception as e:
         logger.warning("批量获取价格失败: %s", e)
-        return {}
+
+    return prices
 
 
 def check_events(
@@ -131,8 +146,12 @@ def check_events(
     return events
 
 
-def run_price_monitor() -> None:
-    """主循环: 轮询价格，检测异动，调用 dispatcher"""
+def run_price_monitor(*, stop_event=None) -> None:
+    """主循环: 轮询价格，检测异动，调用 dispatcher
+
+    Args:
+        stop_event: threading.Event，设置后停止循环
+    """
     from cryptobot.config import get_all_symbols, load_settings
     from cryptobot.events.dispatcher import handle_events
 
@@ -158,7 +177,7 @@ def run_price_monitor() -> None:
         len(symbols), poll_interval, thresholds,
     )
 
-    while True:
+    while not (stop_event and stop_event.is_set()):
         try:
             prices = fetch_all_prices(symbols)
 

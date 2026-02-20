@@ -6,6 +6,9 @@
 1 个风控经理 (sonnet): 审核风控
 """
 
+# Prompt 版本号，用于 A/B 测试追踪
+PROMPT_VERSION = "v1.0"
+
 TECHNICAL_ANALYST = """\
 你是一位专业的加密货币技术分析师。
 
