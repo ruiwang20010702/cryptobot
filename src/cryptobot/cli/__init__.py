@@ -22,7 +22,16 @@ from cryptobot.cli.init_cmd import init_cmd
 @click.version_option(package_name="cryptobot")
 def cli():
     """加密货币合约量化交易系统 CLI"""
-    pass
+    from cryptobot.config import load_settings
+    from cryptobot.logging_config import setup_logging
+
+    settings = load_settings()
+    log_cfg = settings.get("logging", {})
+    setup_logging(
+        level=log_cfg.get("level", "INFO"),
+        json_format=log_cfg.get("json_format", True),
+        log_file=log_cfg.get("log_file"),
+    )
 
 
 cli.add_command(data)

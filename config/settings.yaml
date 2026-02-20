@@ -6,6 +6,12 @@ system:
   version: "0.1.0"
   log_level: "INFO"
 
+# 日志配置
+logging:
+  level: "INFO"                       # DEBUG / INFO / WARNING / ERROR
+  json_format: true                   # true: JSON 格式, false: 文本格式
+  log_file: null                      # 文件路径, null 表示仅控制台
+
 # Binance API (通过环境变量设置)
 # BINANCE_API_KEY, BINANCE_API_SECRET
 binance:

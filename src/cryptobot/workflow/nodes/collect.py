@@ -37,73 +37,65 @@ _REGIME_PARAMS = {
 }
 
 
+def _calc_confidence(regime_result: dict) -> int:
+    """根据多 TF 一致性计算置信度"""
+    details = regime_result.get("timeframe_details", {})
+    if not details:
+        return 50
+
+    trends = [d["trend"] for d in details.values()]
+    majority = max(set(trends), key=trends.count)
+    agreement = trends.count(majority) / len(trends)
+
+    # 强 ADX 加分
+    strong_count = sum(1 for d in details.values() if d.get("strength") == "strong")
+
+    base = int(agreement * 80)
+    bonus = strong_count * 5
+    return min(95, base + bonus)
+
+
 def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
-    """基于 BTC 技术指标 + 恐惧贪婪判断市场状态
+    """基于多时间框架 + 恐惧贪婪判断市场状态
 
     Returns:
-        {regime: "trending"|"ranging"|"volatile",
-         confidence: 0-100,
-         params: {...},
-         description: "..."}
+        {regime, confidence, params, description, trend_direction,
+         trend_strength, volatility_state, timeframe_details}
     """
-    btc = market_data.get("BTCUSDT", {})
-    tech = btc.get("tech") or {}
+    from cryptobot.indicators.regime import detect_regime
 
-    adx = (tech.get("trend") or {}).get("adx")
-    atr_pct = (tech.get("volatility") or {}).get("atr_pct", 0)
-    bb_width = (tech.get("volatility") or {}).get("bb_width", 0)
+    try:
+        regime_result = detect_regime("BTCUSDT")
+    except Exception as e:
+        logger.warning("多TF regime 检测失败，使用默认: %s", e)
+        regime_result = {
+            "regime": "ranging",
+            "trend_direction": "neutral",
+            "trend_strength": "weak",
+            "volatility_state": "normal",
+            "timeframe_details": {},
+            "description": "检测失败，默认震荡市",
+        }
+
+    # 恐惧贪婪极端值可升级为 volatile
     fg_val = fear_greed.get("current_value", 50)
+    if (fg_val < 20 or fg_val > 80) and regime_result["regime"] != "volatile":
+        regime_result["regime"] = "volatile"
+        regime_result["description"] += " (恐惧贪婪极端值触发升级)"
 
-    # 评分
-    volatile_score = 0
-    trending_score = 0
-    ranging_score = 0
+    # 附加策略参数 (复用现有 _REGIME_PARAMS)
+    regime_key = regime_result["regime"]
+    params = _REGIME_PARAMS.get(regime_key, _REGIME_PARAMS["ranging"])
 
-    # ATR 波动率
-    if atr_pct > 4:
-        volatile_score += 3
-    elif atr_pct > 2.5:
-        volatile_score += 1
-    elif atr_pct < 1.5:
-        ranging_score += 2
-
-    # 布林带宽度
-    if bb_width and bb_width > 8:
-        volatile_score += 2
-    elif bb_width and bb_width < 3:
-        ranging_score += 2
-
-    # ADX 趋势强度
-    if adx and adx > 30:
-        trending_score += 3
-    elif adx and adx > 25:
-        trending_score += 2
-    elif adx and adx < 20:
-        ranging_score += 2
-
-    # 恐惧贪婪极端值
-    if fg_val < 20 or fg_val > 80:
-        volatile_score += 2
-    elif 40 <= fg_val <= 60:
-        ranging_score += 1
-
-    # 选择得分最高的状态
-    scores = {
-        "trending": trending_score,
-        "ranging": ranging_score,
-        "volatile": volatile_score,
-    }
-    regime = max(scores, key=scores.get)
-    max_score = scores[regime]
-    total = sum(scores.values()) or 1
-    confidence = round(max_score / total * 100)
-
-    params = _REGIME_PARAMS[regime]
     return {
-        "regime": regime,
-        "confidence": confidence,
+        "regime": regime_key,
+        "confidence": _calc_confidence(regime_result),
         "params": {k: v for k, v in params.items() if k != "description"},
-        "description": params["description"],
+        "description": regime_result["description"],
+        "trend_direction": regime_result.get("trend_direction", "neutral"),
+        "trend_strength": regime_result.get("trend_strength", "weak"),
+        "volatility_state": regime_result.get("volatility_state", "normal"),
+        "timeframe_details": regime_result.get("timeframe_details", {}),
     }
 
 

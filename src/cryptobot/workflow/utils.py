@@ -157,6 +157,20 @@ def _fetch_symbol(symbol: str) -> tuple[str, dict, list]:
         logger.warning("强平数据失败 %s: %s", symbol, e)
         data["liquidation"] = None
         errs.append(f"liq_{symbol}: {e}")
+    try:
+        from cryptobot.data.orderbook import get_orderbook_depth
+        data["orderbook"] = get_orderbook_depth(symbol)
+    except Exception as e:
+        logger.warning("订单簿失败 %s: %s", symbol, e)
+        data["orderbook"] = None
+        errs.append(f"orderbook_{symbol}: {e}")
+    try:
+        from cryptobot.data.coinglass import get_liquidation_heatmap
+        data["coinglass_liq"] = get_liquidation_heatmap(symbol)
+    except Exception as e:
+        logger.warning("CoinGlass清算失败 %s: %s", symbol, e)
+        data["coinglass_liq"] = None
+        errs.append(f"coinglass_{symbol}: {e}")
     return symbol, data, errs
 
 

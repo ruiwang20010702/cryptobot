@@ -501,50 +501,50 @@ class TestScreenQualityFilter:
 # ─── 市场状态检测 ────────────────────────────────────────────────────────
 
 class TestDetectMarketRegime:
-    def test_trending(self):
-        """ADX>30 + 正常波动 → trending"""
-        market_data = {
-            "BTCUSDT": {
-                "tech": {
-                    "trend": {"adx": 35},
-                    "volatility": {"atr_pct": 2.0, "bb_width": 5},
-                },
+    """测试 _detect_market_regime (多 TF regime 检测 + 恐惧贪婪升级)"""
+
+    def _mock_regime(self, regime="trending", direction="bullish", strength="strong"):
+        return {
+            "regime": regime,
+            "trend_direction": direction,
+            "trend_strength": strength,
+            "volatility_state": "normal",
+            "timeframe_details": {
+                "1h": {"trend": direction, "strength": strength, "adx": 30.0},
+                "4h": {"trend": direction, "strength": strength, "adx": 28.0},
+                "1d": {"trend": direction, "strength": strength, "adx": 32.0},
             },
+            "description": f"{regime}市",
         }
-        result = _detect_market_regime(market_data, {"current_value": 55})
+
+    @patch("cryptobot.indicators.regime.detect_regime")
+    def test_trending(self, mock_detect):
+        """多 TF 一致看多 + 强 ADX → trending"""
+        mock_detect.return_value = self._mock_regime("trending", "bullish", "strong")
+        result = _detect_market_regime({}, {"current_value": 55})
         assert result["regime"] == "trending"
         assert result["params"]["max_leverage"] == 5
 
-    def test_ranging(self):
-        """ADX<20 + 低波动 + 布林收窄 → ranging"""
-        market_data = {
-            "BTCUSDT": {
-                "tech": {
-                    "trend": {"adx": 15},
-                    "volatility": {"atr_pct": 1.0, "bb_width": 2.5},
-                },
-            },
-        }
-        result = _detect_market_regime(market_data, {"current_value": 50})
+    @patch("cryptobot.indicators.regime.detect_regime")
+    def test_ranging(self, mock_detect):
+        """detect_regime 返回 ranging → ranging"""
+        mock_detect.return_value = self._mock_regime("ranging", "neutral", "weak")
+        result = _detect_market_regime({}, {"current_value": 50})
         assert result["regime"] == "ranging"
         assert result["params"]["max_leverage"] == 3
 
-    def test_volatile(self):
-        """高ATR + 宽布林 + 恐惧贪婪极端 → volatile"""
-        market_data = {
-            "BTCUSDT": {
-                "tech": {
-                    "trend": {"adx": 22},
-                    "volatility": {"atr_pct": 5.0, "bb_width": 10},
-                },
-            },
-        }
-        result = _detect_market_regime(market_data, {"current_value": 15})
+    @patch("cryptobot.indicators.regime.detect_regime")
+    def test_volatile_from_fear_greed(self, mock_detect):
+        """恐惧贪婪极端值 → 升级为 volatile"""
+        mock_detect.return_value = self._mock_regime("trending", "bullish", "strong")
+        result = _detect_market_regime({}, {"current_value": 15})
         assert result["regime"] == "volatile"
         assert result["params"]["max_leverage"] == 2
 
-    def test_no_btc_data(self):
-        """无 BTC 数据时不崩溃"""
+    @patch("cryptobot.indicators.regime.detect_regime")
+    def test_detect_regime_failure_fallback(self, mock_detect):
+        """detect_regime 异常时回退为 ranging"""
+        mock_detect.side_effect = Exception("load_klines failed")
         result = _detect_market_regime({}, {"current_value": 50})
-        assert result["regime"] in ("trending", "ranging", "volatile")
+        assert result["regime"] == "ranging"
         assert "params" in result
