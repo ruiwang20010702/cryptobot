@@ -23,7 +23,7 @@ execute                        └─写入→ signal.json  ─读取→  自动
 - **16 个数据源** — 链上(CoinGlass)、情绪(Fear&Greed)、新闻、订单簿、期权、稳定币流、DXY、DeFi TVL、巨鲸追踪等
 - **市场状态感知** — 趋势/震荡/高波动自动识别，差异化参数 + Prompt 注入
 - **资金感知策略** — 根据账户余额自动调整（micro/small/medium/large 四档），小账户更保守
-- **自动进化** — 绩效驱动 Prompt 迭代、分析师动态权重、多模型竞赛
+- **自动进化** — 绩效驱动 Prompt 迭代、分析师动态权重、多模型竞赛、策略顾问(自动发现失败模式 → 生成规则 → 14天评估 → 淘汰/续期)
 - **全链路风控** — 最大杠杆/仓位/方向/相关性硬性限制 + AI 软审核
 - **Telegram 通知** — 信号/告警/日报/摘要，极端市场无信号也推送分析摘要
 - **决策归档** — 每轮工作流完整决策链(筛选/分析/风控/信号)持久化，支持 CLI 回溯
@@ -147,7 +147,8 @@ src/cryptobot/
 │   ├── prompt_optimizer.py#   绩效驱动自动优化
 │   ├── regime_prompts.py  #   市场状态 Prompt Addon
 │   ├── capital_prompts.py #   资金层级 Prompt Addon
-│   └── model_competition.py#  多模型竞赛
+│   ├── model_competition.py#  多模型竞赛
+│   └── strategy_advisor.py#  策略顾问 (规则生成/评估/淘汰)
 ├── signal/                # 信号读写
 ├── realtime/              # 实时入场监控 + WebSocket
 ├── events/                # 价格异动监控
