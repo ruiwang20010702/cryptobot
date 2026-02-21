@@ -111,11 +111,19 @@ def screen(state: WorkflowState) -> dict:
         if pair_cfg and pair_cfg.get("category") in ("store_of_value", "smart_contract"):
             score += 1
 
+        # 资金层级优选币种加分
+        capital_tier = state.get("capital_tier", {})
+        preferred = capital_tier.get("params", {}).get("preferred_symbols", [])
+        if preferred and symbol in preferred:
+            score += 2
+
         scores.append((symbol, round(score, 1)))
 
-    # 按分数降序，取前 5
+    # 按分数降序，取前 max_coins（资金层级控制）
     scores.sort(key=lambda x: x[1], reverse=True)
-    screened = [s[0] for s in scores[:5]]
+    capital_tier = state.get("capital_tier", {})
+    max_coins = capital_tier.get("params", {}).get("max_coins", 5)
+    screened = [s[0] for s in scores[:max_coins]]
 
     ranked = [(s, sc) for s, sc in scores[:5]]
     _console.print(f"    筛选结果: {', '.join(f'{s}({sc})' for s, sc in ranked)}")

@@ -165,6 +165,17 @@ def collect_data(state: WorkflowState) -> dict:
         logger.warning("DXY 数据获取失败: %s", e)
         errors.append(f"dxy: {e}")
 
+    # 资金层级检测
+    capital_tier = {}
+    try:
+        from cryptobot.capital_strategy import get_balance_from_freqtrade, detect_capital_tier
+        balance = get_balance_from_freqtrade()
+        capital_tier = detect_capital_tier(balance)
+        _console.print(f"    资金层级: {capital_tier['tier']} (余额 ${balance:.0f})")
+    except Exception as e:
+        logger.warning("资金层级检测失败: %s", e)
+        errors.append(f"capital_tier: {e}")
+
     # 宏观风险标注
     if macro_events.get("has_high_impact"):
         regime["macro_risk"] = True
@@ -183,5 +194,6 @@ def collect_data(state: WorkflowState) -> dict:
         "macro_events": macro_events,
         "dxy_data": dxy_data,
         "market_regime": regime,
+        "capital_tier": capital_tier,
         "errors": errors,
     }

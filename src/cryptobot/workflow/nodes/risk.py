@@ -148,6 +148,35 @@ def risk_review(state: WorkflowState) -> dict:
     except Exception as e:
         logger.warning("置信度校准失败: %s", e)
 
+    # 资金层级上下文
+    capital_tier = state.get("capital_tier", {})
+    capital_ctx = ""
+    capital_risk_addon = ""
+    merged_params = {}
+    if capital_tier:
+        tier_name = capital_tier.get("tier", "medium")
+        tier_balance = capital_tier.get("balance", 0)
+        tier_params = capital_tier.get("params", {})
+
+        from cryptobot.capital_strategy import merge_regime_capital_params
+        merged_params = merge_regime_capital_params(
+            regime.get("params", {}), tier_params,
+        )
+
+        capital_ctx = (
+            f"### 资金层级\n"
+            f"- 层级: {tier_name} (余额 ${tier_balance:.0f})\n"
+            f"- 最大持仓数: {merged_params.get('max_positions', 5)}\n"
+            f"- 合并后最大杠杆: {merged_params.get('max_leverage', 5)}x\n"
+            f"- 合并后最低置信度: {merged_params.get('min_confidence', 55)}\n\n"
+        )
+
+        try:
+            from cryptobot.evolution.capital_prompts import get_capital_addon
+            capital_risk_addon = get_capital_addon(tier_name, "RISK_MANAGER")
+        except Exception:
+            pass
+
     # 宏观事件风险提示
     macro_events = state.get("macro_events", {})
     macro_ctx = ""
@@ -220,6 +249,46 @@ def risk_review(state: WorkflowState) -> dict:
         except Exception as e:
             logger.warning("动态置信度检查失败: %s", e)
 
+        # ── 资金层级硬性规则 ──
+        if merged_params:
+            # 持仓数限制
+            max_pos = merged_params.get("max_positions", 5)
+            if len(positions) >= max_pos:
+                logger.info(
+                    "硬性拒绝 %s: 持仓数 %d >= 资金层级上限 %d",
+                    symbol, len(positions), max_pos,
+                )
+                _console.print(
+                    f"    [red]拒绝 {symbol}: 持仓数已达层级上限 {max_pos}[/red]"
+                )
+                continue
+
+            # 资金层级置信度门槛 (regime_min + capital_boost)
+            capital_min_conf = merged_params.get("min_confidence", 55)
+            decision_conf = decision.get("confidence", 0)
+            if decision_conf < capital_min_conf:
+                logger.info(
+                    "硬性拒绝 %s: 置信度 %d < 资金层级阈值 %d",
+                    symbol, decision_conf, capital_min_conf,
+                )
+                _console.print(
+                    f"    [red]拒绝 {symbol}: 置信度 {decision_conf} < 层级阈值 {capital_min_conf}[/red]"
+                )
+                continue
+
+            # 杠杆强制降低
+            capital_lev_cap = merged_params.get("max_leverage", 5)
+            if leverage > capital_lev_cap:
+                logger.info(
+                    "强制降杠杆 %s: %dx → %dx (资金层级限制)",
+                    symbol, leverage, capital_lev_cap,
+                )
+                _console.print(
+                    f"    [yellow]{symbol}: 杠杆 {leverage}x → {capital_lev_cap}x (层级限制)[/yellow]"
+                )
+                decision["leverage"] = capital_lev_cap
+                leverage = capital_lev_cap
+
         # 计算爆仓距离
         liq_info = ""
         if entry_range and len(entry_range) == 2 and entry_range[0]:
@@ -236,6 +305,7 @@ def risk_review(state: WorkflowState) -> dict:
                 f"{portfolio_ctx}"
                 f"{perf_ctx}"
                 f"{regime_ctx}"
+                f"{capital_ctx}"
                 f"{confidence_ctx}"
                 f"{macro_ctx}"
                 f"### 交易决策\n{json.dumps(decision, ensure_ascii=False, indent=2)}\n\n"
@@ -249,7 +319,7 @@ def risk_review(state: WorkflowState) -> dict:
             ),
             "model": "sonnet",
             "role": "risk_manager",
-            "system_prompt": RISK_MANAGER,
+            "system_prompt": RISK_MANAGER + capital_risk_addon,
             "json_schema": RISK_SCHEMA,
         })
         task_decisions.append(decision)

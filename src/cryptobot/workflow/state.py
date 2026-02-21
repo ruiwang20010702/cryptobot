@@ -17,5 +17,6 @@ class WorkflowState(TypedDict, total=False):
     research: dict           # research: {symbol: {bull, bear}}
     decisions: list          # trade: [{symbol, action, ...}]
     approved_signals: list   # risk_review: 通过风控的信号
+    capital_tier: dict       # collect_data: {tier, balance, params}
     executed: list           # execute: 写入 signal.json 的结果
     errors: list             # 各节点错误收集

@@ -124,6 +124,16 @@ def notify_regime_change(old_regime: str, new_regime: str, confidence: int) -> b
     return send_message(text)
 
 
+def notify_capital_tier_change(old_tier: str, new_tier: str, balance: float) -> bool:
+    """通知: 资金层级变更"""
+    text = (
+        f"💰 *资金层级变更*\n\n"
+        f"{old_tier} → *{new_tier}*\n"
+        f"当前余额: ${balance:.0f}"
+    )
+    return send_message(text)
+
+
 def notify_workflow_error(error_count: int, errors: list[str]) -> bool:
     """通知: 工作流异常"""
     detail = "\n".join(f"• {e[:100]}" for e in errors[:5])

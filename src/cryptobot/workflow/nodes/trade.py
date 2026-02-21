@@ -74,6 +74,36 @@ def trade(state: WorkflowState) -> dict:
     except Exception as e:
         logger.warning("置信度校准失败: %s", e)
 
+    # 资金层级上下文
+    capital_tier = state.get("capital_tier", {})
+    capital_ctx = ""
+    capital_trader_addon = ""
+    merged_params = {}
+    if capital_tier:
+        tier_name = capital_tier.get("tier", "medium")
+        tier_balance = capital_tier.get("balance", 0)
+        tier_params = capital_tier.get("params", {})
+
+        # 合并 regime + capital 参数
+        from cryptobot.capital_strategy import merge_regime_capital_params
+        merged_params = merge_regime_capital_params(
+            regime.get("params", {}), tier_params,
+        )
+
+        capital_ctx = (
+            f"### 资金层级\n"
+            f"- 层级: {tier_name} (余额 ${tier_balance:.0f})\n"
+            f"- 合并后最低置信度: {merged_params.get('min_confidence', 55)}\n"
+            f"- 合并后最大杠杆: {merged_params.get('max_leverage', 5)}x\n"
+            f"- 止盈风格: {merged_params.get('take_profit_style', 'standard')}\n\n"
+        )
+
+        try:
+            from cryptobot.evolution.capital_prompts import get_capital_addon
+            capital_trader_addon = get_capital_addon(tier_name, "TRADER")
+        except Exception:
+            pass
+
     all_tasks = []
     task_meta = []  # (symbol, current_price)
 
@@ -85,9 +115,12 @@ def trade(state: WorkflowState) -> dict:
         pair_cfg = get_pair_config(symbol) or {}
 
         current_price = (data.get("tech") or {}).get("latest_close", 0)
-        max_leverage = pair_cfg.get("leverage_range", [1, 3])[1]
+        pair_max_lev = pair_cfg.get("leverage_range", [1, 3])[1]
+        # 资金层级限制杠杆: 取 pair_cfg 和 merged_params 中更低值
+        capital_lev_cap = merged_params.get("max_leverage", 5) if merged_params else 5
+        max_leverage = min(pair_max_lev, capital_lev_cap)
 
-        # 构建增强 system prompt: 基础 + prompt version addon + regime addon
+        # 构建增强 system prompt: 基础 + prompt version addon + regime addon + capital addon
         trader_system = TRADER
         try:
             from cryptobot.evolution.prompt_manager import get_prompt_addon
@@ -98,6 +131,8 @@ def trade(state: WorkflowState) -> dict:
             pass
         if regime_trader_addon:
             trader_system += regime_trader_addon
+        if capital_trader_addon:
+            trader_system += capital_trader_addon
 
         all_tasks.append({
             "prompt": (
@@ -108,6 +143,7 @@ def trade(state: WorkflowState) -> dict:
                 f"{perf_ctx}"
                 f"{weights_ctx}"
                 f"{regime_ctx}"
+                f"{capital_ctx}"
                 f"{confidence_ctx}"
                 f"### 看多研究员观点\n{json.dumps(bull, ensure_ascii=False, indent=2)}\n\n"
                 f"### 看空研究员观点\n{json.dumps(bear, ensure_ascii=False, indent=2)}\n\n"

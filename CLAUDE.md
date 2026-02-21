@@ -93,8 +93,10 @@ execute                         5m 指标确认?
 | `indicators/multi_timeframe.py` | 多时间框架共振、量价分析、支撑阻力 |
 | `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API)、稳定币流(DefiLlama)、订单簿(Binance)、交易所储备(CoinGlass)、宏观日历(FinnHub)、期权(Deribit)、代币稀释(CoinGecko)、DXY美元指数(Yahoo Finance)、DeFi TVL(DefiLlama)、巨鲸追踪(Whale Alert) |
 | `regime_smoother.py` | 市场状态转换平滑：连续 N 周期确认才切换 regime，防止边界反复跳动 |
+| `capital_strategy.py` | 资金感知策略：根据余额自动调整层级(micro/small/medium/large)，与 regime 正交叠加取更严格值 |
 | `evolution/prompt_manager.py` | Prompt 版本管理：版本化存储/切换/对比 addon，持久化 `prompt_versions.json` |
 | `evolution/regime_prompts.py` | Regime 级 Prompt Addon：趋势市/震荡市/高波动市分别注入不同偏好到 trader/analyst |
+| `evolution/capital_prompts.py` | 资金层级 Prompt Addon：micro/small 层级注入保守偏好到 trader/analyst/risk_manager |
 | `evolution/prompt_optimizer.py` | 绩效驱动 Prompt 自动迭代：检测退化 → 分析失败 → AI 生成改进 → 创建新版本 |
 | `evolution/model_competition.py` | 多模型竞赛：并行调用多模型决策，consensus/best_performer 策略择优 |
 | `risk/` | 仓位计算(Kelly)、爆仓距离计算 |

@@ -41,6 +41,16 @@ def analyze(state: WorkflowState) -> dict:
     except Exception:
         pass
 
+    # Capital tier hint for analysts
+    capital_analyst_addon = ""
+    try:
+        from cryptobot.evolution.capital_prompts import get_capital_addon
+        capital_tier = state.get("capital_tier", {})
+        tier_name = capital_tier.get("tier", "")
+        capital_analyst_addon = get_capital_addon(tier_name, "ANALYST")
+    except Exception:
+        pass
+
     # 打平所有任务: [(symbol, analyst_type, task_dict), ...]
     all_tasks = []
     task_index = []  # 记录每个任务对应的 (symbol, analyst_type)
@@ -105,11 +115,12 @@ def analyze(state: WorkflowState) -> dict:
             "defi_tvl": defi_tvl,
         }
 
-        # 为每个分析师追加 regime hint
-        tech_sys = TECHNICAL_ANALYST + regime_analyst_addon
-        onchain_sys = ONCHAIN_ANALYST + regime_analyst_addon
-        sentiment_sys = SENTIMENT_ANALYST + regime_analyst_addon
-        fundamental_sys = FUNDAMENTAL_ANALYST + regime_analyst_addon
+        # 为每个分析师追加 regime + capital hint
+        analyst_addon = regime_analyst_addon + capital_analyst_addon
+        tech_sys = TECHNICAL_ANALYST + analyst_addon
+        onchain_sys = ONCHAIN_ANALYST + analyst_addon
+        sentiment_sys = SENTIMENT_ANALYST + analyst_addon
+        fundamental_sys = FUNDAMENTAL_ANALYST + analyst_addon
 
         tasks_for_symbol = [
             ("technical", {

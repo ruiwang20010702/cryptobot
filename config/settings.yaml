@@ -191,3 +191,16 @@ realtime:
   price_tolerance_pct: 0.1          # 价格容忍度（entry_range 外 0.1% 也算进入）
   require_indicator_confirm: true   # 是否需要 5m 指标确认
   max_wait_minutes: 120             # 单信号最长等待时间（超过则放弃）
+
+# 资金感知策略 (可覆盖默认层级参数)
+# capital_strategy:
+#   micro:                            # <$500
+#     max_coins: 2                    # 筛选币种数
+#     conf_boost: 15                  # 置信度提升（叠加到 regime 上）
+#     lev_cap: 3                      # 杠杆上限
+#     max_positions: 1                # 最大持仓数
+#   small:                            # $500-2K
+#     max_coins: 3
+#     conf_boost: 5
+#     lev_cap: 3
+#     max_positions: 2
