@@ -80,6 +80,7 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
     # 恐惧贪婪极端值可升级为 volatile
     fg_val = fear_greed.get("current_value", 50)
     is_volatile_upgrade = False
+    old_regime = regime_result["regime"]  # 升级前保存
     if (fg_val < 20 or fg_val > 80) and regime_result["regime"] != "volatile":
         regime_result["regime"] = "volatile"
         regime_result["description"] += " (恐惧贪婪极端值触发升级)"
@@ -92,7 +93,6 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
     settings = load_settings()
     confirm_cycles = settings.get("market_regime", {}).get("smoothing_cycles", 2)
     is_simulation = bool(market_data.get("_klines_override"))
-    old_regime = regime_result["regime"]
 
     smoothed_regime, regime_changed = smooth_regime_transition(
         regime_result["regime"],
