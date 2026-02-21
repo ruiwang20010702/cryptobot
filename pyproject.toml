@@ -2,6 +2,7 @@
 name = "cryptobot"
 version = "0.1.0"
 description = "加密货币合约量化交易 AI 团队系统 - 信号桥接层"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "click>=8.1",

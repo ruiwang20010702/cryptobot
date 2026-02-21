@@ -26,6 +26,7 @@ execute                        └─写入→ signal.json  ─读取→  自动
 - **自动进化** — 绩效驱动 Prompt 迭代、分析师动态权重、多模型竞赛
 - **全链路风控** — 最大杠杆/仓位/方向/相关性硬性限制 + AI 软审核
 - **Telegram 通知** — 信号/告警/日报/摘要，极端市场无信号也推送分析摘要
+- **决策归档** — 每轮工作流完整决策链(筛选/分析/风控/信号)持久化，支持 CLI 回溯
 - **Web Dashboard** — FastAPI + HTMX 实时面板 + K 线图
 
 ## 快速开始
@@ -109,6 +110,9 @@ cryptobot events start                     # 价格异动监控
 cryptobot backtest evaluate                # 信号回测评估
 cryptobot backtest replay <signal_id>      # K 线复盘
 cryptobot prompt list                      # Prompt 版本管理
+cryptobot archive list                     # 决策归档列表
+cryptobot archive show <run_id>            # 查看完整归档
+cryptobot archive history <symbol>         # 币种决策历史
 cryptobot web start [--port 8000]          # Web Dashboard
 cryptobot doctor                           # 环境健康检查
 cryptobot init                             # 环境初始化
@@ -150,7 +154,8 @@ src/cryptobot/
 ├── risk/                  # 仓位计算 + 爆仓距离
 ├── journal/               # 交易日志 + 绩效分析
 ├── web/                   # Dashboard (FastAPI + HTMX)
-├── cli/                   # 16 个 CLI 子命令
+├── archive/               # AI 决策归档 (写入/读取/历史)
+├── cli/                   # 17 个 CLI 子命令
 ├── capital_strategy.py    # 资金感知策略
 ├── regime_smoother.py     # 市场状态平滑
 ├── notify.py              # Telegram 通知
@@ -249,4 +254,9 @@ uv run ruff check src/                     # Lint 检查
 
 ## License
 
-Source Available — 仅供查看和学习，禁止使用、修改和分发。详见 [LICENSE](LICENSE)。
+本项目采用 [AGPL-3.0](LICENSE) 开源许可。你可以自由使用、修改和分发，但：
+
+- **修改后分发或提供网络服务时，必须开源你的改动**
+- **强烈鼓励通过 Issue / PR 反馈改进建议**，无论是策略优化、bug 修复还是架构改进
+
+> 这个项目的核心目标是探索 AI + 量化交易的可能性。如果你有想法或发现了问题，欢迎提 Issue 讨论。
