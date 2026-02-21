@@ -14,8 +14,8 @@ _BUCKETS = {
     "80-90": {"min": 80, "max": 90, "midpoint": 85},
 }
 
-_MIN_CLOSED = 30  # 最少已平仓数量才启用动态调整
-_MIN_BUCKET_SAMPLES = 8  # 每个区间最少样本
+_MIN_CLOSED = 50  # 最少已平仓数量才启用动态调整
+_MIN_BUCKET_SAMPLES = 15  # 每个区间最少样本
 
 
 def calc_dynamic_threshold(days: int = 30) -> dict:

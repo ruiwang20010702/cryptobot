@@ -28,8 +28,8 @@ class TestCheckPerformanceDecline:
         po = opt_setup
         with patch("cryptobot.journal.analytics.calc_performance") as mock_perf:
             mock_perf.side_effect = [
-                {"win_rate": 0.6, "closed": 10},  # 7d
-                {"win_rate": 0.6, "closed": 30},  # 30d
+                {"win_rate": 0.6, "closed": 35},  # 7d
+                {"win_rate": 0.6, "closed": 80},  # 30d
             ]
             result = po.check_performance_decline()
             assert not result["declined"]
@@ -38,8 +38,8 @@ class TestCheckPerformanceDecline:
         po = opt_setup
         with patch("cryptobot.journal.analytics.calc_performance") as mock_perf:
             mock_perf.side_effect = [
-                {"win_rate": 0.3, "closed": 12},  # 7d: 30%
-                {"win_rate": 0.6, "closed": 30},   # 30d: 60%
+                {"win_rate": 0.3, "closed": 35},  # 7d: 30%
+                {"win_rate": 0.6, "closed": 80},   # 30d: 60%
             ]
             result = po.check_performance_decline()
             assert result["declined"]
@@ -49,8 +49,8 @@ class TestCheckPerformanceDecline:
         po = opt_setup
         with patch("cryptobot.journal.analytics.calc_performance") as mock_perf:
             mock_perf.side_effect = [
-                {"win_rate": 0.2, "closed": 3},   # 7d: 不足 5 笔
-                {"win_rate": 0.6, "closed": 30},
+                {"win_rate": 0.2, "closed": 3},   # 7d: 不足 30 笔
+                {"win_rate": 0.6, "closed": 80},
             ]
             result = po.check_performance_decline()
             assert not result["declined"]

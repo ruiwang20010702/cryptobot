@@ -122,7 +122,7 @@ def screen(state: WorkflowState) -> dict:
         perf_feedback = state.get("perf_feedback", {})
         by_symbol = perf_feedback.get("by_symbol", {})
         sym_perf = by_symbol.get(symbol, {})
-        if sym_perf.get("count", 0) >= 5 and sym_perf.get("win_rate", 1) < 0.3:
+        if sym_perf.get("count", 0) >= 15 and sym_perf.get("win_rate", 1) < 0.3:
             score -= 3
 
         # 配对配置优先级 (BTC/ETH 权重高)

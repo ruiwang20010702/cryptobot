@@ -172,7 +172,7 @@ def build_performance_summary(days: int = 30) -> str:
     """
     perf = calc_performance(days)
 
-    if perf["closed"] < 3:
+    if perf["closed"] < 10:
         return ""  # 样本不足，不注入
 
     lines = [
@@ -215,12 +215,12 @@ def build_performance_summary(days: int = 30) -> str:
         lines.append("- 置信度校准: " + "; ".join(cal_notes))
 
     # 分析师准确率（样本 >= 10 时展示）
-    if perf["closed"] >= 10:
+    if perf["closed"] >= 30:
         analyst_acc = calc_analyst_accuracy(days)
         acc_parts = []
         for role in ("technical", "onchain", "sentiment", "fundamental"):
             info = analyst_acc.get(role)
-            if info and info["total"] >= 5:
+            if info and info["total"] >= 15:
                 acc_parts.append(f"{role}: {info['accuracy'] * 100:.0f}%")
         if acc_parts:
             lines.append(f"- 分析师准确率: {', '.join(acc_parts)}")

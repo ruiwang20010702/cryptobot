@@ -29,16 +29,16 @@ def calc_analyst_weights(days: int = 30) -> dict:
         total = stats["total"]
         acc = stats["accuracy"]
 
-        if total >= 10 and acc >= 0.75:
+        if total >= 30 and acc >= 0.75:
             weight = "very_high"
             label = "表现卓越，高度参考"
-        elif total >= 10 and acc >= 0.65:
+        elif total >= 30 and acc >= 0.65:
             weight = "high"
             label = "近期表现优异，重点参考"
-        elif total >= 10 and acc <= 0.35:
+        elif total >= 30 and acc <= 0.35:
             weight = "very_low"
             label = "近期准确率极低，建议反向参考"
-        elif total >= 10 and acc <= 0.45:
+        elif total >= 30 and acc <= 0.45:
             weight = "low"
             label = "近期准确率偏低，仅供参考"
         else:

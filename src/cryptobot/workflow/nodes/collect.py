@@ -197,7 +197,7 @@ def collect_data(state: WorkflowState) -> dict:
     try:
         from cryptobot.journal.analytics import calc_performance
         perf = calc_performance(30)
-        if perf.get("closed", 0) >= 10:
+        if perf.get("closed", 0) >= 30:
             perf_feedback = {
                 "win_rate": perf["win_rate"],
                 "profit_factor": perf["profit_factor"],

@@ -388,28 +388,27 @@ class TestPerformanceSummary:
         assert build_performance_summary(30) == ""
 
     def test_insufficient_data_returns_empty(self):
-        """不足 3 笔平仓时返回空字符串"""
-        save_record(SignalRecord(
-            signal_id="w1", status="closed", action="long",
-            timestamp="2026-02-15T00:00:00",
-            actual_pnl_pct=5.0, confidence=75,
-        ))
-        save_record(SignalRecord(
-            signal_id="w2", status="closed", action="long",
-            timestamp="2026-02-15T01:00:00",
-            actual_pnl_pct=3.0, confidence=80,
-        ))
+        """不足 10 笔平仓时返回空字符串"""
+        for i in range(9):
+            save_record(SignalRecord(
+                signal_id=f"w{i}", status="closed", action="long",
+                timestamp=f"2026-02-15T0{i}:00:00",
+                actual_pnl_pct=5.0, confidence=75,
+            ))
         assert build_performance_summary(30) == ""
 
     def test_summary_with_enough_data(self):
-        """3 笔以上平仓时生成摘要"""
-        for i, (pnl, action) in enumerate([
+        """10 笔以上平仓时生成摘要"""
+        pnl_actions = [
             (5.0, "long"), (3.0, "long"), (-2.0, "short"), (1.5, "long"),
-        ]):
+            (4.0, "long"), (-1.0, "short"), (2.5, "long"), (6.0, "long"),
+            (-3.0, "short"), (1.0, "long"), (2.0, "long"),
+        ]
+        for i, (pnl, action) in enumerate(pnl_actions):
             save_record(SignalRecord(
                 signal_id=f"r{i}", status="closed", action=action,
                 symbol="BTCUSDT",
-                timestamp=f"2026-02-15T0{i}:00:00",
+                timestamp=f"2026-02-{15 + i // 10}T0{i % 10}:00:00",
                 actual_pnl_pct=pnl, actual_pnl_usdt=pnl * 100,
                 confidence=75,
             ))
@@ -425,11 +424,11 @@ class TestPerformanceSummary:
 
     def test_summary_includes_calibration_bias(self):
         """置信度偏差超过 10% 时提示"""
-        # 4 笔 confidence=75，全部亏损 → 实际胜率 0% vs 预期 75%
-        for i in range(4):
+        # 12 笔 confidence=75，全部亏损 → 实际胜率 0% vs 预期 75%
+        for i in range(12):
             save_record(SignalRecord(
                 signal_id=f"c{i}", status="closed", confidence=75,
-                timestamp=f"2026-02-15T0{i}:00:00",
+                timestamp=f"2026-02-{15 + i // 10}T0{i % 10}:00:00",
                 actual_pnl_pct=-1.0,
             ))
 

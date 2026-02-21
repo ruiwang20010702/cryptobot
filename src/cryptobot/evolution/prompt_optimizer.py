@@ -55,7 +55,7 @@ def check_performance_decline(days_short: int = 7, days_long: int = 30) -> dict:
         gap_pct = round((wr_long - wr_short) / wr_long * 100, 1)
 
     declined = (
-        closed_short >= 10
+        closed_short >= 30
         and wr_long > 0
         and wr_short < wr_long * 0.8
     )

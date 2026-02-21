@@ -49,6 +49,9 @@ uv run cryptobot archive cleanup --keep-months 3  # 清理旧归档
 uv run cryptobot backtest evaluate            # 评估近30天信号质量
 uv run cryptobot backtest evaluate --json-output  # JSON 格式输出
 uv run cryptobot backtest replay <signal_id>  # 单信号 K 线复盘
+uv run cryptobot backtest run --days 90       # 量化回测 (成本模型+净值曲线+Sharpe)
+uv run cryptobot backtest baseline --strategy all  # 基线策略对比
+uv run cryptobot backtest compare --days 90   # AI vs 基线统计检验 (p-value)
 uv run cryptobot doctor                       # 环境健康检查 (12项)
 uv run cryptobot doctor --json-output         # JSON 格式健康检查
 uv run cryptobot init                         # 初始化运行环境 (创建目录+.env+doctor)
@@ -111,6 +114,12 @@ execute                         5m 指标确认?
 | `cli/scheduler.py` | APScheduler 调度器：8 个定时任务(含日报 cron + prompt 自动优化) + 可选事件监控线程 |
 | `cli/prompt.py` | Prompt 版本管理 CLI：list/new-version/activate/show |
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
+| `backtest/cost_model.py` | 交易成本建模：手续费/滑点/资金费率，杠杆敏感 |
+| `backtest/trade_simulator.py` | 逐根 1h K 线扫描，分批止盈，MFE/MAE，净 PnL |
+| `backtest/equity_tracker.py` | 净值曲线 + Sharpe/Sortino/MaxDD/Calmar/月度收益 |
+| `backtest/baselines.py` | 随机/MA交叉/RSI/布林通道 4 种基线信号生成 |
+| `backtest/stats.py` | Welch's t-test + Permutation test 统计检验 (无 scipy) |
+| `backtest/engine.py` | 完整回测编排：信号加载→模拟→统计→报告持久化 |
 | `cli/doctor.py` | 12 项环境健康检查（Python/TA-Lib/API/目录等） |
 | `cli/init_cmd.py` | 环境初始化：创建目录 + .env + 交互 API key + doctor |
 | `archive/` | AI 决策归档：每轮工作流保存完整决策链(筛选评分/分析/风控细节/信号)到 JSON，支持 CLI 查阅 |
@@ -130,6 +139,7 @@ execute                         5m 指标确认?
 - 模型竞赛记录: `data/output/evolution/competition.json`
 - 策略规则: `data/output/evolution/strategy_rules.json`
 - 决策归档: `data/output/archive/{YYYY-MM}/{run_id}.json`
+- 回测报告: `data/output/backtest/bt_{timestamp}.json`
 - 配置: `config/settings.yaml`、`config/pairs.yaml`
 
 ### 交易对配置

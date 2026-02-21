@@ -255,11 +255,11 @@ class TestRunAdvisorCycle:
 
     def test_full_cycle(self, rules_file):
         perf_14 = {
-            "closed": 15, "win_rate": 0.4, "avg_pnl_pct": -1.0,
+            "closed": 55, "win_rate": 0.4, "avg_pnl_pct": -1.0,
             "by_symbol": {}, "by_direction": {}, "total_pnl_usdt": -100,
         }
         perf_30 = {
-            "closed": 30, "win_rate": 0.45, "avg_pnl_pct": -0.5,
+            "closed": 80, "win_rate": 0.45, "avg_pnl_pct": -0.5,
             "by_symbol": {}, "by_direction": {}, "total_pnl_usdt": -50,
         }
         accuracy = {"technical": {"total": 10, "correct": 7, "accuracy": 0.7}}
@@ -291,7 +291,7 @@ class TestRunAdvisorCycle:
 
     def test_llm_returns_empty(self, rules_file):
         perf = {
-            "closed": 15, "win_rate": 0.6, "avg_pnl_pct": 2.0,
+            "closed": 55, "win_rate": 0.6, "avg_pnl_pct": 2.0,
             "by_symbol": {}, "by_direction": {}, "total_pnl_usdt": 200,
         }
 

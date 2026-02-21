@@ -1,6 +1,6 @@
 # CryptoBot — 加密货币永续合约 AI 量化交易系统
 
-> 版本: 2026-02-21 | 773 tests passed | 13,000+ LOC | Lint clean
+> 版本: 2026-02-22 | 877 tests passed | 15,000+ LOC | Lint clean
 
 AI 多角色工作流分析市场 → 生成交易信号 → Freqtrade 自动执行。
 
@@ -33,7 +33,12 @@ Web Dashboard (FastAPI + HTMX + lightweight-charts)
 ────────────────────
 绩效退化检测 → 失败案例分析 → AI 生成改进 Prompt → 自动激活新版本
 多模型竞赛 → consensus / best_performer 策略择优执行
-策略顾问 → 绩效模式发现 → 规则生成 → 14天评估 → 续期/淘汰
+策略顾问 → 绩效模式发现 → 规则生成 → 30天评估 → 续期/淘汰
+
+量化回测引擎 (按需)
+────────────────────
+历史信号 → 成本模型(手续费+滑点+资金费率) → 逐根K线模拟 → 净值曲线
+→ Sharpe/Sortino/MaxDD/Calmar → 随机/MA/RSI/布林基线对照 → 统计检验
 ```
 
 ### 1.2 架构图
@@ -166,6 +171,12 @@ Web Dashboard (FastAPI + HTMX + lightweight-charts)
 | **交易日志** | `journal/models.py` + `storage.py` | SignalRecord 全生命周期 (含 model_id) |
 | **绩效分析** | `journal/analytics.py` | 胜率/盈亏比/置信度校准/分析师准确率/按币种统计 |
 | **回测评估** | `backtest/evaluator.py` | 信号回测：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
+| **成本模型** | `backtest/cost_model.py` | 交易成本建模：手续费/滑点/资金费率，杠杆敏感 |
+| **交易模拟器** | `backtest/trade_simulator.py` | 逐根 1h K 线扫描，分批止盈，MFE/MAE，净 PnL |
+| **净值追踪** | `backtest/equity_tracker.py` | 净值曲线 + Sharpe/Sortino/MaxDD/Calmar/月度收益 |
+| **基线生成器** | `backtest/baselines.py` | 随机/MA交叉/RSI/布林通道 4 种基线信号 |
+| **统计检验** | `backtest/stats.py` | Welch's t-test + Permutation test (无 scipy) |
+| **回测引擎** | `backtest/engine.py` | 完整回测编排：信号加载→模拟→统计→报告持久化 |
 | **A/B 测试** | `backtest/ab_test.py` | 按 prompt_version 分组对比绩效 |
 | **通知系统** | `notify.py` | Telegram 推送：信号/风控/告警/错误/优化通知（silent fallback） |
 | **调度器** | `cli/scheduler.py` | APScheduler: 8 个定时任务 + 配置热更新 + WS/监控线程 |
@@ -187,6 +198,7 @@ cryptobot daemon start [--run-now]         # 启动调度器
 cryptobot journal show/stats/sync          # 交易记录
 cryptobot events start/status              # 价格异动监控
 cryptobot backtest evaluate/replay/ab-test # 回测评估
+cryptobot backtest run/baseline/compare   # 量化回测 + 基线对比
 cryptobot prompt list/show/activate        # Prompt 版本管理
 cryptobot web start [--port 8000]          # Web Dashboard
 cryptobot doctor                           # 环境健康检查
@@ -337,6 +349,16 @@ TELEGRAM_CHAT_ID=xxx
 - [x] **12.9 巨鲸钱包追踪** — Whale Alert 大额转账监控
 - [x] **12.10 DeFi TVL 趋势** — DefiLlama 链级 TVL 健康度
 
+### P8 — 量化验证 (部分完成)
+
+- [x] **8.1 历史信号回测引擎** — 成本模型(手续费+滑点+资金费率) + 逐根K线模拟 + 净值曲线 + Sharpe/Sortino/MaxDD/Calmar
+- [x] **8.3 随机基线对照** — 保持相同数量/方向/币种/杠杆分布，随机化入场时机
+- [x] **8.4 简单策略基线** — MA 交叉(EMA 7/25)、RSI(30/70)、布林通道(20,2σ) + Welch's t-test 统计检验
+
+### P10 — 统计严谨性 (部分完成)
+
+- [x] **10.1 提高样本门槛** — Kelly 冷启动 10→50，币种/方向级 5→15，策略顾问 10→50/14→30天，Prompt 优化 10→30，置信度 30→50/8→15
+
 ---
 
 ## 六、当前系统状态
@@ -345,10 +367,10 @@ TELEGRAM_CHAT_ID=xxx
 
 | 指标 | 值 |
 |------|-----|
-| Python 源文件 | 93 个 |
-| 代码行数 | 12,406 行 |
-| 测试文件 | 45 个 |
-| 测试用例 | 773 passed |
+| Python 源文件 | 99 个 |
+| 代码行数 | ~15,400 行 |
+| 测试文件 | 51 个 |
+| 测试用例 | 877 passed |
 | Lint | All checks passed (Ruff) |
 | CLI 子命令 | 16 个命令组 |
 | AI 角色 | 8 个 (4 haiku + 4 sonnet) |
@@ -369,7 +391,9 @@ TELEGRAM_CHAT_ID=xxx
 | P5 部署验证 | **全部完成** | 9/9 |
 | P6 自我进化 | **全部完成** | 7/7 |
 | P7 数据增强 | **全部完成** | 10/10 |
-| **合计** | **全部完成** | **46/46** |
+| P8 量化验证 | 部分完成 | 3/5 |
+| P10 统计严谨 | 部分完成 | 1/5 |
+| **合计** | | **50/56** |
 
 ### 6.3 部署文件
 
@@ -432,10 +456,10 @@ uv run cryptobot prompt show
 
 | ID | 任务 | 说明 | 复杂度 |
 |----|------|------|--------|
-| 8.1 | **历史信号回测引擎** | 用过去 3-6 个月的归档决策 + K 线数据，模拟完整交易流程（含手续费 0.04%、滑点 0.05%、资金费率），输出净值曲线 + 夏普比率 + 最大回撤 | 高 |
+| 8.1 | ~~**历史信号回测引擎**~~ | ✅ 成本模型 + 逐根K线模拟 + 净值曲线 + Sharpe/Sortino/MaxDD/Calmar | 高 |
 | 8.2 | **Walk-forward 验证** | 滚动窗口: 用 N 天训练（观察）→ M 天测试（交易），避免 look-ahead bias。至少 3 个完整周期 | 高 |
-| 8.3 | **随机基线对照** | 生成随机信号（相同频率/方向分布）作为 baseline，验证 AI 信号是否显著优于随机 | 中 |
-| 8.4 | **简单策略基线** | 实现 2-3 个经典策略（均线交叉、RSI 超买超卖、布林通道）作为对照组，AI 系统必须跑赢这些才有存在意义 | 中 |
+| 8.3 | ~~**随机基线对照**~~ | ✅ 保持相同数量/方向/币种/杠杆分布的随机信号 + Welch's t-test | 中 |
+| 8.4 | ~~**简单策略基线**~~ | ✅ MA 交叉(EMA 7/25)、RSI(30/70)、布林通道(20,2σ) 三种基线 | 中 |
 | 8.5 | **Edge 仪表盘** | CLI + Dashboard 展示: 累计净值曲线、夏普比率、Calmar 比率、每月收益热力图，实时回答"系统赚钱了吗" | 中 |
 
 **验收标准**: 系统在 3 个月样本外数据上，扣除所有成本后，夏普比率 > 1.0 且显著优于随机基线 (p < 0.05)。
@@ -460,7 +484,7 @@ uv run cryptobot prompt show
 
 | ID | 任务 | 说明 | 复杂度 |
 |----|------|------|--------|
-| 10.1 | **提高样本门槛** | `MIN_CLOSED_TRADES` 从 10 → 50；策略规则评估期从 14 天 → 30 天；prompt 优化触发从 10 笔 → 30 笔 | 低 |
+| 10.1 | ~~**提高样本门槛**~~ | ✅ Kelly 10→50，币种/方向 5→15，策略顾问 10→50/14→30天，Prompt 优化 10→30，置信度 30→50/8→15 | 低 |
 | 10.2 | **A/B 测试增强** | 新规则/新 prompt 只对随机 50% 币种生效，另 50% 作为对照组。14 天后用双样本 t 检验判断差异是否显著 | 中 |
 | 10.3 | **置信区间替代点估计** | 所有绩效指标附带 95% 置信区间（bootstrap）。"胜率 40% ± 15%" 和 "胜率 40% ± 3%" 含义完全不同 | 中 |
 | 10.4 | **过拟合检测** | 监控"策略修改频率"和"修改后绩效波动"。如果系统频繁修改策略但绩效不改善，自动降低修改频率 | 中 |

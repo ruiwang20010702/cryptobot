@@ -206,6 +206,207 @@ def ab_test(days: int, json_output: bool):
     console.print(table)
 
 
+@backtest.command("run")
+@click.option("--days", default=90, help="回溯天数")
+@click.option("--source", default="archive", type=click.Choice(["archive", "journal"]))
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def run(days: int, source: str, json_output: bool):
+    """运行完整回测 (含成本模型)"""
+    from dataclasses import asdict
+    from cryptobot.backtest.engine import run_backtest, save_report
+
+    console.print(f"\n[bold]量化回测 (近 {days} 天, 来源: {source})[/bold]\n")
+
+    report = run_backtest(days=days, source=source)
+
+    if json_output:
+        data = {
+            "config": report.config,
+            "signal_source": report.signal_source,
+            "total_signals_loaded": report.total_signals_loaded,
+            "metrics": asdict(report.metrics),
+            "by_symbol": report.by_symbol,
+            "by_direction": report.by_direction,
+        }
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False))
+        return
+
+    m = report.metrics
+    if m.total_trades == 0:
+        console.print(f"[yellow]近 {days} 天无可回测信号[/yellow]")
+        return
+
+    # 核心指标
+    table = Table(title="回测指标")
+    table.add_column("指标", style="cyan")
+    table.add_column("值", justify="right")
+    table.add_row("总交易", str(m.total_trades))
+    table.add_row("胜率", f"{m.win_rate * 100:.1f}%")
+    table.add_row("Sharpe", f"{m.sharpe_ratio:.2f}")
+    table.add_row("Sortino", f"{m.sortino_ratio:.2f}")
+    table.add_row("最大回撤", f"{m.max_drawdown_pct:.1f}%")
+    table.add_row("Calmar", f"{m.calmar_ratio:.2f}")
+    table.add_row("盈亏比 (PF)", f"{m.profit_factor:.2f}")
+    table.add_row("总收益", f"{m.total_return_pct:+.1f}%")
+    table.add_row("年化收益", f"{m.annualized_return_pct:+.1f}%")
+    table.add_row("平均交易", f"{m.avg_trade_pnl_pct:+.2f}%")
+    table.add_row("最佳交易", f"{m.best_trade_pct:+.2f}%")
+    table.add_row("最差交易", f"{m.worst_trade_pct:+.2f}%")
+    console.print(table)
+
+    # 按币种
+    if report.by_symbol:
+        sym_table = Table(title="按币种")
+        sym_table.add_column("币种")
+        sym_table.add_column("笔数", justify="right")
+        sym_table.add_column("胜率", justify="right")
+        sym_table.add_column("平均盈亏", justify="right")
+        for sym, stats in report.by_symbol.items():
+            sym_table.add_row(
+                sym, str(stats["count"]),
+                f"{stats['win_rate'] * 100:.0f}%",
+                f"{stats['avg_pnl_pct']:+.1f}%",
+            )
+        console.print(sym_table)
+
+    # 保存报告
+    path = save_report(report)
+    console.print(f"\n报告已保存: {path}")
+
+
+@backtest.command("baseline")
+@click.option("--days", default=90, help="回溯天数")
+@click.option(
+    "--strategy", default="all",
+    type=click.Choice(["all", "random", "ma_cross", "rsi", "bollinger"]),
+)
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def baseline(days: int, strategy: str, json_output: bool):
+    """运行基线策略回测"""
+    from dataclasses import asdict
+    from cryptobot.backtest.engine import run_baseline_backtest
+
+    strategies = (
+        ["random", "ma_cross", "rsi", "bollinger"]
+        if strategy == "all"
+        else [strategy]
+    )
+
+    results = {}
+    for strat in strategies:
+        console.print(f"  运行 {strat} 基线...")
+        report = run_baseline_backtest(days=days, strategy=strat)
+        results[strat] = report
+
+    if json_output:
+        data = {
+            name: {
+                "metrics": asdict(r.metrics),
+                "total_signals": r.total_signals_loaded,
+            }
+            for name, r in results.items()
+        }
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False))
+        return
+
+    console.print(f"\n[bold]基线回测 (近 {days} 天)[/bold]\n")
+
+    table = Table(title="基线策略对比")
+    table.add_column("策略")
+    table.add_column("笔数", justify="right")
+    table.add_column("胜率", justify="right")
+    table.add_column("Sharpe", justify="right")
+    table.add_column("MaxDD", justify="right")
+    table.add_column("总收益", justify="right")
+
+    for name, r in results.items():
+        m = r.metrics
+        table.add_row(
+            name,
+            str(m.total_trades),
+            f"{m.win_rate * 100:.1f}%",
+            f"{m.sharpe_ratio:.2f}",
+            f"{m.max_drawdown_pct:.1f}%",
+            f"{m.total_return_pct:+.1f}%",
+        )
+
+    console.print(table)
+
+
+@backtest.command("compare")
+@click.option("--days", default=90, help="回溯天数")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def compare(days: int, json_output: bool):
+    """AI vs 基线: 统计显著性对比"""
+    from dataclasses import asdict
+    from cryptobot.backtest.engine import run_backtest, run_baseline_backtest
+    from cryptobot.backtest.stats import compare_with_baseline
+
+    console.print(f"\n[bold]AI vs 基线对比 (近 {days} 天)[/bold]\n")
+
+    # 1. AI 回测
+    console.print("  运行 AI 回测...")
+    ai_report = run_backtest(days=days)
+
+    if ai_report.metrics.total_trades == 0:
+        console.print("[yellow]无 AI 信号可回测[/yellow]")
+        return
+
+    # 2. 基线回测 + 对比
+    baselines = ["random", "ma_cross", "rsi", "bollinger"]
+    comparisons = []
+
+    for strat in baselines:
+        console.print(f"  运行 {strat} 基线...")
+        bl_report = run_baseline_backtest(days=days, strategy=strat)
+        if bl_report.metrics.total_trades == 0:
+            continue
+        cmp = compare_with_baseline(ai_report.trades, bl_report.trades, strat)
+        comparisons.append(cmp)
+
+    if json_output:
+        data = {
+            "ai_metrics": asdict(ai_report.metrics),
+            "comparisons": [asdict(c) for c in comparisons],
+        }
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False))
+        return
+
+    # 显示结果
+    table = Table(title="AI vs 基线")
+    table.add_column("基线")
+    table.add_column("AI Sharpe", justify="right")
+    table.add_column("基线 Sharpe", justify="right")
+    table.add_column("AI 均值", justify="right")
+    table.add_column("基线均值", justify="right")
+    table.add_column("p-value", justify="right")
+    table.add_column("显著?", justify="center")
+
+    for c in comparisons:
+        sig_mark = "[green]YES[/green]" if c.significant else "[red]NO[/red]"
+        table.add_row(
+            c.baseline_name,
+            f"{c.ai_sharpe:.2f}",
+            f"{c.baseline_sharpe:.2f}",
+            f"{c.ai_mean_pnl:+.2f}%",
+            f"{c.baseline_mean_pnl:+.2f}%",
+            f"{c.pnl_p_value:.4f}",
+            sig_mark,
+        )
+
+    console.print(table)
+
+    # 总结
+    all_sig = all(c.significant for c in comparisons) if comparisons else False
+    if all_sig:
+        console.print("\n[green bold]AI 信号在所有基线上均显著优于随机![/green bold]")
+    else:
+        failed = [c.baseline_name for c in comparisons if not c.significant]
+        console.print(
+            f"\n[yellow]AI 信号未显著优于: {', '.join(failed)}[/yellow]"
+        )
+
+
 @backtest.command("replay")
 @click.argument("signal_id")
 def replay(signal_id: str):

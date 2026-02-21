@@ -24,6 +24,7 @@ execute                        └─写入→ signal.json  ─读取→  自动
 - **市场状态感知** — 趋势/震荡/高波动自动识别，差异化参数 + Prompt 注入
 - **资金感知策略** — 根据账户余额自动调整（micro/small/medium/large 四档），小账户更保守
 - **自动进化** — 绩效驱动 Prompt 迭代、分析师动态权重、多模型竞赛、策略顾问(自动发现失败模式 → 生成规则 → 14天评估 → 淘汰/续期)
+- **量化回测** — 成本模型(手续费+滑点+资金费率) + 逐根K线模拟 + Sharpe/Sortino/MaxDD + 随机/MA/RSI/布林基线对照 + 统计检验
 - **全链路风控** — 最大杠杆/仓位/方向/相关性硬性限制 + AI 软审核
 - **Telegram 通知** — 信号/告警/日报/摘要，极端市场无信号也推送分析摘要
 - **决策归档** — 每轮工作流完整决策链(筛选/分析/风控/信号)持久化，支持 CLI 回溯
@@ -109,6 +110,9 @@ cryptobot realtime start                   # 实时入场监控
 cryptobot events start                     # 价格异动监控
 cryptobot backtest evaluate                # 信号回测评估
 cryptobot backtest replay <signal_id>      # K 线复盘
+cryptobot backtest run --days 90           # 量化回测 (成本模型+净值曲线)
+cryptobot backtest baseline --strategy all # 基线策略对比
+cryptobot backtest compare --days 90       # AI vs 基线统计检验
 cryptobot prompt list                      # Prompt 版本管理
 cryptobot archive list                     # 决策归档列表
 cryptobot archive show <run_id>            # 查看完整归档
@@ -154,6 +158,7 @@ src/cryptobot/
 ├── events/                # 价格异动监控
 ├── risk/                  # 仓位计算 + 爆仓距离
 ├── journal/               # 交易日志 + 绩效分析
+├── backtest/              # 量化回测 (成本模型/模拟器/净值追踪/基线/统计检验)
 ├── web/                   # Dashboard (FastAPI + HTMX)
 ├── archive/               # AI 决策归档 (写入/读取/历史)
 ├── cli/                   # 17 个 CLI 子命令

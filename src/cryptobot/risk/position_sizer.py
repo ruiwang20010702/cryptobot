@@ -25,15 +25,15 @@ def _load_kelly_params(symbol: str, action: str | None = None) -> tuple[float, f
         from cryptobot.journal.analytics import calc_performance
         perf = calc_performance(30)
         closed = perf.get("closed", 0)
-        if closed < 10:
+        if closed < 50:
             return 0.50, 1.5
 
         # 币种级别胜率
         by_symbol = perf.get("by_symbol", {})
         sym_data = by_symbol.get(symbol, {})
-        if sym_data.get("count", 0) >= 5:
+        if sym_data.get("count", 0) >= 15:
             wr = sym_data["win_rate"]
-        elif action and perf.get("by_direction", {}).get(action, {}).get("count", 0) >= 5:
+        elif action and perf.get("by_direction", {}).get(action, {}).get("count", 0) >= 15:
             wr = perf["by_direction"][action]["win_rate"]
         else:
             wr = perf.get("win_rate", 0.35)
