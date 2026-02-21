@@ -248,7 +248,7 @@ def call_api(
         )
         time.sleep(delay)
         return call_api(
-            prompt, model=model, system_prompt=system_prompt,
+            prompt, model=model, role=role, system_prompt=system_prompt,
             json_schema=json_schema, _retries=_retries - 1,
         )
 

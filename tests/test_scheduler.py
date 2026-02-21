@@ -17,6 +17,7 @@ from cryptobot.cli.scheduler import (
     _maybe_reload_config,
     _maybe_reschedule,
     _format_daily_report,
+    _symbol_to_ft_pair,
 )
 
 
@@ -279,3 +280,25 @@ class TestDailyReport:
         assert "日报" in text
         assert "今日无交易记录" in text
         assert "持仓: 0 个" in text
+
+
+# ─── H11: 交易对拼接 ────────────────────────────────────────────────────────
+
+class TestSymbolToFtPair:
+    def test_btc(self):
+        assert _symbol_to_ft_pair("BTCUSDT") == "BTC/USDT:USDT"
+
+    def test_doge(self):
+        assert _symbol_to_ft_pair("DOGEUSDT") == "DOGE/USDT:USDT"
+
+    def test_avax(self):
+        assert _symbol_to_ft_pair("AVAXUSDT") == "AVAX/USDT:USDT"
+
+    def test_link(self):
+        assert _symbol_to_ft_pair("LINKUSDT") == "LINK/USDT:USDT"
+
+    def test_sui(self):
+        assert _symbol_to_ft_pair("SUIUSDT") == "SUI/USDT:USDT"
+
+    def test_eth(self):
+        assert _symbol_to_ft_pair("ETHUSDT") == "ETH/USDT:USDT"

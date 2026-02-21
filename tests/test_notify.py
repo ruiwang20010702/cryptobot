@@ -108,7 +108,7 @@ class TestNotifyTemplates:
         text = mock_send.call_args[0][0]
         assert "LONG" in text
         assert "BTCUSDT" in text
-        assert "94000" in text
+        assert "~94.0k" in text  # 价格模糊化
 
     @patch("cryptobot.notify.send_message", return_value=True)
     def test_notify_risk_rejected(self, mock_send):

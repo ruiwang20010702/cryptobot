@@ -59,10 +59,14 @@ def run_ws_price_feed(
 
     logger.info("WS 价格推送启动: %d 币种", len(symbols))
 
+    backoff = 5  # 初始退避秒数
+    max_backoff = 60
+
     while not (stop_event and stop_event.is_set()):
         try:
             with ws_client.connect(url, close_timeout=5) as ws:
                 logger.info("WS 已连接: %s", url[:80])
+                backoff = 5  # 连接成功，重置退避
                 while not (stop_event and stop_event.is_set()):
                     try:
                         raw = ws.recv(timeout=10)
@@ -79,7 +83,8 @@ def run_ws_price_feed(
         except Exception as e:
             if stop_event and stop_event.is_set():
                 break
-            logger.warning("WS 断线: %s, 5s 后重连...", e)
-            time.sleep(5)
+            logger.warning("WS 断线: %s, %ds 后重连...", e, backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
 
     logger.info("WS 价格推送已停止")

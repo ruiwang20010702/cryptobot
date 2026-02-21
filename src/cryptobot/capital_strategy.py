@@ -147,6 +147,23 @@ def merge_regime_capital_params(regime_params: dict, capital_params: dict) -> di
     }
 
 
+def _extract_usdt_balance(balance_data: dict | None) -> float:
+    """从 Freqtrade /balance 响应中提取 USDT 余额
+
+    Args:
+        balance_data: ft_api_get("/balance") 的返回值
+
+    Returns:
+        余额 (USDT)，无数据时返回 0.0
+    """
+    if not balance_data:
+        return 0.0
+    for cur in balance_data.get("currencies", []):
+        if cur.get("currency") == "USDT":
+            return float(cur.get("balance", 0))
+    return 0.0
+
+
 def get_balance_from_freqtrade() -> float:
     """从 Freqtrade API 获取 USDT 余额
 
@@ -155,13 +172,9 @@ def get_balance_from_freqtrade() -> float:
     """
     from cryptobot.freqtrade_api import ft_api_get
 
-    balance_data = ft_api_get("/balance")
-    if balance_data:
-        for cur in balance_data.get("currencies", []):
-            if cur.get("currency") == "USDT":
-                val = float(cur.get("balance", 0))
-                if val > 0:
-                    return val
+    balance = _extract_usdt_balance(ft_api_get("/balance"))
+    if balance > 0:
+        return balance
 
     logger.warning("Freqtrade 离线或余额为 0，使用默认 $1000")
     return 1000.0

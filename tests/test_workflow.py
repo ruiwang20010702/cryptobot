@@ -390,11 +390,11 @@ class TestDecisionToSignal:
         assert signal["position_size_usdt"] == 1000
 
     def test_fallback_to_pct_when_no_balance(self):
-        """无法获取余额(=0)时，fallback 到默认 1000"""
+        """无法获取余额(=0)时，返回 0（由硬性规则拦截开仓）"""
         decision = self._make_decision(position_size_pct=10)
         signal = _decision_to_signal(decision, self._make_risk_result(), account_balance=0)
 
-        assert signal["position_size_usdt"] == 1000
+        assert signal["position_size_usdt"] == 0
 
     def test_fallback_to_pct_when_no_entry_range(self):
         """无入场区间时，fallback 用百分比"""

@@ -44,6 +44,7 @@ def send_message(text: str, parse_mode: str = "Markdown") -> bool:
 
     bot_token, chat_id = config
     url = f"{TELEGRAM_API}/bot{bot_token}/sendMessage"
+    masked_token = bot_token[:4] + "***" + bot_token[-4:] if len(bot_token) > 8 else "***"
 
     try:
         resp = httpx.post(
@@ -57,7 +58,7 @@ def send_message(text: str, parse_mode: str = "Markdown") -> bool:
         )
         if resp.status_code == 200:
             return True
-        logger.warning("Telegram 发送失败: %d %s", resp.status_code, resp.text[:200])
+        logger.warning("Telegram 发送失败 (token=%s): %d %s", masked_token, resp.status_code, resp.text[:200])
         return False
     except Exception as e:
         logger.warning("Telegram 发送异常: %s", e)
@@ -66,23 +67,37 @@ def send_message(text: str, parse_mode: str = "Markdown") -> bool:
 
 # ─── 预置消息模板 ──────────────────────────────────────────────────────────
 
+def _approx_price(price) -> str:
+    """将精确价格转为模糊范围 (如 62150.00 → ~62.2k)"""
+    if not isinstance(price, (int, float)) or price <= 0:
+        return "?"
+    if price >= 1000:
+        return f"~{price / 1000:.1f}k"
+    if price >= 1:
+        return f"~{price:.0f}"
+    return f"~{price:.4f}"
+
+
 def notify_new_signal(signal: dict) -> bool:
-    """通知: 新信号写入"""
+    """通知: 新信号写入（价格模糊化，防止信息泄露）"""
     action = signal.get("action", "?").upper()
     symbol = signal.get("symbol", "?")
     leverage = signal.get("leverage", "?")
     confidence = signal.get("confidence", "?")
     entry = signal.get("entry_price_range", [])
-    sl = signal.get("stop_loss", "?")
     size = signal.get("position_size_usdt", "?")
 
-    entry_str = f"{entry[0]:.2f} - {entry[1]:.2f}" if entry and len(entry) == 2 else "?"
+    entry_str = (
+        f"{_approx_price(entry[0])} - {_approx_price(entry[1])}"
+        if entry and len(entry) == 2 else "?"
+    )
+    sl_str = _approx_price(signal.get("stop_loss"))
 
     text = (
         f"📊 *新信号*\n\n"
         f"*{action} {symbol}* {leverage}x\n"
         f"入场: {entry_str}\n"
-        f"止损: {sl}\n"
+        f"止损: {sl_str}\n"
         f"仓位: {size} USDT\n"
         f"置信度: {confidence}"
     )

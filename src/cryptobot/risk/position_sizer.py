@@ -15,7 +15,7 @@ def calc_position_size(
     entry_price: float,
     stop_loss_price: float,
     leverage: int | None = None,
-    win_rate: float = 0.5,
+    win_rate: float = 0.4,
     avg_win_loss_ratio: float = 1.5,
 ) -> dict:
     """计算仓位大小

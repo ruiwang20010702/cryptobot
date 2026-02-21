@@ -82,6 +82,10 @@ schedule:
   quick_scan_coins: 10              # 快速筛选币种数
   deep_analysis_coins: 5            # 深度分析币种数
 
+# Web Dashboard
+web:
+  auth_token: ""        # 或设置环境变量 DASHBOARD_TOKEN，为空时仅允许本地访问
+
 # Telegram 通知 (通过环境变量或此处配置)
 # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 telegram:

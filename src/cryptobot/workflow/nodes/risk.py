@@ -16,6 +16,37 @@ logger = logging.getLogger(__name__)
 _console = Console()
 
 
+def _check_loss_limits(risk_cfg: dict) -> tuple[bool, str]:
+    """检查日度/周度/月度亏损是否超限
+
+    Returns:
+        (通过, 原因) — 通过=True 表示未超限可以开仓
+    """
+    max_loss = risk_cfg.get("max_loss", {})
+    daily_limit = max_loss.get("daily_pct", 5)
+    weekly_limit = max_loss.get("weekly_pct", 8)
+    monthly_limit = max_loss.get("monthly_drawdown_pct", 15)
+
+    try:
+        from cryptobot.journal.analytics import calc_performance
+
+        for days, limit, label in [
+            (1, daily_limit, "日度"),
+            (7, weekly_limit, "周度"),
+            (30, monthly_limit, "月度"),
+        ]:
+            perf = calc_performance(days=days)
+            if perf.get("closed", 0) == 0:
+                continue
+            total_pnl_pct = perf.get("avg_pnl_pct", 0) * perf.get("closed", 0)
+            if total_pnl_pct < -limit:
+                return False, f"{label}亏损 {total_pnl_pct:.1f}% 超过限制 {limit}%"
+    except Exception as e:
+        logger.warning("亏损限制检查失败 (跳过): %s", e)
+
+    return True, ""
+
+
 def _extract_votes(analyses: dict, symbol: str) -> dict | None:
     """从分析师结果中提取各角色的方向投票
 
@@ -65,10 +96,10 @@ def _decision_to_signal(
         except (ValueError, KeyError) as e:
             logger.warning("仓位计算失败 %s: %s, 使用 AI 建议比例", decision["symbol"], e)
 
-    # fallback: 用 AI 建议的百分比 × 余额
+    # fallback: 用 AI 建议的百分比 × 余额 (余额为0时返回0，由硬性规则拦截)
     if position_size_usdt is None:
         pct = decision.get("position_size_pct", 10)
-        position_size_usdt = account_balance * pct / 100 if account_balance > 0 else 1000
+        position_size_usdt = account_balance * pct / 100 if account_balance > 0 else 0
 
     return {
         "symbol": decision["symbol"],
@@ -107,16 +138,15 @@ def risk_review(state: WorkflowState) -> dict:
 
     # 获取账户余额和持仓（用于仓位计算和硬性规则检查）
     from cryptobot.freqtrade_api import ft_api_get
+    from cryptobot.capital_strategy import _extract_usdt_balance
 
-    balance_data = ft_api_get("/balance")
-    account_balance = 0.0
-    if balance_data:
-        for cur in balance_data.get("currencies", []):
-            if cur.get("currency") == "USDT":
-                account_balance = float(cur.get("balance", 0))
-                break
+    account_balance = _extract_usdt_balance(ft_api_get("/balance"))
     if account_balance <= 0:
-        logger.warning("无法获取账户余额, 仓位计算将使用 AI 建议比例 fallback")
+        logger.warning("无法获取账户余额, 拒绝所有新开仓")
+        _console.print("    [red]余额为 0 或 Freqtrade 离线, 拒绝所有新开仓[/red]")
+        from cryptobot.notify import send_message
+        send_message("⚠️ *风控拦截*\n\n余额为 0 或 Freqtrade 离线，拒绝所有新开仓")
+        return {"approved_signals": [], "errors": errors}
 
     positions = ft_api_get("/status") or []
     portfolio_ctx = _build_portfolio_context()
@@ -193,6 +223,15 @@ def risk_review(state: WorkflowState) -> dict:
     long_used = sum(float(p.get("stake_amount", 0) or 0) for p in positions if not p.get("is_short"))
     short_used = sum(float(p.get("stake_amount", 0) or 0) for p in positions if p.get("is_short"))
     total_used = long_used + short_used
+
+    # ── C1: 日度/周度/月度亏损限制检查 ──
+    loss_ok, loss_reason = _check_loss_limits(risk_cfg)
+    if not loss_ok:
+        logger.warning("亏损限制触发: %s, 拒绝所有新开仓", loss_reason)
+        _console.print(f"    [red]亏损限制: {loss_reason}, 拒绝所有新开仓[/red]")
+        from cryptobot.notify import send_message
+        send_message(f"🚫 *亏损限制触发*\n\n{loss_reason}\n已拒绝所有新开仓")
+        return {"approved_signals": [], "errors": errors}
 
     analyses = state.get("analyses", {})
     approved = []
@@ -339,9 +378,17 @@ def risk_review(state: WorkflowState) -> dict:
                             if k in decision:
                                 decision[k] = v
                     votes = _extract_votes(analyses, symbol)
-                    approved.append(_decision_to_signal(
+                    sig = _decision_to_signal(
                         decision, result, account_balance, analyst_votes=votes,
-                    ))
+                    )
+                    approved.append(sig)
+                    # C2: 累加仓位占用，避免同批信号竞态
+                    margin = sig.get("position_size_usdt", 0)
+                    total_used += margin
+                    if action == "short":
+                        short_used += margin
+                    else:
+                        long_used += margin
                     logger.info("风控通过: %s %s", symbol, action)
                 else:
                     reason = result.get("reasoning", "未知")

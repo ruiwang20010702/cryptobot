@@ -84,6 +84,11 @@ def _maybe_reschedule(scheduler, new: dict, old: dict) -> None:
                 logger.warning("热更新 %s 失败: %s", job_id, e)
 
 
+def _symbol_to_ft_pair(symbol: str) -> str:
+    """Binance 格式 BTCUSDT → Freqtrade 格式 BTC/USDT:USDT"""
+    return symbol.removesuffix("USDT") + "/USDT:USDT"
+
+
 # ─── 定时任务函数 ──────────────────────────────────────────────────────────
 
 def job_workflow_run() -> None:
@@ -176,7 +181,7 @@ def job_re_review() -> None:
 
 
 def job_cleanup() -> None:
-    """定时: 清理过期信号"""
+    """定时: 清理过期信号 + 过期缓存"""
     from cryptobot.signal.bridge import cleanup_expired
 
     try:
@@ -184,7 +189,15 @@ def job_cleanup() -> None:
         if removed:
             logger.info("[调度] 清理过期信号: %d 个", removed)
     except Exception as e:
-        logger.error("[调度] 清理失败: %s", e, exc_info=True)
+        logger.error("[调度] 信号清理失败: %s", e, exc_info=True)
+
+    try:
+        from cryptobot.cache import cleanup_stale
+        cache_removed = cleanup_stale(max_age_hours=72)
+        if cache_removed:
+            logger.info("[调度] 清理过期缓存: %d 个文件", cache_removed)
+    except Exception as e:
+        logger.error("[调度] 缓存清理失败: %s", e, exc_info=True)
 
 
 def _format_daily_report(today: dict, weekly: dict,
@@ -298,7 +311,7 @@ def job_journal_sync() -> None:
 
         synced = 0
         for record in active_records:
-            ft_pair = record.symbol[:3] + "/" + record.symbol[3:] + ":USDT"
+            ft_pair = _symbol_to_ft_pair(record.symbol)
             for trade in closed_trades:
                 if trade.get("pair") != ft_pair:
                     continue

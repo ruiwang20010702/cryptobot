@@ -2,7 +2,17 @@
 
 from fastapi import APIRouter, HTTPException
 
+from cryptobot.config import get_all_symbols
+
 router = APIRouter()
+
+
+def _validate_symbol(symbol: str) -> str:
+    """验证 symbol 是否在白名单中，非法值抛 400"""
+    valid = get_all_symbols()
+    if symbol not in valid:
+        raise HTTPException(status_code=400, detail=f"无效交易对: {symbol}")
+    return symbol
 
 
 @router.get("/dashboard")
@@ -17,13 +27,8 @@ def get_dashboard():
     pending = read_pending_signals(filter_expired=False)
     perf = calc_performance(30)
 
-    balance_data = ft_api_get("/balance")
-    account_balance = 0.0
-    if balance_data:
-        for cur in balance_data.get("currencies", []):
-            if cur.get("currency") == "USDT":
-                account_balance = float(cur.get("balance", 0))
-                break
+    from cryptobot.capital_strategy import _extract_usdt_balance
+    account_balance = _extract_usdt_balance(ft_api_get("/balance"))
 
     return {
         "account_balance": account_balance,
@@ -83,6 +88,7 @@ def get_journal_stats():
 @router.get("/klines/{symbol}")
 def get_klines(symbol: str, interval: str = "4h", limit: int = 100):
     """K 线数据 (lightweight-charts 格式)"""
+    _validate_symbol(symbol)
     from cryptobot.indicators.calculator import load_klines
 
     try:
@@ -127,6 +133,7 @@ def get_journal_recent(limit: int = 20):
 @router.patch("/signals/{symbol}")
 def update_signal(symbol: str, updates: dict):
     """更新信号字段"""
+    _validate_symbol(symbol)
     from cryptobot.signal.bridge import update_signal_field
 
     if not updates:

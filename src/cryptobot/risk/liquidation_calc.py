@@ -11,6 +11,50 @@
 # 实际应从交易所获取，这里用近似值
 DEFAULT_MAINTENANCE_MARGIN_RATE = 0.004  # 0.4% (BTC/ETH 小仓位)
 
+# Binance USDT-M 维持保证金分级表 (简化版, 2026-02)
+# 格式: [(名义价值上限 USD, 维持保证金率), ...]
+_TIERED_MMR: dict[str, list[tuple[float, float]]] = {
+    "BTCUSDT": [
+        (50_000, 0.004),
+        (250_000, 0.005),
+        (1_000_000, 0.01),
+        (5_000_000, 0.025),
+        (float("inf"), 0.05),
+    ],
+    "ETHUSDT": [
+        (50_000, 0.004),
+        (250_000, 0.005),
+        (1_000_000, 0.01),
+        (5_000_000, 0.025),
+        (float("inf"), 0.05),
+    ],
+}
+# Altcoin 通用分级 (保证金率更高)
+_ALTCOIN_TIERED_MMR = [
+    (10_000, 0.01),
+    (50_000, 0.015),
+    (250_000, 0.02),
+    (1_000_000, 0.025),
+    (float("inf"), 0.05),
+]
+
+
+def _get_maintenance_margin_rate(symbol: str, notional: float) -> float:
+    """按 Binance 分级表查询维持保证金率
+
+    Args:
+        symbol: 交易对 (BTCUSDT)
+        notional: 名义价值 (USD)
+
+    Returns:
+        维持保证金率 (如 0.004 表示 0.4%)
+    """
+    tiers = _TIERED_MMR.get(symbol, _ALTCOIN_TIERED_MMR)
+    for limit, rate in tiers:
+        if notional <= limit:
+            return rate
+    return DEFAULT_MAINTENANCE_MARGIN_RATE
+
 
 def calc_liquidation_price(
     entry_price: float,
@@ -73,9 +117,13 @@ def full_liquidation_analysis(
     leverage: int,
     side: str,
     position_size_usdt: float = 0,
-    maintenance_margin_rate: float = DEFAULT_MAINTENANCE_MARGIN_RATE,
+    maintenance_margin_rate: float | None = None,
+    symbol: str = "",
 ) -> dict:
     """完整爆仓分析"""
+    if maintenance_margin_rate is None:
+        notional = position_size_usdt * leverage if position_size_usdt else entry_price * leverage
+        maintenance_margin_rate = _get_maintenance_margin_rate(symbol, notional)
     liq_price = calc_liquidation_price(entry_price, leverage, side, maintenance_margin_rate)
     distance = calc_liquidation_distance(current_price, liq_price)
     risk = assess_liquidation_risk(distance)

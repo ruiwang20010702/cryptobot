@@ -46,8 +46,13 @@ class TestKlinesAPI:
             "cryptobot.indicators.calculator.load_klines",
             side_effect=FileNotFoundError("No data"),
         ):
-            resp = client.get("/api/klines/UNKNOWNUSDT")
+            resp = client.get("/api/klines/BTCUSDT")
             assert resp.status_code == 404
+
+    def test_klines_invalid_symbol(self, client):
+        """非法 symbol 返回 400"""
+        resp = client.get("/api/klines/UNKNOWNUSDT")
+        assert resp.status_code == 400
 
 
 class TestJournalRecentAPI:

@@ -134,7 +134,21 @@ def _confirm_indicators(symbol: str, action: str) -> bool:
 
 
 def _promote_signal(signal: dict) -> None:
-    """将 pending 信号写入 signal.json，供 Freqtrade 读取"""
+    """将 pending 信号写入 signal.json，供 Freqtrade 读取
+
+    先写 signal.json，再删 pending。即使删除失败，
+    下次 _is_already_promoted() 检查时会跳过已存在的信号。
+    """
+    from cryptobot.signal.bridge import read_signals
+
+    # 去重: 检查 signal.json 中是否已有该符号
+    existing = read_signals(filter_expired=False)
+    for s in existing:
+        if s["symbol"] == signal["symbol"]:
+            logger.info("信号已存在于 signal.json, 跳过 promote: %s", signal["symbol"])
+            remove_pending_signal(signal["symbol"])
+            return
+
     write_signal(signal)
     remove_pending_signal(signal["symbol"])
 
