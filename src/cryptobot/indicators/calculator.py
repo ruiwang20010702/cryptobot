@@ -88,13 +88,24 @@ def _fetch_klines_from_api(
     return df
 
 
-def download_klines(symbol: str, timeframe: str, limit: int = 500) -> pd.DataFrame:
-    """从 Binance API 下载历史 K 线（不走缓存，用于历史模拟）"""
+def download_klines(
+    symbol: str, timeframe: str, limit: int = 500,
+    end_time: int | None = None,
+) -> pd.DataFrame:
+    """从 Binance API 下载历史 K 线（不走缓存，用于历史模拟）
+
+    Args:
+        end_time: 结束时间戳（毫秒），用于获取特定时间之前的 K 线
+    """
     import httpx
+
+    params = {"symbol": symbol, "interval": timeframe, "limit": limit}
+    if end_time is not None:
+        params["endTime"] = end_time
 
     resp = httpx.get(
         f"{BINANCE_FAPI}/fapi/v1/klines",
-        params={"symbol": symbol, "interval": timeframe, "limit": limit},
+        params=params,
         timeout=15,
     )
     resp.raise_for_status()

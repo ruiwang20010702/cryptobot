@@ -52,6 +52,8 @@ uv run cryptobot backtest replay <signal_id>  # 单信号 K 线复盘
 uv run cryptobot backtest run --days 90       # 量化回测 (成本模型+净值曲线+Sharpe)
 uv run cryptobot backtest baseline --strategy all  # 基线策略对比
 uv run cryptobot backtest compare --days 90   # AI vs 基线统计检验 (p-value)
+uv run cryptobot backtest replay-history --days 90  # 历史回放 (LLM 驱动信号生成+回测)
+uv run cryptobot backtest replay-history --days 30 --symbols "BTCUSDT,ETHUSDT"  # 指定币种
 uv run cryptobot doctor                       # 环境健康检查 (12项)
 uv run cryptobot doctor --json-output         # JSON 格式健康检查
 uv run cryptobot init                         # 初始化运行环境 (创建目录+.env+doctor)
@@ -120,6 +122,7 @@ execute                         5m 指标确认?
 | `backtest/baselines.py` | 随机/MA交叉/RSI/布林通道 4 种基线信号生成 |
 | `backtest/stats.py` | Welch's t-test + Permutation test 统计检验 (无 scipy) |
 | `backtest/engine.py` | 完整回测编排：信号加载→模拟→统计→报告持久化 |
+| `backtest/historical_replay.py` | 历史回放引擎：历史K线→技术快照→LLM批次决策→信号生成→交易模拟（断点续跑） |
 | `cli/doctor.py` | 12 项环境健康检查（Python/TA-Lib/API/目录等） |
 | `cli/init_cmd.py` | 环境初始化：创建目录 + .env + 交互 API key + doctor |
 | `archive/` | AI 决策归档：每轮工作流保存完整决策链(筛选评分/分析/风控细节/信号)到 JSON，支持 CLI 查阅 |

@@ -431,3 +431,109 @@ def replay(signal_id: str):
     console.print(f"  止损触发: {'是' if result['sl_hit'] else '否'}")
     console.print(f"  止盈触发: {result['tp_hits']}/{result['tp_total']}")
     console.print(f"  分析 K 线: {result['bars_analyzed']} 根 (1h)")
+
+
+@backtest.command("replay-history")
+@click.option("--days", default=90, help="回溯天数")
+@click.option("--symbols", default="", help="币种列表(逗号分隔)，空=前5")
+@click.option("--interval", default=24, help="采样间隔(小时)")
+@click.option("--resume", is_flag=True, help="断点续跑")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+@click.option("--yes", "-y", is_flag=True, help="跳过确认")
+def replay_history(
+    days: int, symbols: str, interval: int, resume: bool, json_output: bool, yes: bool,
+):
+    """历史回放: 用历史 K 线驱动 LLM 生成交易信号并回测"""
+    from dataclasses import asdict
+    from cryptobot.backtest.historical_replay import ReplayConfig, run_historical_replay
+    from cryptobot.backtest.engine import save_report
+
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else []
+    config = ReplayConfig(
+        days=days, symbols=sym_list, interval_hours=interval,
+    )
+
+    # 预估
+    n_symbols = len(sym_list) if sym_list else 5
+    total_points = days * 24 // interval if interval < 24 else days
+    total_llm = total_points * n_symbols
+    est_minutes = total_llm * 5 // 60  # ~5秒/调用
+
+    if not yes:
+        console.print("\n[bold]历史回放配置[/bold]")
+        console.print(f"  回溯: {days} 天 | 间隔: {interval}h | 币种: {n_symbols}")
+        console.print(f"  预估 LLM 调用: ~{total_llm} 次")
+        console.print(f"  预估时间: ~{est_minutes} 分钟")
+        click.confirm("确认开始?", abort=True)
+
+    console.print(f"\n[bold]历史回放[/bold] ({days}天 × {n_symbols}币种)\n")
+
+    def on_day(idx, total, date_str, n_sig):
+        console.print(f"  [{idx + 1}/{total}] {date_str[:10]} — {n_sig} 个信号")
+
+    report = run_historical_replay(config, resume=resume, on_day_done=on_day)
+
+    if json_output:
+        data = {
+            "config": report.config,
+            "signal_source": report.signal_source,
+            "total_signals_loaded": report.total_signals_loaded,
+            "metrics": asdict(report.metrics),
+            "by_symbol": report.by_symbol,
+            "by_direction": report.by_direction,
+        }
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False))
+        return
+
+    m = report.metrics
+    if m.total_trades == 0:
+        console.print("[yellow]无有效交易产出[/yellow]")
+        return
+
+    # 核心指标
+    table = Table(title="历史回放回测")
+    table.add_column("指标", style="cyan")
+    table.add_column("值", justify="right")
+    table.add_row("总信号", str(report.total_signals_loaded))
+    table.add_row("有效交易", str(m.total_trades))
+    table.add_row("胜率", f"{m.win_rate * 100:.1f}%")
+    table.add_row("Sharpe", f"{m.sharpe_ratio:.2f}")
+    table.add_row("Sortino", f"{m.sortino_ratio:.2f}")
+    table.add_row("最大回撤", f"{m.max_drawdown_pct:.1f}%")
+    table.add_row("盈亏比 (PF)", f"{m.profit_factor:.2f}")
+    table.add_row("总收益", f"{m.total_return_pct:+.1f}%")
+    table.add_row("平均交易", f"{m.avg_trade_pnl_pct:+.2f}%")
+    console.print(table)
+
+    # 按币种
+    if report.by_symbol:
+        sym_table = Table(title="按币种")
+        sym_table.add_column("币种")
+        sym_table.add_column("笔数", justify="right")
+        sym_table.add_column("胜率", justify="right")
+        sym_table.add_column("平均盈亏", justify="right")
+        for sym, stats in report.by_symbol.items():
+            sym_table.add_row(
+                sym, str(stats["count"]),
+                f"{stats['win_rate'] * 100:.0f}%",
+                f"{stats['avg_pnl_pct']:+.1f}%",
+            )
+        console.print(sym_table)
+
+    # 按方向
+    if report.by_direction:
+        dir_table = Table(title="按方向")
+        dir_table.add_column("方向")
+        dir_table.add_column("笔数", justify="right")
+        dir_table.add_column("胜率", justify="right")
+        dir_table.add_column("平均盈亏", justify="right")
+        for d, stats in report.by_direction.items():
+            dir_table.add_row(
+                d, str(stats["count"]),
+                f"{stats['win_rate'] * 100:.0f}%",
+                f"{stats['avg_pnl_pct']:+.1f}%",
+            )
+        console.print(dir_table)
+
+    path = save_report(report)
+    console.print(f"\n报告已保存: {path}")
