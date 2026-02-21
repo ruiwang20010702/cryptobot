@@ -12,6 +12,7 @@
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import pandas as pd
@@ -64,30 +65,80 @@ class ReplaySnapshot:
 # ── K 线下载与切片 ────────────────────────────────────────────────────────
 
 
+def _download_paginated(
+    symbol: str,
+    tf: str,
+    needed_bars: int,
+    end_time_ms: int | None = None,
+) -> pd.DataFrame:
+    """分页下载 K 线，支持超过 1500 根
+
+    Binance 每次最多 1500 根。需要更多时，用前一批最早时间戳作为
+    下一页的 endTime 进行分页拼接。
+    """
+    from cryptobot.indicators.calculator import download_klines
+
+    frames: list[pd.DataFrame] = []
+    remaining = needed_bars
+    cursor_end = end_time_ms
+
+    while remaining > 0:
+        batch_size = min(remaining, _DOWNLOAD_LIMIT)
+        df = download_klines(symbol, tf, batch_size, end_time=cursor_end)
+
+        if df.empty:
+            break
+
+        frames.append(df)
+        remaining -= len(df)
+
+        # 如果返回不足请求数，说明已无更多数据
+        if len(df) < batch_size:
+            break
+
+        # 下一页: endTime = 当前批次最早时间戳 - 1ms
+        earliest_ts = int(df.index[0].timestamp() * 1000) - 1
+        cursor_end = earliest_ts
+
+        # 简单限流
+        time.sleep(0.2)
+
+    if not frames:
+        return pd.DataFrame()
+
+    # 按时间排序 + 去重
+    combined = pd.concat(frames).sort_index()
+    combined = combined[~combined.index.duplicated(keep="first")]
+    return combined
+
+
 def _download_full_klines(
     symbols: list[str],
+    days: int = 90,
     end_time_ms: int | None = None,
 ) -> dict[tuple[str, str], pd.DataFrame]:
-    """智能下载全量 K 线（每币种/每TF一次API调用）
+    """智能下载全量 K 线（自动分页覆盖完整回放周期）
 
     Args:
         symbols: 币种列表
+        days: 回放天数，用于计算每 TF 所需 K 线数
         end_time_ms: 结束时间戳（毫秒），None 则取当前时间
 
     Returns:
         {(symbol, tf): DataFrame} 缓存
     """
-    from cryptobot.indicators.calculator import download_klines
-
     cache: dict[tuple[str, str], pd.DataFrame] = {}
 
     for sym in symbols:
         for tf in TIMEFRAMES:
+            # 计算所需 K 线数: 回放天数 + 指标 lookback 缓冲
+            tf_hours = _TF_HOURS[tf]
+            needed = (days * 24) // tf_hours + _MIN_BARS * 2
             try:
-                df = download_klines(sym, tf, _DOWNLOAD_LIMIT, end_time=end_time_ms)
+                df = _download_paginated(sym, tf, needed, end_time_ms)
                 if not df.empty:
                     cache[(sym, tf)] = df
-                    logger.debug("下载 %s %s: %d 根 K 线", sym, tf, len(df))
+                    logger.debug("下载 %s %s: %d 根 K 线 (需要 %d)", sym, tf, len(df), needed)
             except Exception as e:
                 logger.warning("下载 %s %s 失败: %s", sym, tf, e)
 
@@ -377,7 +428,6 @@ def run_historical_replay(
     from cryptobot.backtest.engine import _build_report
     from cryptobot.backtest.trade_simulator import simulate_trade
     from cryptobot.backtest.cost_model import CostConfig
-    from cryptobot.indicators.calculator import download_klines
 
     if config is None:
         config = ReplayConfig()
@@ -417,9 +467,9 @@ def run_historical_replay(
     if not pending_dates:
         logger.info("所有日期已完成")
     else:
-        # Phase 1: 下载全量 K 线
+        # Phase 1: 下载全量 K 线（自动分页覆盖完整回放周期）
         end_time_ms = int(now.timestamp() * 1000)
-        klines_cache = _download_full_klines(symbols, end_time_ms)
+        klines_cache = _download_full_klines(symbols, config.days, end_time_ms)
 
         if not klines_cache:
             logger.error("无法下载 K 线数据")
@@ -478,12 +528,13 @@ def run_historical_replay(
 
     cost_config = CostConfig()
 
-    # 下载 1h K 线用于模拟
+    # 下载 1h K 线用于模拟（分页覆盖完整回放周期）
     klines_1h: dict[str, pd.DataFrame] = {}
     sim_symbols = list({s["symbol"] for s in signals})
+    needed_sim_bars = config.days * 24 + 200
     for sym in sim_symbols:
         try:
-            klines_1h[sym] = download_klines(sym, "1h", _DOWNLOAD_LIMIT)
+            klines_1h[sym] = _download_paginated(sym, "1h", needed_sim_bars)
         except Exception as e:
             logger.warning("下载 %s 1h K线失败: %s", sym, e)
 

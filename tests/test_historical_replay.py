@@ -23,8 +23,10 @@ from cryptobot.backtest.historical_replay import (
     _clear_progress,
     _format_snapshot_prompt,
     _download_full_klines,
+    _download_paginated,
     run_historical_replay,
     _PROGRESS_FILE,
+    _DOWNLOAD_LIMIT,
     TIMEFRAMES,
     _MIN_BARS,
 )
@@ -403,19 +405,72 @@ class TestFormatPrompt:
 # ── TestDownloadFullKlines ───────────────────────────────────────────────
 
 
-class TestDownloadFullKlines:
+class TestDownloadPaginated:
     @patch("cryptobot.indicators.calculator.download_klines")
-    def test_downloads_all_tfs(self, mock_dl):
-        mock_dl.return_value = _make_klines(100)
-        result = _download_full_klines(["BTCUSDT"])
-        assert len(result) == 3
-        assert mock_dl.call_count == 3
+    def test_single_page(self, mock_dl):
+        """needed <= 1500 时一次调用即可"""
+        mock_dl.return_value = _make_klines(500)
+        result = _download_paginated("BTCUSDT", "1h", 500)
+        assert len(result) == 500
+        assert mock_dl.call_count == 1
+
+    @patch("cryptobot.backtest.historical_replay.time")
+    @patch("cryptobot.indicators.calculator.download_klines")
+    def test_multi_page(self, mock_dl, mock_time):
+        """needed > 1500 时分页下载拼接"""
+        # 第一页 1500 根, 第二页 860 根
+        page1 = _make_klines(1500, start="2025-03-01", freq="h")
+        page2 = _make_klines(860, start="2024-12-28", freq="h")
+        mock_dl.side_effect = [page1, page2]
+
+        result = _download_paginated("BTCUSDT", "1h", 2360)
+        assert mock_dl.call_count == 2
+        assert len(result) >= 2000  # 合并去重后至少 2000+
 
     @patch("cryptobot.indicators.calculator.download_klines")
-    def test_handles_failure(self, mock_dl):
-        mock_dl.side_effect = Exception("Network error")
-        result = _download_full_klines(["BTCUSDT"])
+    def test_empty_result(self, mock_dl):
+        mock_dl.return_value = pd.DataFrame()
+        result = _download_paginated("BTCUSDT", "1h", 500)
+        assert result.empty
+
+    @patch("cryptobot.indicators.calculator.download_klines")
+    def test_partial_return_stops(self, mock_dl):
+        """返回不足请求数时停止分页"""
+        mock_dl.return_value = _make_klines(800)
+        result = _download_paginated("BTCUSDT", "1h", 2000)
+        assert mock_dl.call_count == 1  # 800 < 1500, 停止
+        assert len(result) == 800
+
+
+class TestDownloadFullKlines:
+    @patch("cryptobot.backtest.historical_replay._download_paginated")
+    def test_downloads_all_tfs(self, mock_pag):
+        mock_pag.return_value = _make_klines(200)
+        result = _download_full_klines(["BTCUSDT"], days=30)
+        assert len(result) == 3
+        assert mock_pag.call_count == 3
+
+    @patch("cryptobot.backtest.historical_replay._download_paginated")
+    def test_handles_failure(self, mock_pag):
+        mock_pag.side_effect = Exception("Network error")
+        result = _download_full_klines(["BTCUSDT"], days=30)
         assert len(result) == 0
+
+    @patch("cryptobot.backtest.historical_replay._download_paginated")
+    def test_calculates_needed_bars(self, mock_pag):
+        """验证按 TF 计算所需 K 线数"""
+        mock_pag.return_value = _make_klines(200)
+        _download_full_klines(["BTCUSDT"], days=90)
+
+        # 检查每个 TF 的 needed_bars 参数
+        calls = mock_pag.call_args_list
+        needed_by_tf = {c.args[1]: c.args[2] for c in calls}
+        # 1h: 90*24/1 + 200 = 2360
+        assert needed_by_tf["1h"] == 2360
+        # 4h: 90*24/4 + 200 = 740
+        assert needed_by_tf["4h"] == 740
+        # 1d: 90*24/24 + 200 = 290
+        assert needed_by_tf["1d"] == 290
 
 
 # ── TestRunReplayMocked ──────────────────────────────────────────────────
@@ -424,14 +479,14 @@ class TestDownloadFullKlines:
 class TestRunReplayMocked:
     @patch("cryptobot.backtest.historical_replay._clear_progress")
     @patch("cryptobot.backtest.trade_simulator.simulate_trade")
-    @patch("cryptobot.indicators.calculator.download_klines")
+    @patch("cryptobot.backtest.historical_replay._download_paginated")
     @patch("cryptobot.backtest.historical_replay._run_llm_batch")
     @patch("cryptobot.backtest.historical_replay._build_snapshot")
     @patch("cryptobot.backtest.historical_replay._download_full_klines")
     @patch("cryptobot.backtest.historical_replay.get_all_symbols")
     def test_full_flow(
         self, mock_symbols, mock_dl_full, mock_build_snap,
-        mock_llm_batch, mock_dl_klines, mock_sim, mock_clear,
+        mock_llm_batch, mock_dl_pag, mock_sim, mock_clear,
     ):
         mock_symbols.return_value = ["BTCUSDT", "ETHUSDT"]
 
@@ -465,8 +520,8 @@ class TestRunReplayMocked:
 
         mock_llm_batch.side_effect = fake_llm
 
-        # Phase 4: 1h K 线下载 + 模拟
-        mock_dl_klines.return_value = _make_klines(500)
+        # Phase 4: 分页下载 1h K 线用于模拟
+        mock_dl_pag.return_value = _make_klines(500)
 
         from cryptobot.backtest.trade_simulator import TradeResult
 
@@ -504,20 +559,20 @@ class TestRunReplayMocked:
 
     @patch("cryptobot.backtest.historical_replay._clear_progress")
     @patch("cryptobot.backtest.trade_simulator.simulate_trade")
-    @patch("cryptobot.indicators.calculator.download_klines")
+    @patch("cryptobot.backtest.historical_replay._download_paginated")
     @patch("cryptobot.backtest.historical_replay._run_llm_batch")
     @patch("cryptobot.backtest.historical_replay._build_snapshot")
     @patch("cryptobot.backtest.historical_replay._download_full_klines")
     @patch("cryptobot.backtest.historical_replay.get_all_symbols")
     def test_callback_invoked(
         self, mock_symbols, mock_dl_full, mock_build_snap,
-        mock_llm_batch, mock_dl_klines, mock_sim, mock_clear,
+        mock_llm_batch, mock_dl_pag, mock_sim, mock_clear,
     ):
         mock_symbols.return_value = ["BTCUSDT"]
         mock_dl_full.return_value = _make_cache(["BTCUSDT"], days=150)
         mock_build_snap.return_value = _make_snapshot()
         mock_llm_batch.return_value = [{"action": "no_trade", "confidence": 30, "reasoning": "X"}]
-        mock_dl_klines.return_value = _make_klines(500)
+        mock_dl_pag.return_value = _make_klines(500)
         mock_sim.return_value = None
 
         callback_calls = []
