@@ -232,7 +232,7 @@ REPLAY_TRADER_PROMPT = """\
 5. 关键价位: 支撑/阻力位设定入场和止损
 
 ## 决策规则
-- 置信度 < 45 → no_trade
+- 置信度 < 55 → no_trade
 - 止损基于 ATR + 关键价位
 - 分批止盈（至少 2 级）
 - 杠杆不超过 {max_leverage}x
@@ -309,7 +309,7 @@ def _parse_to_signal(
         return None
 
     confidence = llm_output.get("confidence", 0)
-    if confidence < 45:
+    if confidence < 55:
         return None
 
     entry_range = llm_output.get("entry_price_range", [])
