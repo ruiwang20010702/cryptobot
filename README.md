@@ -249,4 +249,4 @@ uv run ruff check src/                     # Lint 检查
 
 ## License
 
-Private — All rights reserved.
+Source Available — 仅供查看和学习，禁止使用、修改和分发。详见 [LICENSE](LICENSE)。
