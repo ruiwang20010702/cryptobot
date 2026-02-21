@@ -6,9 +6,13 @@
 - 大户多空比: Binance 公开 API (免费)
 """
 
+import logging
+
 import httpx
 
 from cryptobot.cache import get_cache, set_cache
+
+logger = logging.getLogger(__name__)
 
 BINANCE_FAPI = "https://fapi.binance.com"
 FEAR_GREED_API = "https://api.alternative.me/fng"
@@ -23,14 +27,18 @@ def get_fear_greed_index(limit: int = 30) -> dict:
     if cached:
         return cached
 
-    resp = httpx.get(
-        FEAR_GREED_API,
-        params={"limit": limit, "format": "json"},
-        timeout=10,
-        follow_redirects=True,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
+    try:
+        resp = httpx.get(
+            FEAR_GREED_API,
+            params={"limit": limit, "format": "json"},
+            timeout=10,
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+    except Exception as e:
+        logger.warning("获取恐惧贪婪指数失败: %s", e)
+        return {"current_value": 50, "current_classification": "Neutral", "error": str(e)}
 
     records = [
         {
@@ -80,13 +88,17 @@ def get_long_short_ratio(
     if cached:
         return cached
 
-    resp = httpx.get(
-        f"{BINANCE_FAPI}/futures/data/globalLongShortAccountRatio",
-        params={"symbol": symbol, "period": period, "limit": limit},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
+    try:
+        resp = httpx.get(
+            f"{BINANCE_FAPI}/futures/data/globalLongShortAccountRatio",
+            params={"symbol": symbol, "period": period, "limit": limit},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+    except Exception as e:
+        logger.warning("获取多空比失败 %s: %s", symbol, e)
+        return {"symbol": symbol, "current_ratio": 1.0, "error": str(e)}
 
     records = [
         {
@@ -124,13 +136,17 @@ def get_top_trader_long_short(
     if cached:
         return cached
 
-    resp = httpx.get(
-        f"{BINANCE_FAPI}/futures/data/topLongShortAccountRatio",
-        params={"symbol": symbol, "period": period, "limit": limit},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
+    try:
+        resp = httpx.get(
+            f"{BINANCE_FAPI}/futures/data/topLongShortAccountRatio",
+            params={"symbol": symbol, "period": period, "limit": limit},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+    except Exception as e:
+        logger.warning("获取大户多空比失败 %s: %s", symbol, e)
+        return {"symbol": symbol, "current_ratio": 1.0, "error": str(e)}
 
     records = [
         {

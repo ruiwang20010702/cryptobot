@@ -31,8 +31,25 @@ def execute(state: WorkflowState) -> dict:
     from cryptobot.journal.models import SignalRecord
     from cryptobot.journal.storage import save_record
     from cryptobot.workflow.prompts import get_prompt_version
+    from cryptobot.freqtrade_api import ft_api_get
+
+    # H1: 获取现有持仓，避免重复开仓
+    existing_positions = ft_api_get("/status") or []
+    held_symbols = {}
+    for pos in existing_positions:
+        pair = pos.get("pair", "")
+        sym = pair.replace("/", "").replace(":USDT", "")
+        direction = "short" if pos.get("is_short") else "long"
+        held_symbols[sym] = direction
 
     for signal in approved:
+        # H1: 跳过已有同币种同方向持仓
+        sym = signal.get("symbol", "")
+        sig_action = signal.get("action", "")
+        if sym in held_symbols and held_symbols[sym] == sig_action:
+            logger.info("跳过 %s: 已持有同方向 %s 仓位", sym, sig_action)
+            _console.print(f"    [yellow]跳过 {sym}: 已有 {sig_action} 持仓[/yellow]")
+            continue
         signal["prompt_version"] = get_prompt_version()
         try:
             result = writer(signal)

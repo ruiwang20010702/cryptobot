@@ -55,6 +55,11 @@ class PriceTracker:
         if old_price is None or old_price == 0:
             return None
 
+        # 数据实际跨度 < 窗口 50% 时数据不足，返回 None
+        actual_span = now - self.history[0].timestamp
+        if actual_span < window_seconds * 0.5:
+            return None
+
         current = self.history[-1].price
         return (current - old_price) / old_price * 100
 

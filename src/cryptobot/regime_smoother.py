@@ -57,9 +57,19 @@ def smooth_regime_transition(
         is_volatile_upgrade: 恐惧贪婪极端值触发的 volatile 升级 (跳过平滑)
         is_simulation: 模拟/回测模式 (跳过平滑)
     """
-    # 紧急安全机制和模拟模式跳过平滑
-    if is_volatile_upgrade or is_simulation:
+    # 模拟模式跳过平滑
+    if is_simulation:
         return detected_regime, False
+
+    # volatile 升级: 跳过平滑但写入历史
+    if is_volatile_upgrade:
+        history = _load_history()
+        changed = history["current_regime"] != detected_regime
+        history["current_regime"] = detected_regime
+        history["pending_transition"] = None
+        history["last_updated"] = datetime.now(timezone.utc).isoformat()
+        _save_history(history)
+        return detected_regime, changed
 
     history = _load_history()
     current = history["current_regime"]

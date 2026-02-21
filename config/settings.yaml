@@ -71,7 +71,7 @@ risk:
     caution: 30       # 30-50% 注意
     warning: 20       # 20-30% 警告 → Telegram 告警
     danger: 10        # 10-20% 危险 → 自动减仓 50%
-    critical: 10      # < 10% 紧急 → 自动全部平仓
+    critical: 5       # < 5% 紧急 → 自动全部平仓
 
 # 分析调度
 schedule:

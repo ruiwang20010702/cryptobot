@@ -12,12 +12,14 @@ from cryptobot.web.app import create_app
 
 
 @pytest.fixture
-def client():
-    """FastAPI TestClient"""
+def client(monkeypatch):
+    """FastAPI TestClient（设置空 token 绕过认证检查，仅本地判断）"""
     from fastapi.testclient import TestClient
 
+    # 测试环境设置已知 token
+    monkeypatch.setenv("DASHBOARD_TOKEN", "test-token")
     app = create_app()
-    return TestClient(app)
+    return TestClient(app, headers={"Authorization": "Bearer test-token"})
 
 
 # ─── API 路由 ─────────────────────────────────────────────────────────────

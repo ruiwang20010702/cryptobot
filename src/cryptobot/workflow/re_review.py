@@ -23,7 +23,7 @@ def collect_data_for_symbols(symbols: list[str]) -> dict:
     """
     _console.print(f"[cyan]采集 {len(symbols)} 个持仓币种数据...[/cyan]")
 
-    market_data, fear_greed, market_overview, global_news, _stablecoin, errors = (
+    market_data, fear_greed, market_overview, global_news, _stablecoin, _macro, errors = (
         fetch_market_data(symbols)
     )
 

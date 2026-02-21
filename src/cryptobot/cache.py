@@ -31,19 +31,12 @@ def get_cache(category: str, key: str, ttl: int = 900) -> dict | None:
 
 
 def set_cache(category: str, key: str, data: dict) -> None:
-    """写入缓存"""
+    """写入缓存（不修改传入的 data）"""
     path = _cache_path(category, key)
-    data["_cached_at"] = time.time()
+    cached = {**data, "_cached_at": time.time()}
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.write_text(json.dumps(cached, ensure_ascii=False, indent=2))
     tmp.rename(path)
-
-
-# 缓存子目录列表（与数据源模块对应）
-_CACHE_SUBDIRS = [
-    ".cache", "stablecoin", "exchange_reserve", "orderbook",
-    "coinglass", "dxy", "defi_tvl", "whale",
-]
 
 
 def cleanup_stale(max_age_hours: int = 72) -> int:
@@ -58,7 +51,9 @@ def cleanup_stale(max_age_hours: int = 72) -> int:
     cutoff = time.time() - max_age_hours * 3600
     removed = 0
 
-    for subdir in _CACHE_SUBDIRS:
+    # 动态扫描所有子目录
+    subdirs = [d.name for d in DATA_OUTPUT_DIR.iterdir() if d.is_dir()] if DATA_OUTPUT_DIR.is_dir() else []
+    for subdir in subdirs:
         cache_dir = DATA_OUTPUT_DIR / subdir
         if not cache_dir.is_dir():
             continue

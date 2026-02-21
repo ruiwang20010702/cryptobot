@@ -6,17 +6,41 @@
 - 综合评分
 """
 
+import logging
+
 from cryptobot.data.onchain import get_funding_rate, get_open_interest_hist, get_taker_buy_sell_ratio
 from cryptobot.data.sentiment import get_long_short_ratio, get_top_trader_long_short
+
+logger = logging.getLogger(__name__)
 
 
 def calc_crypto_indicators(symbol: str = "BTCUSDT") -> dict:
     """计算加密货币特有指标"""
-    funding = get_funding_rate(symbol)
-    oi = get_open_interest_hist(symbol, period="1h", limit=48)
-    taker = get_taker_buy_sell_ratio(symbol, period="1h", limit=48)
-    ls_ratio = get_long_short_ratio(symbol, period="1h", limit=30)
-    top_ls = get_top_trader_long_short(symbol, period="1h", limit=30)
+    try:
+        funding = get_funding_rate(symbol)
+    except Exception as e:
+        logger.warning("funding_rate 获取失败 %s: %s", symbol, e)
+        funding = {"current_rate": 0}
+    try:
+        oi = get_open_interest_hist(symbol, period="1h", limit=48)
+    except Exception as e:
+        logger.warning("open_interest 获取失败 %s: %s", symbol, e)
+        oi = {"oi_change_pct": 0}
+    try:
+        taker = get_taker_buy_sell_ratio(symbol, period="1h", limit=48)
+    except Exception as e:
+        logger.warning("taker_ratio 获取失败 %s: %s", symbol, e)
+        taker = {"current_ratio": 1.0}
+    try:
+        ls_ratio = get_long_short_ratio(symbol, period="1h", limit=30)
+    except Exception as e:
+        logger.warning("long_short_ratio 获取失败 %s: %s", symbol, e)
+        ls_ratio = {"current_ratio": 1.0}
+    try:
+        top_ls = get_top_trader_long_short(symbol, period="1h", limit=30)
+    except Exception as e:
+        logger.warning("top_trader_ls 获取失败 %s: %s", symbol, e)
+        top_ls = {"current_ratio": 1.0}
 
     # 资金费率分析
     funding_analysis = _analyze_funding(funding)

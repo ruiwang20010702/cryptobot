@@ -229,7 +229,8 @@ class TestDaemonCLI:
             result = runner.invoke(daemon, ["start", "--run-now"])
 
         assert result.exit_code == 0
-        mock_workflow.assert_called_once()
+        # M18: --run-now 现在通过 scheduler.add_job 调度，而非直接调用
+        mock_sched.add_job.assert_any_call(mock_workflow, "date", id="run_now")
         mock_alerts.assert_called_once()
 
 

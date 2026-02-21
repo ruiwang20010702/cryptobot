@@ -182,12 +182,12 @@ def _fetch_symbol(symbol: str) -> tuple[str, dict, list]:
         data["coinglass_liq"] = None
         errs.append(f"coinglass_{symbol}: {e}")
     try:
-        from cryptobot.data.exchange_reserve import get_exchange_reserve
-        data["exchange_reserve"] = get_exchange_reserve(symbol)
+        from cryptobot.data.exchange_reserve import get_open_interest_trend
+        data["open_interest"] = get_open_interest_trend(symbol)
     except Exception as e:
-        logger.warning("交易所储备量失败 %s: %s", symbol, e)
-        data["exchange_reserve"] = None
-        errs.append(f"reserve_{symbol}: {e}")
+        logger.warning("持仓量趋势失败 %s: %s", symbol, e)
+        data["open_interest"] = None
+        errs.append(f"oi_{symbol}: {e}")
     try:
         from cryptobot.data.token_unlocks import get_dilution_risk
         data["dilution_risk"] = get_dilution_risk(symbol)

@@ -6,26 +6,33 @@
 
 import json
 import logging
+import random
 import threading
 import time
 
 logger = logging.getLogger(__name__)
 
-# 线程安全的价格缓存
+# 线程安全的价格缓存: {symbol: (price, timestamp)}
 _lock = threading.Lock()
-price_cache: dict[str, float] = {}
+price_cache: dict[str, tuple[float, float]] = {}
 
 
-def get_cached_price(symbol: str) -> float | None:
-    """从缓存获取价格（线程安全）"""
+def get_cached_price(symbol: str, max_age_seconds: float = 30) -> float | None:
+    """从缓存获取价格（线程安全），超过 max_age 返回 None"""
     with _lock:
-        return price_cache.get(symbol)
+        entry = price_cache.get(symbol)
+    if entry is None:
+        return None
+    price, ts = entry
+    if time.time() - ts > max_age_seconds:
+        return None
+    return price
 
 
 def get_all_cached_prices() -> dict[str, float]:
-    """获取所有缓存价格的快照"""
+    """获取所有缓存价格的快照（忽略过期检查）"""
     with _lock:
-        return dict(price_cache)
+        return {s: p for s, (p, _ts) in price_cache.items()}
 
 
 def _process_message(data: dict) -> None:
@@ -36,7 +43,7 @@ def _process_message(data: dict) -> None:
         try:
             price = float(price_str)
             with _lock:
-                price_cache[symbol] = price
+                price_cache[symbol] = (price, time.time())
         except (ValueError, TypeError):
             pass
 
@@ -83,8 +90,10 @@ def run_ws_price_feed(
         except Exception as e:
             if stop_event and stop_event.is_set():
                 break
-            logger.warning("WS 断线: %s, %ds 后重连...", e, backoff)
-            time.sleep(backoff)
+            jitter = random.uniform(0, backoff * 0.3)
+            wait = backoff + jitter
+            logger.warning("WS 断线: %s, %.1fs 后重连...", e, wait)
+            time.sleep(wait)
             backoff = min(backoff * 2, max_backoff)
 
     logger.info("WS 价格推送已停止")

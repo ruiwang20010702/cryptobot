@@ -16,33 +16,50 @@ logger = logging.getLogger(__name__)
 _console = Console()
 
 
-def _check_loss_limits(risk_cfg: dict) -> tuple[bool, str]:
+def _check_loss_limits(risk_cfg: dict, account_balance: float) -> tuple[bool, str]:
     """检查日度/周度/月度亏损是否超限
+
+    基于实际亏损 USDT 占账户余额百分比来判断。
 
     Returns:
         (通过, 原因) — 通过=True 表示未超限可以开仓
     """
+    if account_balance <= 0:
+        return False, "账户余额为 0，无法检查亏损限制"
+
     max_loss = risk_cfg.get("max_loss", {})
     daily_limit = max_loss.get("daily_pct", 5)
     weekly_limit = max_loss.get("weekly_pct", 8)
     monthly_limit = max_loss.get("monthly_drawdown_pct", 15)
 
     try:
-        from cryptobot.journal.analytics import calc_performance
+        from cryptobot.journal.storage import get_all_records
+        from datetime import datetime, timezone, timedelta
+
+        all_records = get_all_records()
 
         for days, limit, label in [
             (1, daily_limit, "日度"),
             (7, weekly_limit, "周度"),
             (30, monthly_limit, "月度"),
         ]:
-            perf = calc_performance(days=days)
-            if perf.get("closed", 0) == 0:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            closed = [
+                r for r in all_records
+                if r.status == "closed" and r.timestamp >= cutoff
+            ]
+            if not closed:
                 continue
-            total_pnl_pct = perf.get("avg_pnl_pct", 0) * perf.get("closed", 0)
-            if total_pnl_pct < -limit:
-                return False, f"{label}亏损 {total_pnl_pct:.1f}% 超过限制 {limit}%"
+            total_loss_usdt = sum(
+                r.actual_pnl_usdt for r in closed
+                if r.actual_pnl_usdt and r.actual_pnl_usdt < 0
+            )
+            loss_pct = abs(total_loss_usdt) / account_balance * 100
+            if loss_pct > limit:
+                return False, f"{label}亏损 {loss_pct:.1f}% 超过限制 {limit}%"
     except Exception as e:
-        logger.warning("亏损限制检查失败 (跳过): %s", e)
+        logger.error("亏损限制检查异常: %s", e)
+        return False, "亏损限制检查异常，安全起见暂停开仓"
 
     return True, ""
 
@@ -225,7 +242,7 @@ def risk_review(state: WorkflowState) -> dict:
     total_used = long_used + short_used
 
     # ── C1: 日度/周度/月度亏损限制检查 ──
-    loss_ok, loss_reason = _check_loss_limits(risk_cfg)
+    loss_ok, loss_reason = _check_loss_limits(risk_cfg, account_balance)
     if not loss_ok:
         logger.warning("亏损限制触发: %s, 拒绝所有新开仓", loss_reason)
         _console.print(f"    [red]亏损限制: {loss_reason}, 拒绝所有新开仓[/red]")
@@ -290,9 +307,9 @@ def risk_review(state: WorkflowState) -> dict:
 
         # ── 资金层级硬性规则 ──
         if merged_params:
-            # 持仓数限制
+            # 持仓数限制（含本批已通过的数量）
             max_pos = merged_params.get("max_positions", 5)
-            if len(positions) >= max_pos:
+            if len(positions) + len(approved) >= max_pos:
                 logger.info(
                     "硬性拒绝 %s: 持仓数 %d >= 资金层级上限 %d",
                     symbol, len(positions), max_pos,
@@ -336,6 +353,12 @@ def risk_review(state: WorkflowState) -> dict:
             liq_dist = calc_liquidation_distance(current_price or entry_mid, liq_price)
             liq_info = f"爆仓价: {liq_price:.2f}, 爆仓距离: {liq_dist:.1f}%"
 
+            # M2: 爆仓距离硬性门槛
+            if liq_dist < 20:
+                logger.info("硬性拒绝 %s: 爆仓距离 %.1f%% < 20%%", symbol, liq_dist)
+                _console.print(f"    [red]拒绝 {symbol}: 爆仓距离 {liq_dist:.1f}% < 20%[/red]")
+                continue
+
         existing = [s for s in existing_signals if s["symbol"] == symbol]
 
         all_tasks.append({
@@ -368,14 +391,18 @@ def risk_review(state: WorkflowState) -> dict:
     if all_tasks:
         results = call_claude_parallel(all_tasks)
         for i, result in enumerate(results):
-            decision = task_decisions[i]
+            decision = {**task_decisions[i]}
             symbol = decision.get("symbol", "")
             action = decision.get("action", "")
             if isinstance(result, dict) and "error" not in result:
+                _ADJUSTABLE_FIELDS = {
+                    "leverage", "stop_loss", "take_profit",
+                    "position_size_pct", "entry_price_range",
+                }
                 if result.get("decision") in ("approved", "modified"):
                     if result.get("decision") == "modified" and result.get("adjustments"):
                         for k, v in result["adjustments"].items():
-                            if k in decision:
+                            if k in _ADJUSTABLE_FIELDS:
                                 decision[k] = v
                     votes = _extract_votes(analyses, symbol)
                     sig = _decision_to_signal(

@@ -105,7 +105,7 @@ class TestSmoothRegimeTransition:
             "volatile", confirm_cycles=2, is_volatile_upgrade=True,
         )
         assert regime == "volatile"
-        assert changed is False  # 跳过平滑，不算"平滑切换"
+        assert changed is True  # volatile 升级立即生效并写入历史
 
     def test_simulation_mode_skips_smoothing(self):
         """模拟模式跳过平滑"""

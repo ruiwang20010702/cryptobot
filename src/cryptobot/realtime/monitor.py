@@ -85,6 +85,17 @@ def _load_5m_indicators(symbol: str) -> dict | None:
         return None
 
     df = pd.read_feather(path)
+
+    # M13: 检查最后一根 K 线时效，超过 15min 视为数据过期
+    if "date" in df.columns and len(df) > 0:
+        last_ts = pd.Timestamp(df["date"].iloc[-1])
+        if last_ts.tzinfo is None:
+            last_ts = last_ts.tz_localize("UTC")
+        age = (pd.Timestamp.now(tz="UTC") - last_ts).total_seconds()
+        if age > 15 * 60:
+            logger.warning("5m 数据过期 %s: 最后 K 线 %.0f 秒前", symbol, age)
+            return None
+
     close = df["close"].values.astype(np.float64)
 
     if len(close) < 30:

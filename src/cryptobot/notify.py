@@ -32,8 +32,11 @@ def _get_config() -> tuple[str, str] | None:
     return bot_token, chat_id
 
 
-def send_message(text: str, parse_mode: str = "Markdown") -> bool:
+def send_message(text: str, parse_mode: str = "Markdown", *, retries: int = 1) -> bool:
     """发送 Telegram 消息
+
+    Args:
+        retries: 重试次数 (默认 1，CRITICAL 告警建议传 3)
 
     Returns:
         True 发送成功, False 未配置或失败
@@ -46,23 +49,30 @@ def send_message(text: str, parse_mode: str = "Markdown") -> bool:
     url = f"{TELEGRAM_API}/bot{bot_token}/sendMessage"
     masked_token = bot_token[:4] + "***" + bot_token[-4:] if len(bot_token) > 8 else "***"
 
-    try:
-        resp = httpx.post(
-            url,
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-            },
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return True
-        logger.warning("Telegram 发送失败 (token=%s): %d %s", masked_token, resp.status_code, resp.text[:200])
-        return False
-    except Exception as e:
-        logger.warning("Telegram 发送异常: %s", e)
-        return False
+    import time as _time
+
+    for attempt in range(max(1, retries)):
+        try:
+            resp = httpx.post(
+                url,
+                json={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": parse_mode,
+                },
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return True
+            logger.warning(
+                "Telegram 发送失败 (token=%s, 尝试 %d/%d): %d %s",
+                masked_token, attempt + 1, retries, resp.status_code, resp.text[:200],
+            )
+        except Exception as e:
+            logger.warning("Telegram 发送异常 (尝试 %d/%d): %s", attempt + 1, retries, e)
+        if attempt < retries - 1:
+            _time.sleep(2)
+    return False
 
 
 # ─── 预置消息模板 ──────────────────────────────────────────────────────────
@@ -121,7 +131,7 @@ def notify_alert(level: str, message: str) -> bool:
     """通知: 告警"""
     icon = {"CRITICAL": "🔴", "WARNING": "🟡", "IMPORTANT": "🔵"}.get(level, "⚪")
     text = f"{icon} *{level}*\n\n{message}"
-    return send_message(text)
+    return send_message(text, retries=3 if level == "CRITICAL" else 1)
 
 
 def notify_daily_report(text: str) -> bool:

@@ -70,7 +70,7 @@ def analyze(state: WorkflowState) -> dict:
 
         orderbook = data.get("orderbook", {})
         coinglass_liq = data.get("coinglass_liq", {})
-        exchange_reserve = data.get("exchange_reserve", {})
+        open_interest = data.get("open_interest", {})
 
         # 技术分析师: tech + multi_tf + volume_analysis + support_resistance + orderbook
         tech_data = {
@@ -84,12 +84,12 @@ def analyze(state: WorkflowState) -> dict:
 
         whale_activity = data.get("whale_activity", {})
 
-        # 链上分析师: crypto + liquidation + coinglass_liq + exchange_reserve + options + whale
+        # 链上分析师: crypto + liquidation + coinglass_liq + open_interest + options + whale
         onchain_data = {
             "derivatives": crypto,
             "liquidation": liquidation,
             "coinglass_liquidation": coinglass_liq,
-            "exchange_reserve": exchange_reserve,
+            "open_interest": open_interest,
             "options_sentiment": options_sentiment,
             "whale_activity": whale_activity,
         }
@@ -165,6 +165,7 @@ def analyze(state: WorkflowState) -> dict:
         symbol, analyst_type = task_index[i]
         if isinstance(result, dict) and "error" in result:
             errors.append(f"analyze_{symbol}_{analyst_type}: {result['error']}")
+            result = {"direction": "neutral", "confidence": 0, "error": True}
         analyses[symbol][analyst_type] = result
 
     err_count = sum(1 for r in results if isinstance(r, dict) and "error" in r)

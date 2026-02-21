@@ -1,5 +1,6 @@
 """FastAPI 应用工厂"""
 
+import hmac
 import os
 from pathlib import Path
 
@@ -32,7 +33,7 @@ def _is_local(request: Request) -> bool:
     client = request.client
     if client is None:
         return False
-    return client.host in ("127.0.0.1", "::1", "localhost", "testclient")
+    return client.host in ("127.0.0.1", "::1", "localhost")
 
 
 def create_app() -> FastAPI:
@@ -51,7 +52,7 @@ def create_app() -> FastAPI:
         if token:
             # 有 token 时验证 Authorization header
             auth = request.headers.get("Authorization", "")
-            if auth != f"Bearer {token}":
+            if not hmac.compare_digest(auth, f"Bearer {token}"):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Unauthorized"},

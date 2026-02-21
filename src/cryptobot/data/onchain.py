@@ -6,9 +6,13 @@
 - 主动买卖比 (taker buy/sell ratio)
 """
 
+import logging
+
 import httpx
 
 from cryptobot.cache import get_cache, set_cache
+
+logger = logging.getLogger(__name__)
 
 BINANCE_FAPI = "https://fapi.binance.com"
 CACHE_TTL = 900  # 15 分钟
@@ -21,13 +25,17 @@ def get_funding_rate(symbol: str = "BTCUSDT", limit: int = 100) -> dict:
     if cached:
         return cached
 
-    resp = httpx.get(
-        f"{BINANCE_FAPI}/fapi/v1/fundingRate",
-        params={"symbol": symbol, "limit": limit},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
+    try:
+        resp = httpx.get(
+            f"{BINANCE_FAPI}/fapi/v1/fundingRate",
+            params={"symbol": symbol, "limit": limit},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+    except Exception as e:
+        logger.warning("获取资金费率失败 %s: %s", symbol, e)
+        return {"symbol": symbol, "current_rate": 0, "error": str(e)}
 
     rates = [
         {
@@ -64,13 +72,17 @@ def get_open_interest_hist(
     if cached:
         return cached
 
-    resp = httpx.get(
-        f"{BINANCE_FAPI}/futures/data/openInterestHist",
-        params={"symbol": symbol, "period": period, "limit": limit},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
+    try:
+        resp = httpx.get(
+            f"{BINANCE_FAPI}/futures/data/openInterestHist",
+            params={"symbol": symbol, "period": period, "limit": limit},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+    except Exception as e:
+        logger.warning("获取持仓量历史失败 %s: %s", symbol, e)
+        return {"symbol": symbol, "oi_change_pct": 0, "error": str(e)}
 
     records = [
         {
@@ -109,13 +121,17 @@ def get_taker_buy_sell_ratio(
     if cached:
         return cached
 
-    resp = httpx.get(
-        f"{BINANCE_FAPI}/futures/data/takerlongshortRatio",
-        params={"symbol": symbol, "period": period, "limit": limit},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
+    try:
+        resp = httpx.get(
+            f"{BINANCE_FAPI}/futures/data/takerlongshortRatio",
+            params={"symbol": symbol, "period": period, "limit": limit},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+    except Exception as e:
+        logger.warning("获取主动买卖比失败 %s: %s", symbol, e)
+        return {"symbol": symbol, "current_ratio": 1.0, "error": str(e)}
 
     records = [
         {

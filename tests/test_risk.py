@@ -13,18 +13,23 @@ from cryptobot.risk.position_sizer import calc_position_size
 
 class TestLiquidationCalc:
     def test_long_liquidation_price(self):
-        """多单强平价 < 入场价"""
+        """多单强平价 < 入场价 (含 2% 安全缓冲)"""
         liq = calc_liquidation_price(100_000, leverage=5, side="long")
         assert liq < 100_000
-        # 5x 杠杆: 大约 100000 × (1 - 0.2 + 0.004) = 80400
-        assert 79_000 < liq < 81_000
+        # 5x: 100000 × (1 - 0.2 + 0.004) × 1.02 ≈ 82008
+        assert 81_000 < liq < 83_000
 
     def test_short_liquidation_price(self):
-        """空单强平价 > 入场价"""
+        """空单强平价 > 入场价 (含 2% 安全缓冲)"""
         liq = calc_liquidation_price(100_000, leverage=5, side="short")
         assert liq > 100_000
-        # 5x 杠杆: 大约 100000 × (1 + 0.2 - 0.004) = 119600
-        assert 119_000 < liq < 121_000
+        # 5x: 100000 × (1 + 0.2 - 0.004) × 0.98 ≈ 117208
+        assert 116_000 < liq < 118_500
+
+    def test_no_safety_buffer(self):
+        """safety_buffer_pct=0 时与原公式一致"""
+        liq = calc_liquidation_price(100_000, leverage=5, side="long", safety_buffer_pct=0)
+        assert 79_000 < liq < 81_000
 
     def test_higher_leverage_closer_liquidation(self):
         """杠杆越高，强平价越近"""

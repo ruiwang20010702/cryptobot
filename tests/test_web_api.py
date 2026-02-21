@@ -6,13 +6,14 @@ import pytest
 
 
 @pytest.fixture
-def client():
-    """创建 FastAPI 测试客户端"""
+def client(monkeypatch):
+    """创建 FastAPI 测试客户端（含认证 header）"""
     from fastapi.testclient import TestClient
     from cryptobot.web.app import create_app
 
+    monkeypatch.setenv("DASHBOARD_TOKEN", "test-token")
     app = create_app()
-    return TestClient(app)
+    return TestClient(app, headers={"Authorization": "Bearer test-token"})
 
 
 class TestKlinesAPI:

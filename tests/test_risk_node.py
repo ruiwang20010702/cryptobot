@@ -49,33 +49,60 @@ def _base_state(**overrides):
 # ─── C1: 亏损限制 ─────────────────────────────────────────────────────────
 
 class TestCheckLossLimits:
-    @patch("cryptobot.journal.analytics.calc_performance")
-    def test_daily_loss_exceeded(self, mock_perf):
+    def _make_record(self, pnl_usdt, status="closed"):
+        """创建模拟交易记录"""
+        from datetime import datetime, timezone
+        rec = MagicMock()
+        rec.status = status
+        rec.timestamp = datetime.now(timezone.utc).isoformat()
+        rec.actual_pnl_usdt = pnl_usdt
+        return rec
+
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_daily_loss_exceeded(self, mock_records):
         """日度亏损超限 → 拒绝"""
-        mock_perf.return_value = {"closed": 5, "avg_pnl_pct": -2.0}
-        ok, reason = _check_loss_limits({"max_loss": {"daily_pct": 5, "weekly_pct": 8, "monthly_drawdown_pct": 15}})
+        # 5 笔亏损，每笔 -200 USDT，总 -1000 USDT，余额 10000 → 10% > daily 5%
+        mock_records.return_value = [self._make_record(-200) for _ in range(5)]
+        ok, reason = _check_loss_limits(
+            {"max_loss": {"daily_pct": 5, "weekly_pct": 8, "monthly_drawdown_pct": 15}},
+            account_balance=10000,
+        )
         assert not ok
         assert "日度" in reason
 
-    @patch("cryptobot.journal.analytics.calc_performance")
-    def test_no_closed_trades_passes(self, mock_perf):
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_no_closed_trades_passes(self, mock_records):
         """无已平仓交易 → 通过"""
-        mock_perf.return_value = {"closed": 0, "avg_pnl_pct": 0}
-        ok, _ = _check_loss_limits({"max_loss": {"daily_pct": 5, "weekly_pct": 8, "monthly_drawdown_pct": 15}})
+        mock_records.return_value = []
+        ok, _ = _check_loss_limits(
+            {"max_loss": {"daily_pct": 5, "weekly_pct": 8, "monthly_drawdown_pct": 15}},
+            account_balance=10000,
+        )
         assert ok
 
-    def test_exception_skips_check(self):
-        """journal 异常 → 跳过检查（通过）"""
-        with patch("cryptobot.journal.analytics.calc_performance", side_effect=Exception("db error")):
-            ok, _ = _check_loss_limits({"max_loss": {"daily_pct": 5}})
-        assert ok
+    def test_exception_fails_closed(self):
+        """journal 异常 → fail-closed（拒绝）"""
+        with patch("cryptobot.journal.storage.get_all_records", side_effect=Exception("db error")):
+            ok, reason = _check_loss_limits({"max_loss": {"daily_pct": 5}}, account_balance=10000)
+        assert not ok
+        assert "异常" in reason
 
-    @patch("cryptobot.journal.analytics.calc_performance")
-    def test_within_limit_passes(self, mock_perf):
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_within_limit_passes(self, mock_records):
         """亏损在限制内 → 通过"""
-        mock_perf.return_value = {"closed": 3, "avg_pnl_pct": -1.0}
-        ok, _ = _check_loss_limits({"max_loss": {"daily_pct": 5, "weekly_pct": 8, "monthly_drawdown_pct": 15}})
+        # 3 笔亏损，每笔 -100 USDT，总 -300 USDT，余额 10000 → 3% < daily 5%
+        mock_records.return_value = [self._make_record(-100) for _ in range(3)]
+        ok, _ = _check_loss_limits(
+            {"max_loss": {"daily_pct": 5, "weekly_pct": 8, "monthly_drawdown_pct": 15}},
+            account_balance=10000,
+        )
         assert ok
+
+    def test_zero_balance_rejects(self):
+        """余额为 0 → 拒绝"""
+        ok, reason = _check_loss_limits({"max_loss": {"daily_pct": 5}}, account_balance=0)
+        assert not ok
+        assert "余额" in reason
 
 
 # ─── C3: 余额为 0 ─────────────────────────────────────────────────────────

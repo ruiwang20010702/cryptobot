@@ -20,8 +20,9 @@ def ft_api_get(endpoint: str) -> dict | list | None:
     host = api_server.get("host", "127.0.0.1")
     port = api_server.get("port", 8080)
     base_url = f"http://{host}:{port}/api/v1"
+    import os
     username = ft_cfg.get("username", "freqtrader")
-    password = ft_cfg.get("password", "")
+    password = os.environ.get("FREQTRADE_PASSWORD", ft_cfg.get("password", ""))
 
     try:
         resp = httpx.get(
@@ -33,7 +34,13 @@ def ft_api_get(endpoint: str) -> dict | list | None:
         return resp.json()
     except httpx.ConnectError:
         return None
-    except httpx.HTTPStatusError:
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        body = e.response.text[:200]
+        if status in (401, 403):
+            logger.error("Freqtrade 认证失败 %s: %d %s", endpoint, status, body)
+        else:
+            logger.warning("Freqtrade API HTTP 错误 %s: %d %s", endpoint, status, body)
         return None
     except Exception as e:
         logger.warning("Freqtrade API 调用失败 %s: %s", endpoint, e)

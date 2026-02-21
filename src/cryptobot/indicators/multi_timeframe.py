@@ -36,7 +36,8 @@ def _tf_summary(close: np.ndarray, high: np.ndarray, low: np.ndarray) -> dict:
         alignment = "unknown"
 
     # MACD 交叉
-    h_curr, h_prev = _safe(macd_hist[-1]), _safe(macd_hist[-2]) if len(macd_hist) > 1 else None
+    h_curr = _safe(macd_hist[-1]) if len(macd_hist) >= 1 else None
+    h_prev = _safe(macd_hist[-2]) if len(macd_hist) > 1 else None
     if h_curr is not None and h_prev is not None:
         if h_prev <= 0 < h_curr:
             macd_cross = "golden_cross"

@@ -173,24 +173,24 @@ class TestGetBalance:
         assert get_balance_from_freqtrade() == 850.5
 
     @patch("cryptobot.freqtrade_api.ft_api_get")
-    def test_offline_returns_default(self, mock_api):
-        """Freqtrade 离线时返回默认 1000"""
+    def test_offline_returns_zero(self, mock_api):
+        """Freqtrade 离线时返回 0"""
         mock_api.return_value = None
-        assert get_balance_from_freqtrade() == 1000.0
+        assert get_balance_from_freqtrade() == 0.0
 
     @patch("cryptobot.freqtrade_api.ft_api_get")
-    def test_zero_balance_returns_default(self, mock_api):
-        """余额为 0 时返回默认 1000"""
+    def test_zero_balance_returns_zero(self, mock_api):
+        """余额为 0 时返回 0"""
         mock_api.return_value = {
             "currencies": [{"currency": "USDT", "balance": 0}]
         }
-        assert get_balance_from_freqtrade() == 1000.0
+        assert get_balance_from_freqtrade() == 0.0
 
     @patch("cryptobot.freqtrade_api.ft_api_get")
-    def test_no_usdt_returns_default(self, mock_api):
-        """无 USDT 余额时返回默认"""
+    def test_no_usdt_returns_zero(self, mock_api):
+        """无 USDT 余额时返回 0"""
         mock_api.return_value = {"currencies": [{"currency": "BTC", "balance": 1}]}
-        assert get_balance_from_freqtrade() == 1000.0
+        assert get_balance_from_freqtrade() == 0.0
 
 
 # ─── Prompt Addon ─────────────────────────────────────────────────────────

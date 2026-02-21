@@ -176,5 +176,5 @@ def get_balance_from_freqtrade() -> float:
     if balance > 0:
         return balance
 
-    logger.warning("Freqtrade 离线或余额为 0，使用默认 $1000")
-    return 1000.0
+    logger.warning("Freqtrade 离线或余额为 0，返回 0")
+    return 0.0

@@ -5,12 +5,15 @@
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 
 from cryptobot.config import PROJECT_ROOT
 from cryptobot.journal.models import SignalRecord
 
 logger = logging.getLogger(__name__)
+
+_journal_lock = threading.Lock()
 
 JOURNAL_DIR = PROJECT_ROOT / "data" / "output" / "journal"
 RECORDS_FILE = JOURNAL_DIR / "records.json"
@@ -33,15 +36,16 @@ def _load_data() -> dict:
 
 def save_record(record: SignalRecord) -> SignalRecord:
     """保存新记录（替换同 signal_id 的旧记录）"""
-    JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
-    data = _load_data()
+    with _journal_lock:
+        JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+        data = _load_data()
 
-    # 替换同 ID
-    data["records"] = [r for r in data["records"] if r.get("signal_id") != record.signal_id]
-    data["records"].append(record.to_dict())
-    data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        # 替换同 ID
+        data["records"] = [r for r in data["records"] if r.get("signal_id") != record.signal_id]
+        data["records"].append(record.to_dict())
+        data["last_updated"] = datetime.now(timezone.utc).isoformat()
 
-    _atomic_write(RECORDS_FILE, data)
+        _atomic_write(RECORDS_FILE, data)
     return record
 
 
@@ -84,21 +88,22 @@ def update_record(signal_id: str, **updates) -> bool:
     Returns:
         True 成功, False 记录不存在
     """
-    data = _load_data()
+    with _journal_lock:
+        data = _load_data()
 
-    found = False
-    for r in data["records"]:
-        if r.get("signal_id") == signal_id:
-            r.update(updates)
-            found = True
-            break
+        found = False
+        for r in data["records"]:
+            if r.get("signal_id") == signal_id:
+                r.update(updates)
+                found = True
+                break
 
-    if not found:
-        return False
+        if not found:
+            return False
 
-    data["last_updated"] = datetime.now(timezone.utc).isoformat()
-    JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
-    _atomic_write(RECORDS_FILE, data)
+        data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+        _atomic_write(RECORDS_FILE, data)
     return True
 
 

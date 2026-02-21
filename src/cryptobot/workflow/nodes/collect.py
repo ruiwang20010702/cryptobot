@@ -106,9 +106,11 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
         from cryptobot.notify import notify_regime_change
         notify_regime_change(old_regime, smoothed_regime, _calc_confidence(regime_result))
 
-    # 附加策略参数 (复用现有 _REGIME_PARAMS)
+    # 附加策略参数 (用户配置优先合并)
     regime_key = regime_result["regime"]
-    params = _REGIME_PARAMS.get(regime_key, _REGIME_PARAMS["ranging"])
+    default_params = _REGIME_PARAMS.get(regime_key, _REGIME_PARAMS["ranging"])
+    user_regime_cfg = settings.get("market_regime", {}).get(regime_key, {})
+    params = {**default_params, **user_regime_cfg}
 
     return {
         "regime": regime_key,
@@ -125,6 +127,12 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
 def collect_data(state: WorkflowState) -> dict:
     """采集所有币种的市场数据（纯 Python，不调 LLM）"""
     from cryptobot.config import get_all_symbols
+    from cryptobot.workflow.prompts import reset_prompt_version_cache
+    from cryptobot.workflow.llm import reset_provider_cache
+
+    # M11+M12: 每轮重置缓存，确保读取最新配置
+    reset_prompt_version_cache()
+    reset_provider_cache()
 
     errors = list(state.get("errors", []))
     symbols = get_all_symbols()
@@ -176,14 +184,13 @@ def collect_data(state: WorkflowState) -> dict:
         logger.warning("资金层级检测失败: %s", e)
         errors.append(f"capital_tier: {e}")
 
-    # 宏观风险标注
+    # 宏观风险标注 (不可变)
     if macro_events.get("has_high_impact"):
-        regime["macro_risk"] = True
         next_ev = macro_events.get("next_high_impact")
+        macro_desc = ""
         if next_ev:
-            regime["description"] += (
-                f" (宏观风险: {next_ev['event']} in {next_ev['hours_until']}h)"
-            )
+            macro_desc = f" (宏观风险: {next_ev['event']} in {next_ev['hours_until']}h)"
+        regime = {**regime, "macro_risk": True, "description": regime.get("description", "") + macro_desc}
 
     return {
         "market_data": market_data,

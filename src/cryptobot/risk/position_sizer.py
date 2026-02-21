@@ -76,11 +76,13 @@ def calc_position_size(
     max_single_position = account_balance * max_single_pct / 100  # 保证金口径
 
     # 最终仓位 = min(风险法, 凯利法, 上限)，取保证金口径
-    margin_amount = min(risk_position, kelly_position, max_single_position) if kelly_fraction > 0 else min(risk_position, max_single_position)
+    # 使用 1e-9 阈值避免浮点精度导致的近零凯利值
+    margin_amount = min(risk_position, kelly_position, max_single_position) if kelly_fraction > 1e-9 else min(risk_position, max_single_position)
 
-    # 最小金额
+    # 最小金额：不足则不开仓（返回 0），由下游过滤
     min_amount = pair_cfg.get("min_amount_usdt", 50) if pair_cfg else 50
-    margin_amount = max(margin_amount, min_amount)
+    if margin_amount < min_amount:
+        margin_amount = 0
 
     # 名义仓位 = 保证金 × 杠杆
     notional = margin_amount * leverage

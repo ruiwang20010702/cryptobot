@@ -185,6 +185,11 @@ def trade(state: WorkflowState) -> dict:
     for i, result in enumerate(results):
         symbol, current_price = task_meta[i]
         if isinstance(result, dict) and "error" not in result:
+            # C6 兜底: long/short 必须有 stop_loss，否则强制 no_trade
+            if result.get("action") in ("long", "short") and result.get("stop_loss") is None:
+                logger.warning("%s: action=%s 但无 stop_loss，强制改为 no_trade", symbol, result["action"])
+                result["action"] = "no_trade"
+                result["reasoning"] = (result.get("reasoning", "") + " [系统: 缺少止损，已拦截]")
             result["symbol"] = symbol
             result["current_price"] = current_price
             decisions.append(result)

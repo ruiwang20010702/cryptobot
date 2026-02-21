@@ -301,7 +301,7 @@ TRADE_SCHEMA = {
         "position_size_pct": {"type": "number"},
         "reasoning": {"type": "string"},
     },
-    "required": ["action", "confidence", "reasoning"],
+    "required": ["action", "confidence", "reasoning", "stop_loss", "entry_price_range"],
 }
 
 # 风控经理输出 Schema

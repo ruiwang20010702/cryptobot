@@ -3,10 +3,14 @@
 CoinGecko Demo API (免费 30 req/min，需设置环境变量 COINGECKO_DEMO_KEY)。
 """
 
+import logging
+
 import httpx
 
 from cryptobot.cache import get_cache, set_cache
 from cryptobot.config import get_coingecko_demo_key
+
+logger = logging.getLogger(__name__)
 
 COINGECKO_API = "https://api.coingecko.com/api/v3"
 CACHE_TTL = 1800  # 30 分钟
@@ -41,9 +45,13 @@ def get_market_overview() -> dict:
     if cached:
         return cached
 
-    resp = httpx.get(f"{COINGECKO_API}/global", headers=_cg_headers(), timeout=10)
-    resp.raise_for_status()
-    data = resp.json().get("data", {})
+    try:
+        resp = httpx.get(f"{COINGECKO_API}/global", headers=_cg_headers(), timeout=10)
+        resp.raise_for_status()
+        data = resp.json().get("data", {})
+    except Exception as e:
+        logger.warning("获取市场概览失败: %s", e)
+        return {"error": str(e)}
 
     result = {
         "total_market_cap_usd": data.get("total_market_cap", {}).get("usd", 0),
@@ -68,19 +76,23 @@ def get_coin_info(symbol: str = "BTC") -> dict:
     if cached:
         return cached
 
-    resp = httpx.get(
-        f"{COINGECKO_API}/coins/{coin_id}",
-        params={
-            "localization": "false",
-            "tickers": "false",
-            "community_data": "true",
-            "developer_data": "false",
-        },
-        headers=_cg_headers(),
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = httpx.get(
+            f"{COINGECKO_API}/coins/{coin_id}",
+            params={
+                "localization": "false",
+                "tickers": "false",
+                "community_data": "true",
+                "developer_data": "false",
+            },
+            headers=_cg_headers(),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning("获取币种信息失败 %s: %s", symbol, e)
+        return {"symbol": symbol.upper(), "error": str(e)}
 
     market = data.get("market_data", {})
     result = {
@@ -112,9 +124,13 @@ def get_trending() -> dict:
     if cached:
         return cached
 
-    resp = httpx.get(f"{COINGECKO_API}/search/trending", headers=_cg_headers(), timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = httpx.get(f"{COINGECKO_API}/search/trending", headers=_cg_headers(), timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning("获取热门趋势失败: %s", e)
+        return {"trending_coins": [], "count": 0, "error": str(e)}
 
     coins = []
     for item in data.get("coins", [])[:10]:

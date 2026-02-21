@@ -317,6 +317,10 @@ def job_journal_sync() -> None:
                     continue
                 if trade.get("is_short", False) != (record.action == "short"):
                     continue
+                # 时间窗口: trade 的开仓时间必须在 record 之后
+                open_date = trade.get("open_date", "")
+                if open_date and record.timestamp > open_date:
+                    continue
 
                 pnl_pct = (trade.get("profit_ratio", 0) or 0) * 100
                 pnl_usdt = trade.get("profit_abs", 0) or 0
@@ -527,7 +531,7 @@ def start(run_now: bool, verbose: bool):
 
     if run_now:
         console.print("[cyan]立即运行一次完整分析...[/cyan]")
-        job_workflow_run()
+        scheduler.add_job(job_workflow_run, "date", id="run_now")
 
     try:
         scheduler.start()
