@@ -17,6 +17,7 @@ from cryptobot.cli.web import web
 from cryptobot.cli.doctor import doctor
 from cryptobot.cli.init_cmd import init_cmd
 from cryptobot.cli.prompt import prompt
+from cryptobot.cli.archive import archive
 
 
 @click.group()
@@ -50,3 +51,4 @@ cli.add_command(web)
 cli.add_command(doctor)
 cli.add_command(init_cmd)
 cli.add_command(prompt)
+cli.add_command(archive)

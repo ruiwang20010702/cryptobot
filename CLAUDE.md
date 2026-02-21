@@ -42,6 +42,10 @@ uv run cryptobot prompt show                  # 查看当前活跃版本详情
 uv run cryptobot prompt activate v1.1         # 切换 prompt 版本
 uv run cryptobot events start                 # 启动价格异动监控
 uv run cryptobot events status                # 查看事件监控配置
+uv run cryptobot archive list                  # 列出决策归档
+uv run cryptobot archive show <run_id>         # 查看完整归档
+uv run cryptobot archive history BTCUSDT       # 币种决策历史
+uv run cryptobot archive cleanup --keep-months 3  # 清理旧归档
 uv run cryptobot backtest evaluate            # 评估近30天信号质量
 uv run cryptobot backtest evaluate --json-output  # JSON 格式输出
 uv run cryptobot backtest replay <signal_id>  # 单信号 K 线复盘
@@ -108,7 +112,8 @@ execute                         5m 指标确认?
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
 | `cli/doctor.py` | 12 项环境健康检查（Python/TA-Lib/API/目录等） |
 | `cli/init_cmd.py` | 环境初始化：创建目录 + .env + 交互 API key + doctor |
-| `cli/` | Click 命令组，16 个子命令 |
+| `archive/` | AI 决策归档：每轮工作流保存完整决策链(筛选评分/分析/风控细节/信号)到 JSON，支持 CLI 查阅 |
+| `cli/` | Click 命令组，17 个子命令 |
 | `web/routes/api.py` | Dashboard API：仪表盘/信号/持仓/告警/绩效 + K 线数据 + 交易历史 |
 | `freqtrade_strategies/AgentSignalStrategy.py` | Freqtrade 策略：动态止损(含 Agent 尾随)、分批止盈(adjust_trade_position)、仓位控制 |
 
@@ -122,6 +127,7 @@ execute                         5m 指标确认?
 - Prompt 版本: `data/output/evolution/prompt_versions.json`
 - Prompt 迭代记录: `data/output/evolution/iterations.json`
 - 模型竞赛记录: `data/output/evolution/competition.json`
+- 决策归档: `data/output/archive/{YYYY-MM}/{run_id}.json`
 - 配置: `config/settings.yaml`、`config/pairs.yaml`
 
 ### 交易对配置

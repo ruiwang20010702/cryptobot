@@ -79,6 +79,16 @@ def _send_workflow_summary(state: WorkflowState, approved_count: int = 0) -> Non
         logger.warning("分析摘要通知失败: %s", e)
 
 
+def _save_archive_on_early_exit(state: WorkflowState) -> None:
+    """提前终止时也保存归档"""
+    try:
+        from cryptobot.archive.writer import save_archive
+        run_id = save_archive(state)
+        logger.info("提前终止归档完成: %s", run_id)
+    except Exception as e:
+        logger.warning("提前终止归档失败: %s", e)
+
+
 def should_risk_review(state: WorkflowState) -> str:
     """trade → risk_review 或 END"""
     decisions = state.get("decisions", [])
@@ -87,6 +97,7 @@ def should_risk_review(state: WorkflowState) -> str:
         return "risk_review"
     logger.info("无可执行交易决策，工作流结束")
     _send_workflow_summary(state, approved_count=0)
+    _save_archive_on_early_exit(state)
     return END
 
 
@@ -97,6 +108,7 @@ def should_execute(state: WorkflowState) -> str:
         return "execute"
     logger.info("无通过风控的信号，工作流结束")
     _send_workflow_summary(state, approved_count=0)
+    _save_archive_on_early_exit(state)
     return END
 
 

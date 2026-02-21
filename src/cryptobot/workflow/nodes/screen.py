@@ -181,4 +181,9 @@ def screen(state: WorkflowState) -> dict:
             market_data[sym]["coin_news"] = news
             errors.extend(errs)
 
-    return {"screened_symbols": screened, "market_data": market_data, "errors": errors}
+    return {
+        "screened_symbols": screened,
+        "screening_scores": scores,
+        "market_data": market_data,
+        "errors": errors,
+    }

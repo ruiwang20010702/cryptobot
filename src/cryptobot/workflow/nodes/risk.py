@@ -253,6 +253,9 @@ def risk_review(state: WorkflowState) -> dict:
 
     analyses = state.get("analyses", {})
     approved = []
+    hard_rule_results = []
+    ai_review_results = []
+    rejected_signals = []
 
     # 构建所有风控审核任务
     all_tasks = []
@@ -271,22 +274,34 @@ def risk_review(state: WorkflowState) -> dict:
         pair_cfg = get_pair_config(symbol) or {}
 
         # ── 硬性规则检查（不依赖 AI 判断）──
+        hard_checks: list[dict] = []
+
         if account_balance > 0:
             max_total_pct = risk_cfg.get("max_total_position_pct", 80)
             total_pct = total_used / account_balance * 100
             if total_pct >= max_total_pct:
-                logger.info("硬性拒绝 %s: 总仓位 %.1f%% >= 上限 %d%%", symbol, total_pct, max_total_pct)
+                reason = f"总仓位 {total_pct:.1f}% >= 上限 {max_total_pct}%"
+                hard_checks.append({"rule": "max_total_position", "passed": False, "reason": reason})
+                hard_rule_results.append({"symbol": symbol, "passed": False, "checks": hard_checks})
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
                 _console.print(f"    [red]拒绝 {symbol}: 总仓位已达上限 {total_pct:.0f}%[/red]")
                 continue
+            hard_checks.append({"rule": "max_total_position", "passed": True})
 
             max_dir_pct = risk_cfg.get("max_same_direction_pct", 50)
             dir_used = short_used if action == "short" else long_used
             dir_pct = dir_used / account_balance * 100
             if dir_pct >= max_dir_pct:
                 dir_name = "空头" if action == "short" else "多头"
-                logger.info("硬性拒绝 %s: %s仓位 %.1f%% >= 上限 %d%%", symbol, dir_name, dir_pct, max_dir_pct)
+                reason = f"{dir_name}仓位 {dir_pct:.1f}% >= 上限 {max_dir_pct}%"
+                hard_checks.append({"rule": "max_same_direction", "passed": False, "reason": reason})
+                hard_rule_results.append({"symbol": symbol, "passed": False, "checks": hard_checks})
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
                 _console.print(f"    [red]拒绝 {symbol}: {dir_name}仓位已达上限 {dir_pct:.0f}%[/red]")
                 continue
+            hard_checks.append({"rule": "max_same_direction", "passed": True})
 
         # 置信度硬性检查
         try:
@@ -295,14 +310,16 @@ def risk_review(state: WorkflowState) -> dict:
             min_conf = threshold["recommended_min_confidence"]
             decision_conf = decision.get("confidence", 0)
             if decision_conf < min_conf and threshold["sample_size"] >= 15:
-                logger.info(
-                    "硬性拒绝 %s: 置信度 %d < 动态阈值 %d",
-                    symbol, decision_conf, min_conf,
-                )
+                reason = f"置信度 {decision_conf} < 动态阈值 {min_conf}"
+                hard_checks.append({"rule": "dynamic_confidence", "passed": False, "reason": reason})
+                hard_rule_results.append({"symbol": symbol, "passed": False, "checks": hard_checks})
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
                 _console.print(
                     f"    [red]拒绝 {symbol}: 置信度 {decision_conf} < 动态阈值 {min_conf}[/red]"
                 )
                 continue
+            hard_checks.append({"rule": "dynamic_confidence", "passed": True})
         except Exception as e:
             logger.warning("动态置信度检查失败: %s", e)
 
@@ -311,31 +328,39 @@ def risk_review(state: WorkflowState) -> dict:
             # 持仓数限制（含本批已通过的数量）
             max_pos = merged_params.get("max_positions", 5)
             if len(positions) + len(approved) >= max_pos:
-                logger.info(
-                    "硬性拒绝 %s: 持仓数 %d >= 资金层级上限 %d",
-                    symbol, len(positions), max_pos,
-                )
+                reason = f"持仓数 {len(positions)} >= 资金层级上限 {max_pos}"
+                hard_checks.append({"rule": "max_positions", "passed": False, "reason": reason})
+                hard_rule_results.append({"symbol": symbol, "passed": False, "checks": hard_checks})
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
                 _console.print(
                     f"    [red]拒绝 {symbol}: 持仓数已达层级上限 {max_pos}[/red]"
                 )
                 continue
+            hard_checks.append({"rule": "max_positions", "passed": True})
 
             # 资金层级置信度门槛 (regime_min + capital_boost)
             capital_min_conf = merged_params.get("min_confidence", 55)
             decision_conf = decision.get("confidence", 0)
             if decision_conf < capital_min_conf:
-                logger.info(
-                    "硬性拒绝 %s: 置信度 %d < 资金层级阈值 %d",
-                    symbol, decision_conf, capital_min_conf,
-                )
+                reason = f"置信度 {decision_conf} < 资金层级阈值 {capital_min_conf}"
+                hard_checks.append({"rule": "capital_confidence", "passed": False, "reason": reason})
+                hard_rule_results.append({"symbol": symbol, "passed": False, "checks": hard_checks})
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
                 _console.print(
                     f"    [red]拒绝 {symbol}: 置信度 {decision_conf} < 层级阈值 {capital_min_conf}[/red]"
                 )
                 continue
+            hard_checks.append({"rule": "capital_confidence", "passed": True})
 
             # 杠杆强制降低
             capital_lev_cap = merged_params.get("max_leverage", 5)
             if leverage > capital_lev_cap:
+                hard_checks.append({
+                    "rule": "leverage_cap", "passed": True,
+                    "note": f"杠杆 {leverage}x → {capital_lev_cap}x",
+                })
                 logger.info(
                     "强制降杠杆 %s: %dx → %dx (资金层级限制)",
                     symbol, leverage, capital_lev_cap,
@@ -362,14 +387,16 @@ def risk_review(state: WorkflowState) -> dict:
             tp_dist = abs(first_tp - entry_mid) if first_tp else 0
             rr = tp_dist / sl_dist if sl_dist > 0 else 0
             if rr < rr_threshold:
-                logger.info(
-                    "硬性拒绝 %s: RR %.2f < %.1f (%s)",
-                    symbol, rr, rr_threshold, regime_name,
-                )
+                reason = f"盈亏比 {rr:.2f} < {rr_threshold} ({regime_name})"
+                hard_checks.append({"rule": "risk_reward", "passed": False, "reason": reason})
+                hard_rule_results.append({"symbol": symbol, "passed": False, "checks": hard_checks})
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
                 _console.print(
                     f"    [red]拒绝 {symbol}: 盈亏比 {rr:.2f} < {rr_threshold} ({regime_name})[/red]"
                 )
                 continue
+            hard_checks.append({"rule": "risk_reward", "passed": True})
 
         # 计算爆仓距离
         liq_info = ""
@@ -382,15 +409,20 @@ def risk_review(state: WorkflowState) -> dict:
             # P13: 爆仓距离杠杆感知动态阈值
             min_liq_dist = max(15, 30 - (5 - leverage) * 3)
             if liq_dist < min_liq_dist:
-                logger.info(
-                    "硬性拒绝 %s: 爆仓距离 %.1f%% < %.0f%% (杠杆%dx)",
-                    symbol, liq_dist, min_liq_dist, leverage,
-                )
+                reason = f"爆仓距离 {liq_dist:.1f}% < {min_liq_dist:.0f}% ({leverage}x杠杆)"
+                hard_checks.append({"rule": "liquidation_distance", "passed": False, "reason": reason})
+                hard_rule_results.append({"symbol": symbol, "passed": False, "checks": hard_checks})
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
                 _console.print(
                     f"    [red]拒绝 {symbol}: 爆仓距离 {liq_dist:.1f}% < "
                     f"{min_liq_dist:.0f}% ({leverage}x杠杆)[/red]"
                 )
                 continue
+            hard_checks.append({"rule": "liquidation_distance", "passed": True})
+
+        # 硬规则全部通过
+        hard_rule_results.append({"symbol": symbol, "passed": True, "checks": hard_checks})
 
         existing = [s for s in existing_signals if s["symbol"] == symbol]
 
@@ -447,6 +479,12 @@ def risk_review(state: WorkflowState) -> dict:
                     if result.get("decision") == "modified" and result.get("adjustments"):
                         sig["risk_review_changes"] = result["adjustments"]
                     approved.append(sig)
+                    ai_review_results.append({
+                        "symbol": symbol,
+                        "verdict": result.get("decision", "approved"),
+                        "reasoning": result.get("reasoning", ""),
+                        "modifications": result.get("adjustments", {}),
+                    })
                     # C2: 累加仓位占用，避免同批信号竞态
                     margin = sig.get("position_size_usdt", 0)
                     total_used += margin
@@ -457,6 +495,12 @@ def risk_review(state: WorkflowState) -> dict:
                     logger.info("风控通过: %s %s", symbol, action)
                 else:
                     reason = result.get("reasoning", "未知")
+                    ai_review_results.append({
+                        "symbol": symbol,
+                        "verdict": "rejected",
+                        "reasoning": reason,
+                    })
+                    rejected_signals.append({"symbol": symbol, "reason": f"AI审核拒绝: {reason}"})
                     logger.info("风控拒绝: %s, 原因: %s", symbol, reason)
                     from cryptobot.notify import notify_risk_rejected
                     notify_risk_rejected(symbol, reason[:200])
@@ -464,6 +508,12 @@ def risk_review(state: WorkflowState) -> dict:
                 err = result.get("error", str(result)) if isinstance(result, dict) else str(result)
                 errors.append(f"risk_{symbol}: {err}")
 
+    risk_details = {
+        "hard_rule_results": hard_rule_results,
+        "ai_review_results": ai_review_results,
+        "rejected_signals": rejected_signals,
+    }
+
     _console.print(f"    完成: {len(approved)} 通过 / {len(task_decisions) - len(approved)} 拒绝, "
                     f"耗时 {time.time() - t0:.0f}s")
-    return {"approved_signals": approved, "errors": errors}
+    return {"approved_signals": approved, "risk_details": risk_details, "errors": errors}

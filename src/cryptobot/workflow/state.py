@@ -22,3 +22,5 @@ class WorkflowState(TypedDict, total=False):
     perf_feedback: dict      # collect_data: 历史绩效反馈 (win_rate, profit_factor, by_symbol)
     executed: list           # execute: 写入 signal.json 的结果
     errors: list             # 各节点错误收集
+    screening_scores: list   # screen: 完整筛选评分列表 [(symbol, score), ...]
+    risk_details: dict       # risk_review: 风控审核细节 {hard_rules: [...], ai_reviews: [...]}

@@ -106,4 +106,12 @@ def execute(state: WorkflowState) -> dict:
     except Exception as e:
         logger.warning("分析摘要通知失败: %s", e)
 
+    # 归档完整决策链
+    try:
+        from cryptobot.archive.writer import save_archive
+        run_id = save_archive(state | {"executed": executed, "errors": errors})
+        logger.info("决策归档完成: %s", run_id)
+    except Exception as e:
+        logger.warning("决策归档失败: %s", e)
+
     return {"executed": executed, "errors": errors}
