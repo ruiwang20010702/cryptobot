@@ -67,4 +67,21 @@ def execute(state: WorkflowState) -> dict:
     if len(errors) >= 3:
         notify_workflow_error(len(errors), errors)
 
+    # 每轮分析摘要通知
+    try:
+        from cryptobot.notify import notify_workflow_summary
+        regime = state.get("market_regime", {})
+        capital_tier = state.get("capital_tier", {})
+        fg = state.get("fear_greed", {})
+        notify_workflow_summary(
+            screened=state.get("screened_symbols", []),
+            decisions=state.get("decisions", []),
+            approved_count=len(executed),
+            regime=regime.get("regime", "unknown"),
+            capital_tier=capital_tier.get("tier", "unknown"),
+            fear_greed=fg.get("current_value"),
+        )
+    except Exception as e:
+        logger.warning("分析摘要通知失败: %s", e)
+
     return {"executed": executed, "errors": errors}

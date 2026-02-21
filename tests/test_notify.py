@@ -24,6 +24,7 @@ class TestGetConfig:
         mock_settings.return_value = {"telegram": {"enabled": False}}
         assert _get_config() is None
 
+    @patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "", "TELEGRAM_CHAT_ID": ""}, clear=False)
     @patch("cryptobot.notify.load_settings")
     def test_returns_none_when_no_token(self, mock_settings):
         mock_settings.return_value = {
@@ -31,6 +32,7 @@ class TestGetConfig:
         }
         assert _get_config() is None
 
+    @patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "", "TELEGRAM_CHAT_ID": ""}, clear=False)
     @patch("cryptobot.notify.load_settings")
     def test_returns_tuple_when_configured(self, mock_settings):
         mock_settings.return_value = {

@@ -60,6 +60,25 @@ __all__ = [
 
 # ─── 条件路由 ─────────────────────────────────────────────────────────────
 
+def _send_workflow_summary(state: WorkflowState, approved_count: int = 0) -> None:
+    """发送每轮分析摘要通知"""
+    try:
+        from cryptobot.notify import notify_workflow_summary
+        regime = state.get("market_regime", {})
+        capital_tier = state.get("capital_tier", {})
+        fg = state.get("fear_greed", {})
+        notify_workflow_summary(
+            screened=state.get("screened_symbols", []),
+            decisions=state.get("decisions", []),
+            approved_count=approved_count,
+            regime=regime.get("regime", "unknown"),
+            capital_tier=capital_tier.get("tier", "unknown"),
+            fear_greed=fg.get("current_value"),
+        )
+    except Exception as e:
+        logger.warning("分析摘要通知失败: %s", e)
+
+
 def should_risk_review(state: WorkflowState) -> str:
     """trade → risk_review 或 END"""
     decisions = state.get("decisions", [])
@@ -67,6 +86,7 @@ def should_risk_review(state: WorkflowState) -> str:
     if actionable:
         return "risk_review"
     logger.info("无可执行交易决策，工作流结束")
+    _send_workflow_summary(state, approved_count=0)
     return END
 
 
@@ -76,6 +96,7 @@ def should_execute(state: WorkflowState) -> str:
     if approved:
         return "execute"
     logger.info("无通过风控的信号，工作流结束")
+    _send_workflow_summary(state, approved_count=0)
     return END
 
 

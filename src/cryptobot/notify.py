@@ -134,6 +134,46 @@ def notify_capital_tier_change(old_tier: str, new_tier: str, balance: float) -> 
     return send_message(text)
 
 
+def _escape_md(text: str) -> str:
+    """转义 Telegram Markdown 特殊字符"""
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
+def notify_workflow_summary(
+    screened: list[str],
+    decisions: list[dict],
+    approved_count: int,
+    regime: str,
+    capital_tier: str,
+    fear_greed: int | None = None,
+) -> bool:
+    """通知: 每轮分析摘要（不管有没有信号都推送）"""
+    actions = []
+    for d in decisions:
+        sym = _escape_md(str(d.get("symbol", "?")))
+        act = _escape_md(str(d.get("action", "?")))
+        conf = d.get("confidence", "?")
+        actions.append(f"  {sym}: {act} (置信度{conf})")
+    actions_str = "\n".join(actions) if actions else "  无"
+
+    fg_str = f"恐惧贪婪: {fear_greed}" if fear_greed is not None else ""
+    regime_safe = _escape_md(regime)
+    tier_safe = _escape_md(capital_tier)
+    screened_safe = ", ".join(_escape_md(s) for s in screened) if screened else "无"
+
+    text = (
+        f"📋 *分析摘要*\n\n"
+        f"市场: {regime_safe} | {fg_str}\n"
+        f"资金层级: {tier_safe}\n"
+        f"筛选: {screened_safe}\n\n"
+        f"*决策:*\n{actions_str}\n\n"
+        f"信号产出: {approved_count} 个"
+    )
+    return send_message(text)
+
+
 def notify_workflow_error(error_count: int, errors: list[str]) -> bool:
     """通知: 工作流异常"""
     detail = "\n".join(f"• {e[:100]}" for e in errors[:5])
