@@ -79,6 +79,42 @@ def _classify_trend(values: list[int]) -> str:
     return "neutral"
 
 
+def calc_realtime_sentiment(
+    derivatives: dict | None, fg_value: int | None,
+) -> dict:
+    """合成实时情绪指标 (补充 Fear&Greed 的延迟)
+
+    Args:
+        derivatives: 衍生品数据 (funding_rate, long_short_ratio 等)
+        fg_value: Fear&Greed 指数值 (0-100)
+
+    Returns:
+        {"sentiment_score": int, "sources": [str]}
+    """
+    score = 50.0  # 中性基准
+    sources = []
+
+    if fg_value is not None:
+        score = fg_value * 0.4 + score * 0.6
+        sources.append(f"FG={fg_value}")
+
+    if derivatives:
+        funding = derivatives.get("funding_rate", 0) or 0
+        if funding > 0.01:
+            score += 10
+        elif funding < -0.01:
+            score -= 10
+
+        ls_ratio = derivatives.get("long_short_ratio", 1.0) or 1.0
+        if ls_ratio > 1.5:
+            score += 5
+        elif ls_ratio < 0.7:
+            score -= 5
+        sources.append(f"funding={funding:.4f}, ls={ls_ratio:.2f}")
+
+    return {"sentiment_score": round(max(0, min(100, score))), "sources": sources}
+
+
 def get_long_short_ratio(
     symbol: str = "BTCUSDT", period: str = "1h", limit: int = 30
 ) -> dict:

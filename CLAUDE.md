@@ -32,7 +32,7 @@ uv run cryptobot realtime start               # 启动实时入场监控
 uv run cryptobot realtime status              # 查看 pending 信号
 uv run cryptobot signal show                  # 查看当前信号
 uv run cryptobot monitor check-alerts         # 检查持仓告警
-uv run cryptobot daemon start                 # 启动调度器 (2h分析+5min告警+4h复审)
+uv run cryptobot daemon start                 # 启动调度器 (30min分析+5min告警+4h复审)
 uv run cryptobot daemon start --run-now       # 启动调度器并立即运行一次分析
 uv run cryptobot journal show                 # 查看交易记录
 uv run cryptobot journal stats                # 查看绩效统计 (胜率/盈亏比/置信度校准)
@@ -59,7 +59,7 @@ docker compose up -d                          # 启动服务
 ### 核心信号流
 
 ```
-AI 工作流 (2h 周期)                实时监控 (持续)              Freqtrade (5m K线)
+AI 工作流 (30min 周期)                实时监控 (持续)              Freqtrade (5m K线)
 ─────────────────                ──────────────              ────────────────
 collect → screen →    ─写入→    pending_signals.json
 analyze → research →            轮询 Binance (10s)

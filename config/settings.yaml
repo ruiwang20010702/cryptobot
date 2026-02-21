@@ -77,7 +77,7 @@ risk:
 schedule:
   full_cycle_minutes: 30             # 完整分析周期间隔 (分钟)
   monitor_interval_minutes: 5       # 监控检查间隔
-  re_review_hours: 4                # 持仓复审间隔
+  re_review_hours: 2                # 持仓复审间隔
   cleanup_hours: 24                 # 过期信号清理间隔
   quick_scan_coins: 10              # 快速筛选币种数
   deep_analysis_coins: 5            # 深度分析币种数
@@ -120,15 +120,15 @@ events:
 # 市场状态策略参数 (可覆盖 _REGIME_PARAMS 默认值)
 market_regime:
   trending:
-    min_confidence: 55        # 趋势市最低置信度
+    min_confidence: 50        # 趋势市最低置信度
     max_leverage: 5           # 趋势市最大杠杆
     trailing_stop: true       # 启用尾随止损
   ranging:
-    min_confidence: 65        # 震荡市最低置信度
+    min_confidence: 58        # 震荡市最低置信度
     max_leverage: 3           # 震荡市最大杠杆
     trailing_stop: false      # 不启用尾随
   volatile:
-    min_confidence: 70        # 高波动最低置信度
+    min_confidence: 63        # 高波动最低置信度
     max_leverage: 2           # 高波动最大杠杆
     trailing_stop: true       # 启用尾随止损
   smoothing_cycles: 2         # 连续 N 个周期确认才切换 regime

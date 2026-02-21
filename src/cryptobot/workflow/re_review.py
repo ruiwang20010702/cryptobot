@@ -162,10 +162,29 @@ def re_review(positions: list[dict], state: dict) -> list[dict]:
         symbol = pair.replace("/", "").replace(":USDT", "")
 
         if isinstance(result, dict) and "error" not in result:
+            decision = result.get("decision", "hold")
+
+            # P10: close_position 决策写入平仓信号
+            if decision == "close_position":
+                try:
+                    from datetime import datetime, timezone
+                    from cryptobot.signal.bridge import write_signal
+                    action = "close_short" if pos.get("is_short") else "close_long"
+                    close_sig = {
+                        "symbol": symbol,
+                        "action": action,
+                        "reasoning": result.get("reasoning", "复审建议平仓"),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                    write_signal(close_sig)
+                    logger.info("复审平仓信号已写入: %s %s", symbol, action)
+                except Exception as e:
+                    logger.error("复审平仓信号写入失败: %s", e)
+
             suggestions.append({
                 "symbol": symbol,
                 "pair": pair,
-                "decision": result.get("decision", "hold"),
+                "decision": decision,
                 "new_stop_loss": result.get("new_stop_loss"),
                 "reasoning": result.get("reasoning", ""),
                 "risk_level": result.get("risk_level", "medium"),

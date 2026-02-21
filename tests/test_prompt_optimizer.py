@@ -38,7 +38,7 @@ class TestCheckPerformanceDecline:
         po = opt_setup
         with patch("cryptobot.journal.analytics.calc_performance") as mock_perf:
             mock_perf.side_effect = [
-                {"win_rate": 0.3, "closed": 8},   # 7d: 30%
+                {"win_rate": 0.3, "closed": 12},  # 7d: 30%
                 {"win_rate": 0.6, "closed": 30},   # 30d: 60%
             ]
             result = po.check_performance_decline()

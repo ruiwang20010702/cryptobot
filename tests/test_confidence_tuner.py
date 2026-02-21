@@ -18,11 +18,11 @@ def _mock_perf_insufficient():
 def _mock_perf_optimistic():
     """偏乐观的绩效数据: 60-70 区间实际胜率远低于预期"""
     return {
-        "closed": 30,
+        "closed": 40,
         "confidence_calibration": {
-            "60-70": {"count": 10, "actual_win_rate": 0.35},  # 35% vs 期望 65% → 偏乐观
-            "70-80": {"count": 8, "actual_win_rate": 0.70},   # 正常
-            "80-90": {"count": 6, "actual_win_rate": 0.80},   # 正常
+            "60-70": {"count": 15, "actual_win_rate": 0.35},  # 35% vs 期望 65% → 偏乐观
+            "70-80": {"count": 10, "actual_win_rate": 0.70},  # 正常
+            "80-90": {"count": 10, "actual_win_rate": 0.80},  # 正常
             "90+": {"count": 2, "actual_win_rate": None},
         },
     }
@@ -31,12 +31,12 @@ def _mock_perf_optimistic():
 def _mock_perf_conservative():
     """偏保守的绩效数据: 高区间实际胜率远高于预期"""
     return {
-        "closed": 25,
+        "closed": 40,
         "confidence_calibration": {
-            "60-70": {"count": 5, "actual_win_rate": 0.60},   # 正常
-            "70-80": {"count": 10, "actual_win_rate": 0.95},  # 95% vs 期望 75% → 偏保守
-            "80-90": {"count": 6, "actual_win_rate": 0.95},   # 偏保守
-            "90+": {"count": 1, "actual_win_rate": None},
+            "60-70": {"count": 8, "actual_win_rate": 0.60},   # 正常
+            "70-80": {"count": 12, "actual_win_rate": 0.95},  # 95% vs 期望 75% → 偏保守
+            "80-90": {"count": 10, "actual_win_rate": 0.95},  # 偏保守
+            "90+": {"count": 2, "actual_win_rate": None},
         },
     }
 
@@ -44,11 +44,11 @@ def _mock_perf_conservative():
 def _mock_perf_normal():
     """校准正常的绩效数据"""
     return {
-        "closed": 20,
+        "closed": 35,
         "confidence_calibration": {
-            "60-70": {"count": 6, "actual_win_rate": 0.60},
-            "70-80": {"count": 7, "actual_win_rate": 0.72},
-            "80-90": {"count": 5, "actual_win_rate": 0.82},
+            "60-70": {"count": 10, "actual_win_rate": 0.60},
+            "70-80": {"count": 10, "actual_win_rate": 0.72},
+            "80-90": {"count": 10, "actual_win_rate": 0.82},
             "90+": {"count": 2, "actual_win_rate": None},
         },
     }

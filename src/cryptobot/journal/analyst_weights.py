@@ -29,9 +29,15 @@ def calc_analyst_weights(days: int = 30) -> dict:
         total = stats["total"]
         acc = stats["accuracy"]
 
-        if total >= 10 and acc >= 0.70:
+        if total >= 10 and acc >= 0.75:
+            weight = "very_high"
+            label = "表现卓越，高度参考"
+        elif total >= 10 and acc >= 0.65:
             weight = "high"
             label = "近期表现优异，重点参考"
+        elif total >= 10 and acc <= 0.35:
+            weight = "very_low"
+            label = "近期准确率极低，建议反向参考"
         elif total >= 10 and acc <= 0.45:
             weight = "low"
             label = "近期准确率偏低，仅供参考"
@@ -81,11 +87,11 @@ def build_weights_context(days: int = 30) -> str:
         acc_pct = round(w["accuracy"] * 100)
         arrow = ""
         suffix = ""
-        if w["weight"] == "high":
-            arrow = " ^"
+        if w["weight"] in ("very_high", "high"):
+            arrow = " ^^" if w["weight"] == "very_high" else " ^"
             suffix = f" {w['label']}"
-        elif w["weight"] == "low":
-            arrow = " v"
+        elif w["weight"] in ("very_low", "low"):
+            arrow = " vv" if w["weight"] == "very_low" else " v"
             suffix = f" {w['label']}"
         lines.append(f"- {role}: {acc_pct}% 准确率{arrow}{suffix}")
 

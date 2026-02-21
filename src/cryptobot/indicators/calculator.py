@@ -131,10 +131,16 @@ def load_klines(symbol: str = "BTCUSDT", timeframe: str = "4h") -> pd.DataFrame:
         path = FREQTRADE_DATA_DIR_ALT / filename
 
     if path.exists():
-        df = pd.read_feather(path)
-        df = df.rename(columns={"date": "datetime"})
-        df = df.set_index("datetime")
-        return df
+        # P12: 检查文件修改时间，超过 6 小时认为过期
+        import time as _time
+        file_age_hours = (_time.time() - path.stat().st_mtime) / 3600
+        if file_age_hours > 6:
+            logger.warning("本地 %s 数据过期 (%.1fh)，从 API 获取", symbol, file_age_hours)
+        else:
+            df = pd.read_feather(path)
+            df = df.rename(columns={"date": "datetime"})
+            df = df.set_index("datetime")
+            return df
 
     # 2) 回退: 从 Binance API 获取
     try:
@@ -147,7 +153,9 @@ def load_klines(symbol: str = "BTCUSDT", timeframe: str = "4h") -> pd.DataFrame:
         ) from e
 
 
-def calc_all_indicators(symbol: str = "BTCUSDT", timeframe: str = "4h") -> dict:
+def calc_all_indicators(
+    symbol: str = "BTCUSDT", timeframe: str = "4h", regime: str = "trending",
+) -> dict:
     """计算全部技术指标，返回最新值的字典"""
     df = load_klines(symbol, timeframe)
 
@@ -262,6 +270,7 @@ def calc_all_indicators(symbol: str = "BTCUSDT", timeframe: str = "4h") -> dict:
             bb_position=bb_p,
             adx=_safe(adx[-1]),
             mfi=_safe(mfi[-1]),
+            regime=regime,
         ),
     }
     return result
@@ -281,12 +290,15 @@ def _safe(val) -> float | None:
 
 
 def _ema_alignment(e7, e25, e99) -> str:
-    """EMA 排列状态"""
+    """EMA 排列状态（P22: 增加间距阈值避免震荡市假信号）"""
     if None in (e7, e25, e99):
         return "unknown"
-    if e7 > e25 > e99:
+    gap_7_25 = abs(e7 - e25) / e25 * 100 if e25 else 0
+    gap_25_99 = abs(e25 - e99) / e99 * 100 if e99 else 0
+    min_gap = 0.1  # 最小间距 0.1%
+    if e7 > e25 > e99 and gap_7_25 > min_gap and gap_25_99 > min_gap:
         return "bullish"  # 多头排列
-    elif e7 < e25 < e99:
+    elif e7 < e25 < e99 and gap_7_25 > min_gap and gap_25_99 > min_gap:
         return "bearish"  # 空头排列
     return "mixed"
 
@@ -338,8 +350,17 @@ def _generate_signals(
     bb_position,
     adx,
     mfi,
+    regime="trending",
 ) -> dict:
-    """综合信号判断"""
+    """综合信号判断（P18: regime 感知权重）"""
+    # regime 权重乘数
+    _WEIGHT_MODS = {
+        "trending": {"rsi": 0.7, "macd": 1.0, "ema": 1.3, "bb": 0.8},
+        "ranging":  {"rsi": 1.2, "macd": 0.8, "ema": 0.6, "bb": 1.3},
+        "volatile": {"rsi": 0.5, "macd": 0.7, "ema": 0.8, "bb": 1.0},
+    }
+    w = _WEIGHT_MODS.get(regime, _WEIGHT_MODS["trending"])
+
     signals = []
     score = 0  # -10 到 +10
 
@@ -347,43 +368,43 @@ def _generate_signals(
     if rsi:
         if rsi > 70:
             signals.append("RSI 超买")
-            score -= 1.5
+            score -= 1.5 * w["rsi"]
         elif rsi < 30:
             signals.append("RSI 超卖")
-            score += 1.5
+            score += 1.5 * w["rsi"]
         elif rsi > 50:
-            score += 0.5
+            score += 0.5 * w["rsi"]
         else:
-            score -= 0.5
+            score -= 0.5 * w["rsi"]
 
     # MACD 信号
     if macd_cross == "golden_cross":
         signals.append("MACD 金叉")
-        score += 2
+        score += 2 * w["macd"]
     elif macd_cross == "death_cross":
         signals.append("MACD 死叉")
-        score -= 2
+        score -= 2 * w["macd"]
     if macd_hist and macd_hist > 0:
-        score += 0.5
+        score += 0.5 * w["macd"]
     elif macd_hist and macd_hist < 0:
-        score -= 0.5
+        score -= 0.5 * w["macd"]
 
     # EMA 趋势
     if ema_alignment == "bullish":
         signals.append("EMA 多头排列")
-        score += 2
+        score += 2 * w["ema"]
     elif ema_alignment == "bearish":
         signals.append("EMA 空头排列")
-        score -= 2
+        score -= 2 * w["ema"]
 
     # 布林带位置
     if bb_position is not None:
         if bb_position > 0.95:
             signals.append("触及布林上轨")
-            score -= 1
+            score -= 1 * w["bb"]
         elif bb_position < 0.05:
             signals.append("触及布林下轨")
-            score += 1
+            score += 1 * w["bb"]
 
     # ADX 趋势强度
     if adx and adx > 25:

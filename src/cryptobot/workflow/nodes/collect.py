@@ -17,19 +17,19 @@ _console = Console()
 # 各状态的策略参数默认值
 _REGIME_PARAMS = {
     "trending": {
-        "min_confidence": 55,
+        "min_confidence": 50,
         "max_leverage": 5,
         "trailing_stop": True,
         "description": "趋势市: EMA 多头/空头排列，ADX>25。适合顺势交易，可适度加仓。",
     },
     "ranging": {
-        "min_confidence": 65,
+        "min_confidence": 58,
         "max_leverage": 3,
         "trailing_stop": False,
         "description": "震荡市: ADX<20，布林带收窄。区间交易为主，轻仓博反弹。",
     },
     "volatile": {
-        "min_confidence": 70,
+        "min_confidence": 63,
         "max_leverage": 2,
         "trailing_stop": True,
         "description": "剧烈波动: ATR 显著放大，恐惧贪婪极端。降低杠杆，严格止损。",
@@ -192,6 +192,21 @@ def collect_data(state: WorkflowState) -> dict:
             macro_desc = f" (宏观风险: {next_ev['event']} in {next_ev['hours_until']}h)"
         regime = {**regime, "macro_risk": True, "description": regime.get("description", "") + macro_desc}
 
+    # P5: 学习反馈环 — 注入历史绩效摘要
+    perf_feedback = {}
+    try:
+        from cryptobot.journal.analytics import calc_performance
+        perf = calc_performance(30)
+        if perf.get("closed", 0) >= 10:
+            perf_feedback = {
+                "win_rate": perf["win_rate"],
+                "profit_factor": perf["profit_factor"],
+                "avg_pnl_pct": perf["avg_pnl_pct"],
+                "by_symbol": perf.get("by_symbol", {}),
+            }
+    except Exception:
+        pass
+
     return {
         "market_data": market_data,
         "market_overview": market_overview,
@@ -202,5 +217,6 @@ def collect_data(state: WorkflowState) -> dict:
         "dxy_data": dxy_data,
         "market_regime": regime,
         "capital_tier": capital_tier,
+        "perf_feedback": perf_feedback,
         "errors": errors,
     }

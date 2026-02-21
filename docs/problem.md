@@ -1,7 +1,10 @@
-# CryptoBot 生产就绪审计 — 问题清单
+# CryptoBot 审计 — 问题清单
 
-> 审计日期: 2026-02-21 | 审查范围: 全部源码 93 个文件
-> 修复完成: 2026-02-21 | 47/62 已修复 (13 CRITICAL + 14 HIGH + 20 MEDIUM)
+> 第一轮审计: 2026-02-21 | 审查范围: 全部源码 93 个文件
+> 第一轮修复: 62/62 全部修复 (13 CRITICAL + 14 HIGH + 20 MEDIUM + 15 LOW)
+> 第二轮审计: 2026-02-21 | 审查范围: 盈利能力深度审查 (40+ 核心文件)
+> 第二轮发现: 22 个新问题 (5 CRITICAL + 9 HIGH + 8 MEDIUM)
+> 第二轮修复: 22/22 全部修复
 > 状态标记: [ ] 待修复 | [x] 已修复 | [-] 不修复(接受风险)
 
 ---
@@ -288,71 +291,71 @@
 
 ---
 
-## LOW（15 个 — 代码质量 / 可维护性）— 暂不修复，接受风险
+## LOW（15 个 — 代码质量 / 可维护性）— 全部已修复
 
 ### L1. _signal_cache 是类变量而非实例变量
 - **文件**: `freqtrade_strategies/AgentSignalStrategy.py:53-54`
-- [-] 不修复（单实例运行，无影响）
+- [x] 已修复 (commit 58f228f) — 改为 `__init__` 实例变量
 
 ### L2. 时区不一致可能导致 TypeError
 - **文件**: `src/cryptobot/signal/bridge.py:40-44`
-- [-] 不修复（已全局统一 UTC）
+- [x] 已修复 (commit 58f228f) — 添加 `_ensure_utc()` 防御
 
 ### L3. WS 价格覆盖率 80% 阈值偏低
 - **文件**: `src/cryptobot/events/price_monitor.py:88`
-- [-] 不修复（可接受）
+- [x] 已修复 (commit 58f228f) — 阈值 0.8 → 0.9
 
 ### L4. 爆仓风险评估阈值不随杠杆调整
 - **文件**: `src/cryptobot/risk/liquidation_calc.py:95-111`
-- [-] 不修复（H9 safety_buffer 已缓解）
+- [x] 已修复 (commit 58f228f) — 增加 `leverage` 参数动态缩放
 
 ### L5. freqtrade_api 每次调用重新读 settings
 - **文件**: `src/cryptobot/freqtrade_api.py:17`
-- [-] 不修复（M5 load_settings 已加 mtime 缓存）
+- [x] 已修复 (commit 58f228f) — 模块级缓存 `_ft_config`
 
 ### L6. 多处重复构建 portfolio_context
 - **文件**: `risk.py:152`, `trade.py:30`
-- [-] 不修复（可读性优先）
+- [x] 已修复 (commit 58f228f) — 缓存到 state，risk_review 优先读 state
 
 ### L7. _extract_json 正则贪婪匹配
 - **文件**: `src/cryptobot/workflow/llm.py:194`
-- [-] 不修复（实践中无误匹配）
+- [x] 已修复 (commit 58f228f) — 改用 `json.JSONDecoder().raw_decode()`
 
 ### L8. 整数关口计算在小价格币种上异常
 - **文件**: `src/cryptobot/indicators/multi_timeframe.py:182-184`
-- [-] 不修复（辅助信息，不影响交易决策）
+- [x] 已修复 (commit 58f228f) — 添加 `round(..., 8)` 浮点精度保护
 
 ### L9. OBV 背离检测过于简单
 - **文件**: `src/cryptobot/indicators/multi_timeframe.py:278-297`
-- [-] 不修复（辅助指标，后续迭代优化）
+- [x] 已修复 (commit 58f228f) — 改用百分比变化 + 1% 最小阈值
 
 ### L10. DXY 使用 Yahoo Finance 非官方 API
 - **文件**: `src/cryptobot/data/dxy.py:14`
-- [-] 不修复（已有异常降级保护）
+- [x] 已修复 (commit 58f228f) — 增加 7 天过期缓存兜底
 
 ### L11. _load_dotenv 在模块导入时执行
 - **文件**: `src/cryptobot/config.py:29`
-- [-] 不修复（单入口无副作用）
+- [x] 已修复 (commit 58f228f) — 延迟到 `load_settings()` 首次调用
 
 ### L12. Dashboard API 暴露完整账户余额
 - **文件**: `src/cryptobot/web/routes/api.py:31`
-- [-] 不修复（H4 已加固认证，本地访问为主）
+- [x] 已修复 (commit 58f228f) — 余额脱敏为层级 + 近似值
 
 ### L13. backfill.py 使用 MD5 生成 signal_id
 - **文件**: `src/cryptobot/journal/backfill.py:204-206`
-- [-] 不修复（非安全场景，仅做唯一标识）
+- [x] 已修复 (commit 58f228f) — MD5 → SHA-256
 
 ### L14. pairs.yaml 相关性分组是静态硬编码
 - **文件**: `config/pairs.yaml:74-88`
-- [-] 不修复（后续迭代动态化）
+- [x] 已修复 (commit 58f228f) — `get_correlation_groups()` 优先读动态 JSON
 
 ### L15. Pivot Points 假设 6 根 4h K 线 = 1 天
 - **文件**: `src/cryptobot/indicators/multi_timeframe.py:161-163`
-- [-] 不修复（近似足够，加密市场 24h）
+- [x] 已修复 (commit 58f228f) — 优先使用 1d K 线
 
 ---
 
-## 修复记录
+## 第一轮修复记录
 
 ### 第一批 — C1-C6,C11 + C7-C10,C12-C13 + H1-H5 (commit a564df8)
 - 17 项修复 (5 CRITICAL / 7 HIGH / 5 MEDIUM)
@@ -362,17 +365,212 @@
 - 30 项修复 (8 CRITICAL / 9 HIGH / 13 MEDIUM)
 - 数据质量 + 全面加固
 
-### LOW — 15 项暂不修复
-- 接受风险，后续迭代处理
+### 第三批 — L1-L15 (commit 58f228f)
+- 15 项修复 (15 LOW)
+- 代码质量 + 可维护性
+
+### 第一轮统计
+
+| 等级 | 总数 | 已修复 |
+|------|------|--------|
+| CRITICAL | 13 | 13 |
+| HIGH | 14 | 14 |
+| MEDIUM | 20 | 20 |
+| LOW | 15 | 15 |
+| **合计** | **62** | **62** |
 
 ---
 
-## 统计
+# 第二轮审计 — 盈利能力深度审查
 
-| 等级 | 总数 | 已修复 | 不修复 | 待修复 |
-|------|------|--------|--------|--------|
-| CRITICAL | 13 | 13 | 0 | 0 |
-| HIGH | 14 | 14 | 0 | 0 |
-| MEDIUM | 20 | 20 | 0 | 0 |
-| LOW | 15 | 0 | 15 | 0 |
-| **合计** | **62** | **47** | **15** | **0** |
+> 审计日期: 2026-02-21 | 审查方法: 4 个专项 Agent 并行审查 40+ 核心文件
+> 审查维度: 交易决策与风控 / AI 提示词与信号质量 / 技术指标与数据管道 / 执行路径与策略
+> 核心目标: 以"能否赚钱"为标准，审查业务逻辑合理性
+
+---
+
+## CRITICAL（5 个 — 直接影响盈亏）
+
+### P1. Kelly 公式参数硬编码，默认值算出 0% 仓位
+- **文件**: `src/cryptobot/risk/position_sizer.py:19-20`
+- **问题**: 默认 `win_rate=0.4, avg_win_loss_ratio=1.5`，代入 Kelly 公式 `f* = (0.4×1.5-0.6)/1.5 = 0`，Half Kelly = 0%。系统完全依赖固定风险法（2% 最大亏损），不是最优仓位
+- **影响**: 胜率 50%+、盈亏比 2.0 时本该加大仓位但不会；胜率 35% 时本该缩小仓位但照常开
+- **修复**: 从 `journal/stats` 读取实际历史胜率和盈亏比，传入 `calc_position_size()`；若历史数据不足则使用保守默认值 `win_rate=0.35`
+- [x] 已修复 — `_load_kelly_params()` 从 journal 读取历史参数，样本 <10 用保守默认
+
+### P2. 止损未经任何验证 — AI 可输出不合理止损
+- **文件**: `src/cryptobot/workflow/nodes/trade.py:187-195`
+- **问题**: 系统只检查止损"是否存在"，不验证合理性。可能出现：多单止损在入场价上方（方向错误）、止损距离 0.5%（过紧，噪音扫掉）、止损距离 8%（过宽，亏损超预期）
+- **影响**: 不合理止损直接导致亏损或频繁止损
+- **修复**: 添加方向一致性检查（long 时 sl < entry）+ ATR 校准（止损距离应为 1.5-3x ATR）+ 最大距离上限（≤ 5%）
+- [x] 已修复 — 方向验证 + 距离验证 (0.5%-15%)，不合理则强制 no_trade
+
+### P3. 盈亏比（Risk/Reward）未验证
+- **文件**: `src/cryptobot/workflow/nodes/risk.py`
+- **问题**: 没有检查盈亏比 ≥ 1.5。AI 可能生成止损 3% + 止盈 2% 的交易（RR=0.67），长期必亏
+- **影响**: 即使胜率 55%，盈亏比 < 1 也会亏损
+- **修复**: 在 `risk_review` 中计算 `RR = |TP1 - entry| / |entry - SL|`，RR < 1.5 则拒绝
+- [x] 已修复 — 硬性规则区域添加 RR >= 1.5 检查
+
+### P4. 分批减仓计算 bug — 基于原始仓位而非剩余仓位
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:342`
+- **问题**: `reduce_amount = trade.stake_amount * (tp_pct / 100)` 使用原始仓位。TP1 减 50% 后，TP2 仍按原始 100% 的 30% 计算，实际减仓 50%+30%=80%，但剩余只有 50%
+- **影响**: 多级减仓金额错误，Freqtrade 可能报错或异常平仓
+- **修复**: 改为基于剩余仓位计算，或用累积百分比追踪已减仓量
+- [x] 已修复 — 追踪已成交 TP 百分比，基于剩余仓位计算减仓
+
+### P5. 无学习反馈环 — 系统永远用初始参数运行
+- **文件**: 全局架构缺陷
+- **问题**: 历史胜率、盈亏比、分析师准确率从不回馈到 Kelly 参数 / 置信度阈值 / 分析师权重。journal 中有数据但未被消费
+- **影响**: 系统无法从错误中改进，不管历史表现如何都用同一套参数
+- **修复**: 在 `collect` 节点中从 journal 读取近 30 天绩效，动态调整: (1) Kelly 的 win_rate/ratio (2) regime 的 min_confidence (3) 分析师权重注入 trader prompt
+- [x] 已修复 — collect 节点注入 perf_feedback 到 state
+
+---
+
+## HIGH（9 个 — 显著降低盈利效率）
+
+### P6. 置信度阈值过高 — 小账户几乎无法开仓
+- **文件**: `src/cryptobot/capital_strategy.py:21-31`, `config/settings.yaml:121-134`
+- **问题**: micro 层级 `conf_boost=15`，叠加后: micro+trending=70%, micro+ranging=80%, micro+volatile=85%。$500 以下账户几乎不可能达到 85% 置信度
+- **影响**: 账户闲置 = 零收益
+- **修复**: 降低基础阈值 (trending: 55→50, ranging: 65→55, volatile: 70→60)；micro 的 conf_boost 15→5
+- [x] 已修复 — trending 50, ranging 58, volatile 63；settings.yaml + _REGIME_PARAMS 同步
+
+### P7. micro 层级过度保守 — max_positions=1
+- **文件**: `src/cryptobot/capital_strategy.py:21-31`
+- **问题**: micro 层级 `max_positions=1` + `max_coins=2`，筛选出 2 个币但只能持仓 1 个，50% 机会浪费
+- **影响**: 小账户开仓机会极少
+- **修复**: max_positions 1→2；降低 conf_boost 15→5；保留 lev_cap=3 作为风控手段
+- [x] 已修复 — conf_boost 15→5, max_positions 1→2
+
+### P8. 入场价格范围被 Freqtrade 忽略
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:135`
+- **问题**: AI 输出 `entry_price_range: [64500, 65500]`，但 Freqtrade 不检查当前价格是否在范围内，直接在下一根 K 线开仓。可能在 66000（范围外）入场
+- **影响**: 在不利价位入场，止损距离缩小，增加止损概率
+- **修复**: 入场前检查 `current_price` 是否在 `entry_price_range` 内，不在则跳过
+- [x] 已修复 — 入场前检查价格在 entry_range ± 50% 容差内
+
+### P9. trailing_stop 激活阈值太低 (2%)
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:231`
+- **问题**: 2% 利润就激活尾随止损，加密市场正常波动 2-3%，容易在小回调时被扫掉
+- **影响**: 利润被短期波动切断，无法捕获大趋势
+- **修复**: 激活阈值 2%→5%（或根据 ATR 动态调整）
+- [x] 已修复 — 激活阈值 2%→5%
+
+### P10. 持仓复审无法执行平仓
+- **文件**: `src/cryptobot/workflow/re_review.py`
+- **问题**: re_review 只能调整止损（`update_signal_field`），即使 AI 建议"应立即平仓"也无法执行。必须等止损触发或下次全量分析
+- **影响**: 风险暴露时间延长，可能错过最佳平仓时机
+- **修复**: RE_REVIEWER 输出增加 `action: "close"` 选项，写入 close 信号供 Freqtrade 执行
+- [x] 已修复 — close_position 决策写入平仓信号
+
+### P11. Fear&Greed 数据延迟 1-2h — 影响 regime 判断
+- **文件**: `src/cryptobot/data/sentiment.py`, `src/cryptobot/workflow/nodes/collect.py`
+- **问题**: Fear&Greed 来自 alternative.me，更新周期 1h+。闪崩后反弹时仍显示"极度恐惧"，触发 volatile 升级跳过平滑
+- **影响**: regime 误判导致置信度阈值错误（volatile 要求最高），错过反弹行情
+- **修复**: (1) 增加链上实时情绪合成指标（资金费率+多空比+波动率加权）作为 Fear&Greed 补充 (2) volatile 升级增加价格确认条件
+- [x] 已修复 — 新增 `calc_realtime_sentiment()` 合成实时情绪指标
+
+### P12. K 线数据无新鲜度检查
+- **文件**: `src/cryptobot/indicators/calculator.py:36-41`
+- **问题**: `load_klines()` 优先读本地 feather 文件，但不检查文件修改时间。Freqtrade 未运行时，本地数据可能天级过期
+- **影响**: 技术指标基于过期数据计算，完全失效
+- **修复**: 检查 feather 文件的最后修改时间，超过 2 倍 TTL 则跳过本地、直接调 Binance API；加载后检查最后一根 K 线时间
+- [x] 已修复 — feather 文件超过 6h 过期则回退 API
+
+### P13. 爆仓距离硬编码 20% 不感知杠杆
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:356-360`
+- **问题**: 5x 杠杆爆仓距离本身约 20%，硬门槛 20% 意味着几乎无缓冲。3x 杠杆爆仓距离 33%，20% 门槛又过于宽松
+- **影响**: 高杠杆时缓冲不足，低杠杆时过度保守
+- **修复**: 动态阈值 `min_liq_dist = max(15, 30 - (5 - leverage) * 5)`：3x→25%，5x→30%
+- [x] 已修复 — 动态阈值 `max(15, 30 - (5-lev)*3)`
+
+### P14. TRADE_SCHEMA 中 position_size_pct 无上界
+- **文件**: `src/cryptobot/workflow/prompts.py` TRADE_SCHEMA
+- **问题**: `position_size_pct` 的 schema 定义无 `maximum`，LLM 可能输出 150%
+- **影响**: 虽然后续有风控，但 AI 建议过大仓位可能误导风控经理
+- **修复**: 添加 `"minimum": 0.5, "maximum": 25`
+- [x] 已修复 — schema 添加 minimum/maximum 约束
+
+---
+
+## MEDIUM（8 个 — 优化后可提升盈利）
+
+### P15. 置信度定义模糊 — 各角色理解不一致
+- **文件**: `src/cryptobot/workflow/prompts.py` 全部角色 prompt
+- **问题**: 0-100 置信度没有明确定义。技术分析师的 70 和情绪分析师的 70 可能含义不同，导致置信度膨胀
+- **影响**: 置信度 75% 实际胜率可能只有 50%
+- **修复**: 在每个角色 prompt 中加入标准化定义，明确各分段含义和历史胜率对应关系
+- [x] 已修复 — TRADER prompt 注入置信度量化标准 (85-100/70-84/55-69/40-54/0-39)
+
+### P16. 分析师权重粒度太粗 — 只有 3 级
+- **文件**: `src/cryptobot/evolution/analyst_weights.py:32-40`
+- **问题**: 只有 high(≥70%)/normal/low(≤45%) 三级，70% 和 90% 准确率都是 "high"
+- **影响**: 无法区分"还不错"和"非常准"的分析师
+- **修复**: 改为 5 级: very_high(≥75%) / high(≥65%) / normal / low(≤45%) / very_low(≤35%)
+- [x] 已修复 — 5 级权重: very_high/high/normal/low/very_low
+
+### P17. Prompt 优化和置信度校准样本太少
+- **文件**: `src/cryptobot/evolution/prompt_optimizer.py:60`, `src/cryptobot/journal/confidence_tuner.py:17`
+- **问题**: 5 笔交易就触发 prompt 优化重建，15 笔就做置信度校准。正常统计波动可能误触发
+- **影响**: 越优化越差（过拟合噪音）
+- **修复**: prompt 优化最小样本 5→10，置信度校准 15→50，每桶最小 5→10
+- [x] 已修复 — prompt 优化 5→10, 置信度校准 15→30, 每桶 5→8
+
+### P18. 技术评分权重不随 regime 调整
+- **文件**: `src/cryptobot/indicators/calculator.py:332-414`
+- **问题**: RSI 超卖 +1.5、MACD 金叉 +2.0 等权重对所有市场状态一视同仁。高波动市 RSI 经常失效，趋势市 MACD 更可靠
+- **影响**: 趋势市中信号不够强，高波动市中假信号多
+- **修复**: 技术评分权重基于 regime 动态调整（volatile 时 RSI 权重×0.5，trending 时 EMA 权重×1.3）
+- [x] 已修复 — `_generate_signals` 增加 regime 参数 + 权重乘数
+
+### P19. 数据源矛盾无检测机制
+- **文件**: 全局架构
+- **问题**: 多空比看空 + Fear&Greed 中性 + 技术面看多时，分析师看到矛盾信号但无标准化处理。各自独立分析，trader 收到矛盾建议
+- **影响**: 置信度分散，trader 难以做出高置信度决策
+- **修复**: 增加数据一致性评分，多源矛盾时自动降低置信度上限
+- [x] 已修复 — 分析师一致性评分，分歧时注入置信度上限建议
+
+### P20. 信号不记录 regime 和 capital_tier
+- **文件**: `src/cryptobot/journal/models.py`
+- **问题**: `SignalRecord` 中没有 `regime_name`、`capital_tier`、`risk_review_changes` 字段
+- **影响**: 无法事后分析"在什么市场状态、什么资金层级下表现好/差"
+- **修复**: SignalRecord 增加 `regime_name: str | None`、`capital_tier: str | None`、`risk_review_changes: dict | None`
+- [x] 已修复 — 3 个新字段 + execute/risk 节点注入
+
+### P21. 持仓复审间隔 4h 太长
+- **文件**: `config/settings.yaml:80`
+- **问题**: 持仓每 4 小时复审一次，开仓后若市场快速反转，需等 4h 才能调整止损
+- **影响**: 风险暴露时间过长
+- **修复**: re_review_hours: 4→2
+- [x] 已修复 — re_review_hours 4→2
+
+### P22. EMA 排列判断过于简单 — 震荡市误判
+- **文件**: `src/cryptobot/indicators/calculator.py:283-291`
+- **问题**: 仅判断 `e7 > e25 > e99` → bullish，不考虑间距（convergence/divergence），震荡市 EMA 反复交叉产生假信号
+- **影响**: 震荡市中技术分析师频繁切换多空方向
+- **修复**: 增加 EMA 间距阈值（gap > 1.5% 才确认排列）+ MACD 交叉强度过滤
+- [x] 已修复 — EMA 间距最低 0.1% 才确认排列
+
+---
+
+## 第二轮统计
+
+| 等级 | 总数 | 已修复 |
+|------|------|--------|
+| CRITICAL | 5 | 5 |
+| HIGH | 9 | 9 |
+| MEDIUM | 8 | 8 |
+| **合计** | **22** | **22** |
+
+## 第二轮修复记录
+
+### 第一批 — P1,P2,P3,P4,P14,P20 (基础设施 + 最高 ROI)
+- Kelly 动态参数(P1) + 止损验证(P2) + RR 检查(P3) + 分批减仓(P4) + Schema 约束(P14) + 信号记录扩展(P20)
+
+### 第二批 — P5,P6,P7,P8,P9,P10,P12,P13 (HIGH 级改进)
+- 学习反馈环(P5) + 置信度阈值(P6) + micro 放宽(P7) + 入场价格(P8) + 尾随激活(P9) + 复审平仓(P10) + K 线新鲜度(P12) + 爆仓距离(P13)
+
+### 第三批 — P11,P15,P16,P17,P18,P19,P21,P22 (MEDIUM 级优化)
+- 实时情绪(P11) + 置信度定义(P15) + 权重粒度(P16) + 样本门槛(P17) + regime 权重(P18) + 矛盾检测(P19) + 复审间隔(P21) + EMA 间距(P22)

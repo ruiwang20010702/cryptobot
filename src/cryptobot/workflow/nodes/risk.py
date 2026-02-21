@@ -345,6 +345,22 @@ def risk_review(state: WorkflowState) -> dict:
                 decision["leverage"] = capital_lev_cap
                 leverage = capital_lev_cap
 
+        # P3: 盈亏比 RR >= 1.5 检查
+        stop_loss = decision.get("stop_loss")
+        tp_list = decision.get("take_profit", [])
+        if entry_range and len(entry_range) == 2 and entry_range[0] and stop_loss and tp_list:
+            entry_mid = (entry_range[0] + entry_range[1]) / 2
+            sl_dist = abs(entry_mid - stop_loss)
+            first_tp = (
+                tp_list[0].get("price", 0) if isinstance(tp_list[0], dict) else tp_list[0]
+            )
+            tp_dist = abs(first_tp - entry_mid) if first_tp else 0
+            rr = tp_dist / sl_dist if sl_dist > 0 else 0
+            if rr < 1.5:
+                logger.info("硬性拒绝 %s: RR %.2f < 1.5", symbol, rr)
+                _console.print(f"    [red]拒绝 {symbol}: 盈亏比 {rr:.2f} < 1.5[/red]")
+                continue
+
         # 计算爆仓距离
         liq_info = ""
         if entry_range and len(entry_range) == 2 and entry_range[0]:
@@ -353,10 +369,17 @@ def risk_review(state: WorkflowState) -> dict:
             liq_dist = calc_liquidation_distance(current_price or entry_mid, liq_price)
             liq_info = f"爆仓价: {liq_price:.2f}, 爆仓距离: {liq_dist:.1f}%"
 
-            # M2: 爆仓距离硬性门槛
-            if liq_dist < 20:
-                logger.info("硬性拒绝 %s: 爆仓距离 %.1f%% < 20%%", symbol, liq_dist)
-                _console.print(f"    [red]拒绝 {symbol}: 爆仓距离 {liq_dist:.1f}% < 20%[/red]")
+            # P13: 爆仓距离杠杆感知动态阈值
+            min_liq_dist = max(15, 30 - (5 - leverage) * 3)
+            if liq_dist < min_liq_dist:
+                logger.info(
+                    "硬性拒绝 %s: 爆仓距离 %.1f%% < %.0f%% (杠杆%dx)",
+                    symbol, liq_dist, min_liq_dist, leverage,
+                )
+                _console.print(
+                    f"    [red]拒绝 {symbol}: 爆仓距离 {liq_dist:.1f}% < "
+                    f"{min_liq_dist:.0f}% ({leverage}x杠杆)[/red]"
+                )
                 continue
 
         existing = [s for s in existing_signals if s["symbol"] == symbol]
@@ -408,6 +431,9 @@ def risk_review(state: WorkflowState) -> dict:
                     sig = _decision_to_signal(
                         decision, result, account_balance, analyst_votes=votes,
                     )
+                    # P20: 注入风控修改内容
+                    if result.get("decision") == "modified" and result.get("adjustments"):
+                        sig["risk_review_changes"] = result["adjustments"]
                     approved.append(sig)
                     # C2: 累加仓位占用，避免同批信号竞态
                     margin = sig.get("position_size_usdt", 0)

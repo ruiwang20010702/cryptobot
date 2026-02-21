@@ -9,10 +9,21 @@ from cryptobot.journal.analyst_weights import (
 
 
 @patch("cryptobot.journal.analyst_weights.calc_analyst_accuracy")
+def test_calc_weights_very_high(mock_accuracy):
+    """测试卓越准确率 → very_high 权重"""
+    mock_accuracy.return_value = {
+        "technical": {"total": 15, "correct": 12, "accuracy": 0.80},
+    }
+    result = calc_analyst_weights()
+    assert result["technical"]["weight"] == "very_high"
+    assert "卓越" in result["technical"]["label"]
+
+
+@patch("cryptobot.journal.analyst_weights.calc_analyst_accuracy")
 def test_calc_weights_high(mock_accuracy):
     """测试高准确率 → high 权重"""
     mock_accuracy.return_value = {
-        "technical": {"total": 15, "correct": 12, "accuracy": 0.80},
+        "technical": {"total": 15, "correct": 10, "accuracy": 0.67},
     }
     result = calc_analyst_weights()
     assert result["technical"]["weight"] == "high"
@@ -20,10 +31,21 @@ def test_calc_weights_high(mock_accuracy):
 
 
 @patch("cryptobot.journal.analyst_weights.calc_analyst_accuracy")
+def test_calc_weights_very_low(mock_accuracy):
+    """测试极低准确率 → very_low 权重"""
+    mock_accuracy.return_value = {
+        "sentiment": {"total": 12, "correct": 3, "accuracy": 0.25},
+    }
+    result = calc_analyst_weights()
+    assert result["sentiment"]["weight"] == "very_low"
+    assert "反向" in result["sentiment"]["label"]
+
+
+@patch("cryptobot.journal.analyst_weights.calc_analyst_accuracy")
 def test_calc_weights_low(mock_accuracy):
     """测试低准确率 → low 权重"""
     mock_accuracy.return_value = {
-        "sentiment": {"total": 12, "correct": 4, "accuracy": 0.33},
+        "sentiment": {"total": 12, "correct": 5, "accuracy": 0.42},
     }
     result = calc_analyst_weights()
     assert result["sentiment"]["weight"] == "low"

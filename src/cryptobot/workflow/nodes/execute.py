@@ -51,6 +51,11 @@ def execute(state: WorkflowState) -> dict:
             _console.print(f"    [yellow]跳过 {sym}: 已有 {sig_action} 持仓[/yellow]")
             continue
         signal["prompt_version"] = get_prompt_version()
+        # P20: 注入 regime/capital_tier 上下文
+        regime = state.get("market_regime", {})
+        capital_tier_info = state.get("capital_tier", {})
+        signal["regime_name"] = regime.get("regime")
+        signal["capital_tier"] = capital_tier_info.get("tier")
         try:
             result = writer(signal)
             executed.append(result)

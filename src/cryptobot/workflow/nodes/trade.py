@@ -134,6 +134,23 @@ def trade(state: WorkflowState) -> dict:
         if capital_trader_addon:
             trader_system += capital_trader_addon
 
+        # P19: 分析师一致性评分
+        votes = [
+            a.get("direction", "neutral")
+            for a in analysis.values() if isinstance(a, dict)
+        ]
+        bullish_cnt = votes.count("bullish")
+        bearish_cnt = votes.count("bearish")
+        total_votes = len(votes) or 1
+        consistency = max(bullish_cnt, bearish_cnt) / total_votes
+        consistency_note = ""
+        if consistency < 0.5:
+            consistency_note = (
+                "\n\n⚠️ 分析师意见严重分歧，建议 confidence ≤ 65 或 no_trade"
+            )
+        elif consistency < 0.75:
+            consistency_note = "\n\n⚠️ 分析师意见中度分歧，建议 confidence ≤ 75"
+
         all_tasks.append({
             "prompt": (
                 f"## {symbol} 交易决策\n\n"
@@ -148,7 +165,7 @@ def trade(state: WorkflowState) -> dict:
                 f"### 看多研究员观点\n{json.dumps(bull, ensure_ascii=False, indent=2)}\n\n"
                 f"### 看空研究员观点\n{json.dumps(bear, ensure_ascii=False, indent=2)}\n\n"
                 f"### 分析师数据\n{json.dumps(analysis, ensure_ascii=False, indent=2)}\n\n"
-                f"请做出交易决策。"
+                f"{consistency_note}\n请做出交易决策。"
             ),
             "model": "sonnet",
             "role": "trader",
@@ -190,6 +207,45 @@ def trade(state: WorkflowState) -> dict:
                 logger.warning("%s: action=%s 但无 stop_loss，强制改为 no_trade", symbol, result["action"])
                 result["action"] = "no_trade"
                 result["reasoning"] = (result.get("reasoning", "") + " [系统: 缺少止损，已拦截]")
+            # P2: 止损方向验证
+            if result.get("action") == "long" and result.get("stop_loss") is not None:
+                if result["stop_loss"] >= current_price and current_price > 0:
+                    logger.warning(
+                        "%s: long 止损 %.2f >= 当前价 %.2f, 方向错误",
+                        symbol, result["stop_loss"], current_price,
+                    )
+                    result["action"] = "no_trade"
+                    result["reasoning"] = (
+                        result.get("reasoning", "") + " [系统: 止损方向错误]"
+                    )
+            elif result.get("action") == "short" and result.get("stop_loss") is not None:
+                if result["stop_loss"] <= current_price and current_price > 0:
+                    logger.warning(
+                        "%s: short 止损 %.2f <= 当前价 %.2f, 方向错误",
+                        symbol, result["stop_loss"], current_price,
+                    )
+                    result["action"] = "no_trade"
+                    result["reasoning"] = (
+                        result.get("reasoning", "") + " [系统: 止损方向错误]"
+                    )
+
+            # P2: 止损距离验证 (0.5% - 15%)
+            if (
+                result.get("action") in ("long", "short")
+                and result.get("stop_loss") is not None
+                and current_price > 0
+            ):
+                sl_dist = abs(result["stop_loss"] - current_price) / current_price * 100
+                if sl_dist < 0.5 or sl_dist > 15:
+                    logger.warning(
+                        "%s: 止损距离 %.1f%% 不在合理范围 0.5-15%%", symbol, sl_dist,
+                    )
+                    result["action"] = "no_trade"
+                    result["reasoning"] = (
+                        result.get("reasoning", "")
+                        + f" [系统: 止损距离 {sl_dist:.1f}% 超出合理范围 0.5-15%]"
+                    )
+
             result["symbol"] = symbol
             result["current_price"] = current_price
             decisions.append(result)

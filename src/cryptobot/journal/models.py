@@ -41,6 +41,11 @@ class SignalRecord:
     prompt_version: str | None = None    # "v1.0"
     model_id: str | None = None          # 竞赛模式下的模型 ID
 
+    # 上下文元数据
+    regime_name: str | None = None       # 信号生成时的市场状态
+    capital_tier: str | None = None      # 信号生成时的资金层级
+    risk_review_changes: dict | None = None  # 风控修改内容
+
     # 状态
     status: str = "pending"  # pending / active / closed / expired
 
@@ -71,5 +76,8 @@ class SignalRecord:
             risk_score=summary.get("risk_score"),
             analyst_votes=signal.get("analyst_votes"),
             prompt_version=signal.get("prompt_version"),
+            regime_name=signal.get("regime_name"),
+            capital_tier=signal.get("capital_tier"),
+            risk_review_changes=signal.get("risk_review_changes"),
             status="pending",
         )

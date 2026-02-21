@@ -1,7 +1,7 @@
 """资金感知策略调整
 
 根据账户余额自动调整交易参数:
-- micro (<$500): 极度保守，最多 2 币，杠杆 ≤3x
+- micro (<$500): 保守，最多 2 币，杠杆 ≤3x
 - small ($500-2K): 保守，最多 3 币
 - medium ($2K-10K): 标准（不改变现有行为）
 - large ($10K+): 灵活（不改变现有行为）
@@ -23,9 +23,9 @@ _DEFAULT_TIERS = {
         "min_balance": 0,
         "max_balance": 500,
         "max_coins": 2,
-        "conf_boost": 15,
+        "conf_boost": 5,
         "lev_cap": 3,
-        "max_positions": 1,
+        "max_positions": 2,
         "take_profit_style": "quick",
         "preferred_symbols": ["BTCUSDT", "ETHUSDT"],
     },

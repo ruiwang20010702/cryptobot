@@ -131,6 +131,19 @@ class AgentSignalStrategy(IStrategy):
         # --- 模式 1: 读取 Agent 信号 (实盘/模拟盘) ---
         signal = self._get_signal_for_pair(metadata["pair"])
         if signal is not None:
+            # P8: 入场价格范围检查
+            entry_range = signal.get("entry_price_range")
+            if entry_range and len(entry_range) == 2:
+                current_price = dataframe["close"].iloc[-1]
+                low, high = entry_range
+                tolerance = (high - low) * 0.5  # 50% 容差
+                if not (low - tolerance <= current_price <= high + tolerance):
+                    logger.info(
+                        "[Agent] %s 价格 %.2f 不在范围 [%.2f, %.2f]±50%%, 跳过",
+                        metadata["pair"], current_price, low, high,
+                    )
+                    return dataframe
+
             if signal["action"] == "long":
                 dataframe.loc[dataframe.index[-1], "enter_long"] = 1
                 logger.info(
@@ -227,8 +240,8 @@ class AgentSignalStrategy(IStrategy):
         """
         signal = self._get_signal_for_pair(pair)
 
-        # 优先级 1: Agent 尾随止盈（盈利 > 2% 后激活）
-        if signal and signal.get("trailing_stop_pct") and current_profit > 0.02:
+        # 优先级 1: Agent 尾随止盈（盈利 > 5% 后激活）
+        if signal and signal.get("trailing_stop_pct") and current_profit > 0.05:
             trail_pct = signal["trailing_stop_pct"] / 100
             return -(current_profit - trail_pct)
 
@@ -339,10 +352,22 @@ class AgentSignalStrategy(IStrategy):
             )
 
             if hit and not already_filled:
-                reduce_amount = trade.stake_amount * (tp_pct / 100)
+                # P4: 基于剩余仓位计算减仓量
+                total_tp_pct_filled = sum(
+                    tp_list[j].get("pct", 0)
+                    for j in range(i)
+                    if any(
+                        o.ft_order_tag == f"tp_{j}_{tp_list[j].get('price')}"
+                        and o.ft_is_open is False
+                        for o in filled_orders
+                    )
+                )
+                remaining_pct = 100 - total_tp_pct_filled
+                reduce_pct = min(tp_pct, remaining_pct)
+                reduce_amount = trade.stake_amount * reduce_pct / 100
                 logger.info(
-                    "[Agent] %s 分批止盈 TP%d @ %.2f, 减仓 %.1f%%",
-                    trade.pair, i + 1, tp_price, tp_pct,
+                    "[Agent] %s 分批止盈 TP%d @ %.2f, 减仓 %.1f%% (剩余 %.1f%%)",
+                    trade.pair, i + 1, tp_price, reduce_pct, remaining_pct,
                 )
                 return -reduce_amount
 

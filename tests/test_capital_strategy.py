@@ -30,7 +30,7 @@ class TestDetectCapitalTier:
         assert result["tier"] == "micro"
         assert result["params"]["max_coins"] == 2
         assert result["params"]["lev_cap"] == 3
-        assert result["params"]["max_positions"] == 1
+        assert result["params"]["max_positions"] == 2
 
     @patch("cryptobot.capital_strategy.load_settings", return_value={})
     def test_small_boundary_exact(self, _):
@@ -75,7 +75,7 @@ class TestDetectCapitalTier:
         assert result["params"]["max_coins"] == 1
         assert result["params"]["lev_cap"] == 2
         # 未覆盖的字段保持默认
-        assert result["params"]["max_positions"] == 1
+        assert result["params"]["max_positions"] == 2
 
     @patch("cryptobot.capital_strategy.load_settings", return_value={})
     def test_returns_balance(self, _):

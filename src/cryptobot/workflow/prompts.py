@@ -192,6 +192,13 @@ TRADER = """\
 - 同方向总仓位不超过账户的 50%
 - 总持仓不超过账户的 80%
 
+## 置信度量化标准
+- 85-100: 多数据源强共振，历史胜率约 70%+
+- 70-84: 主要指标一致，个别矛盾，历史胜率约 55-65%
+- 55-69: 信号混合，方向不确定，历史胜率约 45-55%
+- 40-54: 反向信号较多，仅弱势方向偏好
+- 0-39: 强烈反向信号，建议反向操作或观望
+
 ## 输出格式
 严格按 JSON Schema 输出，包含 action (long/short/no_trade)、entry_price_range、
 stop_loss、take_profit (列表)、leverage、confidence、position_size_pct、reasoning。
@@ -298,7 +305,7 @@ TRADE_SCHEMA = {
         },
         "leverage": {"type": "integer", "minimum": 1, "maximum": 5},
         "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
-        "position_size_pct": {"type": "number"},
+        "position_size_pct": {"type": "number", "minimum": 0.5, "maximum": 25},
         "reasoning": {"type": "string"},
     },
     "required": ["action", "confidence", "reasoning", "stop_loss", "entry_price_range"],

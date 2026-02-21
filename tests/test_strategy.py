@@ -109,17 +109,17 @@ class TestCustomStoploss:
     now = datetime.now(timezone.utc)
 
     def test_agent_trailing_stop_pct(self, strategy, mock_trade_long):
-        """trailing_stop_pct=3, profit=5% → 返回 -(0.05-0.03)"""
+        """trailing_stop_pct=3, profit=8% → 返回 -(0.08-0.03)"""
         signal = _make_signal(trailing_stop_pct=3)
         with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
             result = strategy.custom_stoploss(
                 "BTC/USDT:USDT", mock_trade_long, self.now,
-                current_rate=100000, current_profit=0.05, after_fill=False,
+                current_rate=100000, current_profit=0.08, after_fill=False,
             )
-        assert result == pytest.approx(-(0.05 - 0.03))
+        assert result == pytest.approx(-(0.08 - 0.03))
 
     def test_agent_trailing_inactive(self, strategy, mock_trade_long):
-        """profit=1% (< 2%) → 尾随不激活，回退到固定止损"""
+        """profit=3% (< 5%) → 尾随不激活，回退到固定止损"""
         signal = _make_signal(trailing_stop_pct=3, stop_loss=92000)
         with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
             result = strategy.custom_stoploss(

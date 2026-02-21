@@ -6,7 +6,54 @@
 - 仓位大小 = min(凯利最优, 风险约束上限)
 """
 
+import logging
+
 from cryptobot.config import load_settings, get_pair_config
+
+logger = logging.getLogger(__name__)
+
+
+def _load_kelly_params(symbol: str, action: str | None = None) -> tuple[float, float]:
+    """从 journal 历史数据加载 Kelly 参数
+
+    优先使用币种级别数据，fallback 到全局；样本不足时用保守默认值。
+
+    Returns:
+        (win_rate, avg_win_loss_ratio)
+    """
+    try:
+        from cryptobot.journal.analytics import calc_performance
+        perf = calc_performance(30)
+        closed = perf.get("closed", 0)
+        if closed < 10:
+            return 0.35, 1.2
+
+        # 币种级别胜率
+        by_symbol = perf.get("by_symbol", {})
+        sym_data = by_symbol.get(symbol, {})
+        if sym_data.get("count", 0) >= 5:
+            wr = sym_data["win_rate"]
+        elif action and perf.get("by_direction", {}).get(action, {}).get("count", 0) >= 5:
+            wr = perf["by_direction"][action]["win_rate"]
+        else:
+            wr = perf.get("win_rate", 0.35)
+
+        # 盈亏比: gross_profit / gross_loss
+        from cryptobot.journal.storage import get_all_records
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        records = [
+            r for r in get_all_records()
+            if r.status == "closed" and r.timestamp >= cutoff
+        ]
+        gross_profit = sum(r.actual_pnl_pct for r in records if (r.actual_pnl_pct or 0) > 0)
+        gross_loss = abs(sum(r.actual_pnl_pct for r in records if (r.actual_pnl_pct or 0) < 0))
+        ratio = gross_profit / gross_loss if gross_loss > 0 else 1.5
+
+        return max(0.1, min(wr, 0.9)), max(0.5, min(ratio, 5.0))
+    except Exception as e:
+        logger.warning("Kelly 参数加载失败: %s, 使用保守默认值", e)
+        return 0.35, 1.2
 
 
 def calc_position_size(
@@ -15,8 +62,9 @@ def calc_position_size(
     entry_price: float,
     stop_loss_price: float,
     leverage: int | None = None,
-    win_rate: float = 0.4,
-    avg_win_loss_ratio: float = 1.5,
+    win_rate: float | None = None,
+    avg_win_loss_ratio: float | None = None,
+    action: str | None = None,
 ) -> dict:
     """计算仓位大小
 
@@ -32,6 +80,14 @@ def calc_position_size(
     Returns:
         仓位计算结果
     """
+    # 自动从 journal 加载 Kelly 参数
+    if win_rate is None or avg_win_loss_ratio is None:
+        auto_wr, auto_ratio = _load_kelly_params(symbol, action)
+        if win_rate is None:
+            win_rate = auto_wr
+        if avg_win_loss_ratio is None:
+            avg_win_loss_ratio = auto_ratio
+
     settings = load_settings()
     pair_cfg = get_pair_config(symbol)
     risk = settings.get("risk", {})
