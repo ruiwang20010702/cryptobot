@@ -57,6 +57,15 @@ def trade(state: WorkflowState) -> dict:
             f"- 建议最大杠杆: {regime.get('params', {}).get('max_leverage', 5)}x\n\n"
         )
 
+    # Regime prompt addon (trade 角色)
+    regime_trader_addon = ""
+    try:
+        from cryptobot.evolution.regime_prompts import get_regime_addon
+        regime_name = regime.get("regime", "") if regime else ""
+        regime_trader_addon = get_regime_addon(regime_name, "TRADER")
+    except Exception as e:
+        logger.warning("Regime addon 加载失败: %s", e)
+
     # 置信度校准上下文
     confidence_ctx = ""
     try:
@@ -78,6 +87,18 @@ def trade(state: WorkflowState) -> dict:
         current_price = (data.get("tech") or {}).get("latest_close", 0)
         max_leverage = pair_cfg.get("leverage_range", [1, 3])[1]
 
+        # 构建增强 system prompt: 基础 + prompt version addon + regime addon
+        trader_system = TRADER
+        try:
+            from cryptobot.evolution.prompt_manager import get_prompt_addon
+            version_addon = get_prompt_addon("TRADER")
+            if version_addon:
+                trader_system += "\n" + version_addon
+        except Exception:
+            pass
+        if regime_trader_addon:
+            trader_system += regime_trader_addon
+
         all_tasks.append({
             "prompt": (
                 f"## {symbol} 交易决策\n\n"
@@ -95,12 +116,34 @@ def trade(state: WorkflowState) -> dict:
             ),
             "model": "sonnet",
             "role": "trader",
-            "system_prompt": TRADER,
+            "system_prompt": trader_system,
             "json_schema": TRADE_SCHEMA,
         })
         task_meta.append((symbol, current_price))
 
-    results = call_claude_parallel(all_tasks)
+    # 检查竞赛模式
+    competition_cfg = None
+    try:
+        from cryptobot.evolution.model_competition import (
+            get_competition_config, run_competition, select_winner,
+        )
+        competition_cfg = get_competition_config()
+    except Exception as e:
+        logger.warning("竞赛模式加载失败: %s", e)
+
+    if competition_cfg:
+        # 竞赛模式: 多模型并行
+        logger.info("竞赛模式启用: %d 模型", len(competition_cfg["models"]))
+        multi_results = run_competition(all_tasks, competition_cfg["models"])
+        results = []
+        for i, mr in enumerate(multi_results):
+            winner = select_winner(mr, competition_cfg["strategy"], task_meta[i][0])
+            result = winner["result"]
+            if isinstance(result, dict):
+                result["model_id"] = winner["model_id"]
+            results.append(result)
+    else:
+        results = call_claude_parallel(all_tasks)
 
     decisions = []
     for i, result in enumerate(results):

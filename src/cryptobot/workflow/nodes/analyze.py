@@ -31,6 +31,16 @@ def analyze(state: WorkflowState) -> dict:
     stablecoin_flows = state.get("stablecoin_flows", {})
     errors = list(state.get("errors", []))
 
+    # Regime hint for analysts
+    regime_analyst_addon = ""
+    try:
+        from cryptobot.evolution.regime_prompts import get_regime_addon
+        regime = state.get("market_regime", {})
+        regime_name = regime.get("regime", "") if regime else ""
+        regime_analyst_addon = get_regime_addon(regime_name, "ANALYST")
+    except Exception:
+        pass
+
     # 打平所有任务: [(symbol, analyst_type, task_dict), ...]
     all_tasks = []
     task_index = []  # 记录每个任务对应的 (symbol, analyst_type)
@@ -95,33 +105,39 @@ def analyze(state: WorkflowState) -> dict:
             "defi_tvl": defi_tvl,
         }
 
+        # 为每个分析师追加 regime hint
+        tech_sys = TECHNICAL_ANALYST + regime_analyst_addon
+        onchain_sys = ONCHAIN_ANALYST + regime_analyst_addon
+        sentiment_sys = SENTIMENT_ANALYST + regime_analyst_addon
+        fundamental_sys = FUNDAMENTAL_ANALYST + regime_analyst_addon
+
         tasks_for_symbol = [
             ("technical", {
                 "prompt": f"分析 {symbol} 的技术指标数据:\n{json.dumps(tech_data, ensure_ascii=False, indent=2)}",
                 "model": "haiku",
                 "role": "technical",
-                "system_prompt": TECHNICAL_ANALYST,
+                "system_prompt": tech_sys,
                 "json_schema": ANALYST_SCHEMA,
             }),
             ("onchain", {
                 "prompt": f"分析 {symbol} 的链上与衍生品数据:\n{json.dumps(onchain_data, ensure_ascii=False, indent=2)}",
                 "model": "haiku",
                 "role": "onchain",
-                "system_prompt": ONCHAIN_ANALYST,
+                "system_prompt": onchain_sys,
                 "json_schema": ANALYST_SCHEMA,
             }),
             ("sentiment", {
                 "prompt": f"分析 {symbol} 的市场情绪:\n{json.dumps(sentiment_data, ensure_ascii=False, indent=2)}",
                 "model": "haiku",
                 "role": "sentiment",
-                "system_prompt": SENTIMENT_ANALYST,
+                "system_prompt": sentiment_sys,
                 "json_schema": ANALYST_SCHEMA,
             }),
             ("fundamental", {
                 "prompt": f"分析 {symbol} 的基本面数据:\n{json.dumps(fundamental_data, ensure_ascii=False, indent=2)}",
                 "model": "haiku",
                 "role": "fundamental",
-                "system_prompt": FUNDAMENTAL_ANALYST,
+                "system_prompt": fundamental_sys,
                 "json_schema": ANALYST_SCHEMA,
             }),
         ]

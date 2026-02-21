@@ -80,6 +80,50 @@ def get_journal_stats():
     return calc_performance(30)
 
 
+@router.get("/klines/{symbol}")
+def get_klines(symbol: str, interval: str = "4h", limit: int = 100):
+    """K 线数据 (lightweight-charts 格式)"""
+    from cryptobot.indicators.calculator import load_klines
+
+    try:
+        df = load_klines(symbol, interval)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    # 取最近 limit 根 K 线
+    df = df.tail(limit)
+
+    klines = []
+    for idx, row in df.iterrows():
+        ts = int(idx.timestamp()) if hasattr(idx, "timestamp") else 0
+        klines.append({
+            "time": ts,
+            "open": float(row.get("open", 0)),
+            "high": float(row.get("high", 0)),
+            "low": float(row.get("low", 0)),
+            "close": float(row.get("close", 0)),
+            "volume": float(row.get("volume", 0)),
+        })
+
+    return {"symbol": symbol, "interval": interval, "klines": klines}
+
+
+@router.get("/journal/recent")
+def get_journal_recent(limit: int = 20):
+    """最近交易记录"""
+    from cryptobot.journal.storage import get_all_records
+
+    records = get_all_records()
+    # 按时间倒序
+    records.sort(key=lambda r: r.timestamp, reverse=True)
+    records = records[:limit]
+
+    return {
+        "records": [r.to_dict() for r in records],
+        "total": len(records),
+    }
+
+
 @router.patch("/signals/{symbol}")
 def update_signal(symbol: str, updates: dict):
     """更新信号字段"""

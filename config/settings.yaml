@@ -149,6 +149,16 @@ llm:
     #   bear_researcher: "deepseek-chat"
     #   trader: "deepseek-reasoner"
     #   risk_manager: "deepseek-reasoner"
+  # 多模型竞赛 (交易决策阶段并行调用多模型)
+  competition:
+    enabled: false          # 默认关闭
+    models:                 # 竞赛模型列表
+      - id: "deepseek-chat"
+        label: "DeepSeek Chat"
+      - id: "deepseek-reasoner"
+        label: "DeepSeek Reasoner"
+    strategy: "consensus"   # consensus (多数同意) / best_performer (按历史胜率)
+    min_records: 20         # 切换到 best_performer 的最少记录数
   # 常见配置示例:
   # DeepSeek Reasoner:
   #   base_url: "https://api.deepseek.com/v1"

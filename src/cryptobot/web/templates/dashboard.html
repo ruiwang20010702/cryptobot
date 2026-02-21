@@ -10,12 +10,44 @@
     <p id="loading">Loading...</p>
 </div>
 
+<!-- K 线图区域 -->
+<div class="card" style="margin-top:16px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+        <h2 style="margin:0">K-Line Chart</h2>
+        <select id="kline-symbol" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;
+                border-radius:4px;padding:4px 8px;font-size:13px">
+            <option value="">-- select --</option>
+        </select>
+        <select id="kline-interval" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;
+                border-radius:4px;padding:4px 8px;font-size:13px">
+            <option value="1h">1h</option>
+            <option value="4h" selected>4h</option>
+            <option value="1d">1d</option>
+        </select>
+    </div>
+    <div id="kline-chart" style="height:400px;width:100%"></div>
+</div>
+
+<!-- 交易历史 -->
+<div class="card" style="margin-top:16px">
+    <h2>Recent Trades</h2>
+    <div id="trade-history">
+        <p style="color:#8b949e">Loading...</p>
+    </div>
+</div>
+
 <script>
+let _chart = null;
+let _candleSeries = null;
+let _volumeSeries = null;
+
+// ─── Dashboard 数据渲染 ─────────────────────────────────
 document.body.addEventListener('htmx:afterRequest', function(evt) {
     if (evt.detail.target.id === 'dashboard-data' && evt.detail.successful) {
         try {
             const data = JSON.parse(evt.detail.xhr.responseText);
             renderDashboard(data);
+            populateSymbolSelector(data);
         } catch(e) {
             document.getElementById('dashboard-data').innerHTML =
                 '<p class="red">Failed to load data</p>';
@@ -108,5 +140,187 @@ function renderDashboard(d) {
     html += '</div>';
     document.getElementById('dashboard-data').innerHTML = html;
 }
+
+// ─── 币种选择器 ─────────────────────────────────────────
+function populateSymbolSelector(d) {
+    const sel = document.getElementById('kline-symbol');
+    const symbols = new Set();
+
+    // 从持仓/信号/pending 提取币种
+    for (const p of (d.positions || [])) {
+        const sym = (p.pair || '').replace('/', '').replace(':USDT', '');
+        if (sym) symbols.add(sym);
+    }
+    for (const s of (d.signals || [])) {
+        if (s.symbol) symbols.add(s.symbol);
+    }
+    for (const s of (d.pending_signals || [])) {
+        if (s.symbol) symbols.add(s.symbol);
+    }
+
+    // 保留之前的选择
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">-- select --</option>';
+    for (const sym of [...symbols].sort()) {
+        const opt = document.createElement('option');
+        opt.value = sym;
+        opt.textContent = sym;
+        sel.appendChild(opt);
+    }
+
+    // 恢复或自动选第一个
+    if (prev && symbols.has(prev)) {
+        sel.value = prev;
+    } else if (symbols.size > 0 && !sel.value) {
+        sel.value = [...symbols].sort()[0];
+        loadKlineChart();
+    }
+}
+
+// ─── K 线图 ─────────────────────────────────────────────
+function loadKlineChart() {
+    const symbol = document.getElementById('kline-symbol').value;
+    const interval = document.getElementById('kline-interval').value;
+    if (!symbol) return;
+
+    fetch(`/api/klines/${symbol}?interval=${interval}&limit=200`)
+        .then(r => r.json())
+        .then(data => renderKlineChart(data, symbol))
+        .catch(() => {
+            document.getElementById('kline-chart').innerHTML =
+                '<p style="color:#8b949e">Failed to load K-line data</p>';
+        });
+}
+
+function renderKlineChart(data, symbol) {
+    const container = document.getElementById('kline-chart');
+    const klines = data.klines || [];
+    if (klines.length === 0) {
+        container.innerHTML = '<p style="color:#8b949e">No data available</p>';
+        return;
+    }
+
+    // 清理旧图
+    if (_chart) { _chart.remove(); _chart = null; }
+
+    _chart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 400,
+        layout: { background: { color: '#161b22' }, textColor: '#c9d1d9' },
+        grid: {
+            vertLines: { color: '#21262d' },
+            horzLines: { color: '#21262d' },
+        },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        timeScale: { timeVisible: true, borderColor: '#30363d' },
+        rightPriceScale: { borderColor: '#30363d' },
+    });
+
+    _candleSeries = _chart.addCandlestickSeries({
+        upColor: '#3fb950', downColor: '#f85149',
+        borderUpColor: '#3fb950', borderDownColor: '#f85149',
+        wickUpColor: '#3fb950', wickDownColor: '#f85149',
+    });
+    _candleSeries.setData(klines);
+
+    _volumeSeries = _chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'volume',
+    });
+    _chart.priceScale('volume').applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+    });
+    _volumeSeries.setData(klines.map(k => ({
+        time: k.time,
+        value: k.volume,
+        color: k.close >= k.open ? '#3fb95044' : '#f8514944',
+    })));
+
+    // 添加信号标记 (entry/stop_loss)
+    addSignalMarkers(symbol);
+
+    _chart.timeScale().fitContent();
+
+    // 响应式
+    new ResizeObserver(() => {
+        _chart.applyOptions({ width: container.clientWidth });
+    }).observe(container);
+}
+
+function addSignalMarkers(symbol) {
+    if (!_candleSeries) return;
+    fetch('/api/signals')
+        .then(r => r.json())
+        .then(data => {
+            const markers = [];
+            const allSignals = [...(data.signals || []), ...(data.pending || [])];
+            for (const s of allSignals) {
+                if (s.symbol !== symbol) continue;
+                const entryLow = (s.entry_price_range || [])[0];
+                if (entryLow && s.stop_loss) {
+                    // 在最近的 K 线标注
+                    const lastTime = _candleSeries.data?.()?.at(-1)?.time;
+                    if (lastTime) {
+                        markers.push({
+                            time: lastTime,
+                            position: s.action === 'long' ? 'belowBar' : 'aboveBar',
+                            color: s.action === 'long' ? '#3fb950' : '#f85149',
+                            shape: s.action === 'long' ? 'arrowUp' : 'arrowDown',
+                            text: `${s.action.toUpperCase()} ${s.confidence}%`,
+                        });
+                    }
+                }
+            }
+            if (markers.length > 0) _candleSeries.setMarkers(markers);
+        })
+        .catch(() => {});
+}
+
+document.getElementById('kline-symbol').addEventListener('change', loadKlineChart);
+document.getElementById('kline-interval').addEventListener('change', loadKlineChart);
+
+// ─── 交易历史 ───────────────────────────────────────────
+function loadTradeHistory() {
+    fetch('/api/journal/recent?limit=20')
+        .then(r => r.json())
+        .then(data => renderTradeHistory(data.records || []))
+        .catch(() => {
+            document.getElementById('trade-history').innerHTML =
+                '<p style="color:#8b949e">Failed to load trades</p>';
+        });
+}
+
+function renderTradeHistory(records) {
+    const el = document.getElementById('trade-history');
+    if (records.length === 0) {
+        el.innerHTML = '<p style="color:#8b949e">No trade records</p>';
+        return;
+    }
+
+    let html = `<table>
+        <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Conf</th><th>PnL</th><th>Status</th></tr>`;
+
+    for (const r of records) {
+        const time = (r.timestamp || '').slice(0, 16).replace('T', ' ');
+        const pnl = r.actual_pnl_pct;
+        const pnlStr = pnl != null ? (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%' : '—';
+        const cls = pnl != null ? (pnl >= 0 ? 'green' : 'red') : '';
+        const status = r.status || '—';
+
+        html += `<tr>
+            <td>${time}</td>
+            <td>${r.symbol || ''}</td>
+            <td>${(r.action || '').toUpperCase()}</td>
+            <td>${r.confidence || 0}%</td>
+            <td class="${cls}">${pnlStr}</td>
+            <td>${status}</td>
+        </tr>`;
+    }
+    html += '</table>';
+    el.innerHTML = html;
+}
+
+// 初始化加载交易历史
+loadTradeHistory();
 </script>
 {% endblock %}

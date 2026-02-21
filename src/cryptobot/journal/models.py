@@ -39,6 +39,7 @@ class SignalRecord:
     # AI 分析元数据
     analyst_votes: dict | None = None    # {"technical": "bullish", "onchain": "bearish", ...}
     prompt_version: str | None = None    # "v1.0"
+    model_id: str | None = None          # 竞赛模式下的模型 ID
 
     # 状态
     status: str = "pending"  # pending / active / closed / expired

@@ -268,6 +268,24 @@ def job_daily_report() -> None:
         logger.error("[调度] 日报推送失败: %s", e, exc_info=True)
 
 
+def job_prompt_optimization() -> None:
+    """定时: 自动 Prompt 优化检查"""
+    from cryptobot.evolution.prompt_optimizer import run_optimization_cycle
+
+    try:
+        result = run_optimization_cycle()
+        if result["triggered"]:
+            logger.info("[调度] Prompt 优化触发: %s", result["reason"])
+            from cryptobot.notify import send_message
+            send_message(
+                f"Prompt 自动优化: {result['new_version']}\n{result['reason']}"
+            )
+        else:
+            logger.debug("[调度] Prompt 优化检查: %s", result["reason"])
+    except Exception as e:
+        logger.error("[调度] Prompt 优化失败: %s", e, exc_info=True)
+
+
 def job_journal_sync() -> None:
     """定时: 同步 Freqtrade 平仓数据到交易日志"""
     from cryptobot.journal.storage import get_records_by_status, update_record
@@ -397,6 +415,16 @@ def start(run_now: bool, verbose: bool):
         hour=0, minute=5,
         id="daily_report",
         name="每日绩效日报",
+        max_instances=1,
+    )
+
+    # 每日 Prompt 自动优化: UTC 8:00
+    scheduler.add_job(
+        job_prompt_optimization,
+        "cron",
+        hour=8, minute=0,
+        id="prompt_optimization",
+        name="Prompt 自动优化 (每日8:00)",
         max_instances=1,
     )
 

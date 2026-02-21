@@ -30,10 +30,10 @@ def execute(state: WorkflowState) -> dict:
     from cryptobot.notify import notify_new_signal, notify_workflow_error
     from cryptobot.journal.models import SignalRecord
     from cryptobot.journal.storage import save_record
-    from cryptobot.workflow.prompts import PROMPT_VERSION
+    from cryptobot.workflow.prompts import get_prompt_version
 
     for signal in approved:
-        signal["prompt_version"] = PROMPT_VERSION
+        signal["prompt_version"] = get_prompt_version()
         try:
             result = writer(signal)
             executed.append(result)
@@ -41,7 +41,23 @@ def execute(state: WorkflowState) -> dict:
             notify_new_signal(result)
             # 记录到交易日志
             try:
-                save_record(SignalRecord.from_signal(result))
+                record = SignalRecord.from_signal(result)
+                # 竞赛模式: 记录 model_id
+                if signal.get("model_id"):
+                    record.model_id = signal["model_id"]
+                save_record(record)
+                # 竞赛结果记录
+                if signal.get("model_id"):
+                    try:
+                        from cryptobot.evolution.model_competition import (
+                            record_competition_result,
+                        )
+                        record_competition_result(
+                            record.symbol, signal["model_id"],
+                            record.action, record.signal_id,
+                        )
+                    except Exception:
+                        pass
             except Exception as je:
                 logger.warning("交易日志记录失败: %s", je)
         except Exception as e:

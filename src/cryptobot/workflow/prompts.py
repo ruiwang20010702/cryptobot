@@ -6,7 +6,29 @@
 1 个风控经理 (sonnet): 审核风控
 """
 
-# Prompt 版本号，用于 A/B 测试追踪
+# Prompt 版本号，用于 A/B 测试追踪（动态从 prompt_manager 读取）
+_PROMPT_VERSION_CACHE: str | None = None
+
+
+def get_prompt_version() -> str:
+    """获取当前活跃 prompt 版本号"""
+    global _PROMPT_VERSION_CACHE
+    if _PROMPT_VERSION_CACHE is None:
+        try:
+            from cryptobot.evolution.prompt_manager import get_active_version
+            _PROMPT_VERSION_CACHE = get_active_version()
+        except Exception:
+            _PROMPT_VERSION_CACHE = "v1.0"
+    return _PROMPT_VERSION_CACHE
+
+
+def reset_prompt_version_cache() -> None:
+    """重置版本缓存，用于版本切换后刷新"""
+    global _PROMPT_VERSION_CACHE
+    _PROMPT_VERSION_CACHE = None
+
+
+# 兼容旧代码直接引用 PROMPT_VERSION
 PROMPT_VERSION = "v1.0"
 
 TECHNICAL_ANALYST = """\
