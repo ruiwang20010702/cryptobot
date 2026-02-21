@@ -65,7 +65,7 @@ def _maybe_reschedule(scheduler, new: dict, old: dict) -> None:
     old_sched = old.get("schedule", {})
 
     mapping = {
-        "full_cycle_hours": ("workflow_run", "hours"),
+        "full_cycle_minutes": ("workflow_run", "minutes"),
         "monitor_interval_minutes": ("check_alerts", "minutes"),
         "re_review_hours": ("re_review", "hours"),
         "cleanup_hours": ("cleanup", "hours"),
@@ -346,7 +346,10 @@ def start(run_now: bool, verbose: bool):
 
     settings = load_settings()
     schedule_cfg = settings.get("schedule", {})
-    full_cycle_hours = schedule_cfg.get("full_cycle_hours", 2)
+    # 支持 full_cycle_minutes (优先) 或 full_cycle_hours (向后兼容)
+    full_cycle_min = schedule_cfg.get("full_cycle_minutes")
+    if full_cycle_min is None:
+        full_cycle_min = schedule_cfg.get("full_cycle_hours", 2) * 60
     monitor_interval_min = schedule_cfg.get("monitor_interval_minutes", 5)
     re_review_hours = schedule_cfg.get("re_review_hours", 4)
     cleanup_hours = schedule_cfg.get("cleanup_hours", 24)
@@ -360,9 +363,9 @@ def start(run_now: bool, verbose: bool):
     scheduler.add_job(
         job_workflow_run,
         "interval",
-        hours=full_cycle_hours,
+        minutes=full_cycle_min,
         id="workflow_run",
-        name=f"完整分析 (每{full_cycle_hours}h)",
+        name=f"完整分析 (每{full_cycle_min}min)",
         max_instances=1,
         misfire_grace_time=300,
     )
@@ -450,7 +453,7 @@ def start(run_now: bool, verbose: bool):
         pass
 
     console.print("[cyan]调度器启动[/cyan]")
-    console.print(f"  完整分析: 每 {full_cycle_hours}h")
+    console.print(f"  完整分析: 每 {full_cycle_min}min")
     console.print(f"  告警检查: 每 {monitor_interval_min}min")
     console.print(f"  持仓复审: 每 {re_review_hours}h")
     console.print(f"  信号清理: 每 {cleanup_hours}h")

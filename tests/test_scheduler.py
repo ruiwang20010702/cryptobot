@@ -134,17 +134,17 @@ class TestConfigReload:
         import cryptobot.cli.scheduler as sched_mod
 
         config_file = tmp_path / "settings.yaml"
-        config_file.write_text("schedule:\n  full_cycle_hours: 4\n")
+        config_file.write_text("schedule:\n  full_cycle_minutes: 15\n")
 
         monkeypatch.setattr(sched_mod, "_CONFIG_PATH", str(config_file))
         monkeypatch.setattr(sched_mod, "_last_mtime", 0.0)  # 强制触发
-        monkeypatch.setattr(sched_mod, "_last_config", {"schedule": {"full_cycle_hours": 2}})
+        monkeypatch.setattr(sched_mod, "_last_config", {"schedule": {"full_cycle_minutes": 30}})
 
         mock_sched = MagicMock()
         _maybe_reload_config(mock_sched)
 
         mock_sched.reschedule_job.assert_called_once_with(
-            "workflow_run", trigger="interval", hours=4,
+            "workflow_run", trigger="interval", minutes=15,
         )
 
     def test_file_not_exist_no_error(self, tmp_path, monkeypatch):
@@ -161,8 +161,8 @@ class TestConfigReload:
     def test_reschedule_multiple_keys(self):
         """多个配置项同时变更"""
         mock_sched = MagicMock()
-        old = {"schedule": {"full_cycle_hours": 2, "monitor_interval_minutes": 5}}
-        new = {"schedule": {"full_cycle_hours": 3, "monitor_interval_minutes": 10}}
+        old = {"schedule": {"full_cycle_minutes": 30, "monitor_interval_minutes": 5}}
+        new = {"schedule": {"full_cycle_minutes": 15, "monitor_interval_minutes": 10}}
 
         _maybe_reschedule(mock_sched, new, old)
 

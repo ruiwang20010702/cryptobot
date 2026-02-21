@@ -75,7 +75,7 @@ risk:
 
 # 分析调度
 schedule:
-  full_cycle_hours: 2               # 完整分析周期间隔
+  full_cycle_minutes: 30             # 完整分析周期间隔 (分钟)
   monitor_interval_minutes: 5       # 监控检查间隔
   re_review_hours: 4                # 持仓复审间隔
   cleanup_hours: 24                 # 过期信号清理间隔
