@@ -500,6 +500,12 @@ class TestScreenQualityFilter:
 
 # ─── 市场状态检测 ────────────────────────────────────────────────────────
 
+def _passthrough_smoother(regime, confirm_cycles=2, *, is_volatile_upgrade=False, is_simulation=False):
+    """测试用: smoother 直接透传, 不做平滑"""
+    return regime, False
+
+
+@patch("cryptobot.regime_smoother.smooth_regime_transition", side_effect=_passthrough_smoother)
 class TestDetectMarketRegime:
     """测试 _detect_market_regime (多 TF regime 检测 + 恐惧贪婪升级)"""
 
@@ -518,7 +524,7 @@ class TestDetectMarketRegime:
         }
 
     @patch("cryptobot.indicators.regime.detect_regime")
-    def test_trending(self, mock_detect):
+    def test_trending(self, mock_detect, _mock_smoother):
         """多 TF 一致看多 + 强 ADX → trending"""
         mock_detect.return_value = self._mock_regime("trending", "bullish", "strong")
         result = _detect_market_regime({}, {"current_value": 55})
@@ -526,7 +532,7 @@ class TestDetectMarketRegime:
         assert result["params"]["max_leverage"] == 5
 
     @patch("cryptobot.indicators.regime.detect_regime")
-    def test_ranging(self, mock_detect):
+    def test_ranging(self, mock_detect, _mock_smoother):
         """detect_regime 返回 ranging → ranging"""
         mock_detect.return_value = self._mock_regime("ranging", "neutral", "weak")
         result = _detect_market_regime({}, {"current_value": 50})
@@ -534,7 +540,7 @@ class TestDetectMarketRegime:
         assert result["params"]["max_leverage"] == 3
 
     @patch("cryptobot.indicators.regime.detect_regime")
-    def test_volatile_from_fear_greed(self, mock_detect):
+    def test_volatile_from_fear_greed(self, mock_detect, _mock_smoother):
         """恐惧贪婪极端值 → 升级为 volatile"""
         mock_detect.return_value = self._mock_regime("trending", "bullish", "strong")
         result = _detect_market_regime({}, {"current_value": 15})
@@ -542,7 +548,7 @@ class TestDetectMarketRegime:
         assert result["params"]["max_leverage"] == 2
 
     @patch("cryptobot.indicators.regime.detect_regime")
-    def test_detect_regime_failure_fallback(self, mock_detect):
+    def test_detect_regime_failure_fallback(self, mock_detect, _mock_smoother):
         """detect_regime 异常时回退为 ranging"""
         mock_detect.side_effect = Exception("load_klines failed")
         result = _detect_market_regime({}, {"current_value": 50})

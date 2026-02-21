@@ -11,6 +11,7 @@ class WorkflowState(TypedDict, total=False):
     stablecoin_flows: dict   # collect_data: 稳定币流入流出 (全局)
     market_regime: dict      # collect_data: {regime, confidence, params, description}
     macro_events: dict       # collect_data: 宏观经济日历事件
+    dxy_data: dict           # collect_data: DXY 美元指数趋势
     screened_symbols: list   # screen: 筛选出的 3-5 个币种
     analyses: dict           # analyze: {symbol: {tech, onchain, sentiment, fundamental}}
     research: dict           # research: {symbol: {bull, bear}}

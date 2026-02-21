@@ -62,29 +62,37 @@ def analyze(state: WorkflowState) -> dict:
         }
         options_sentiment = data.get("options_sentiment", {})
 
-        # 链上分析师: crypto + liquidation + coinglass_liq + exchange_reserve + options
+        whale_activity = data.get("whale_activity", {})
+
+        # 链上分析师: crypto + liquidation + coinglass_liq + exchange_reserve + options + whale
         onchain_data = {
             "derivatives": crypto,
             "liquidation": liquidation,
             "coinglass_liquidation": coinglass_liq,
             "exchange_reserve": exchange_reserve,
             "options_sentiment": options_sentiment,
+            "whale_activity": whale_activity,
         }
-        # 情绪分析师: fear_greed + market_overview + global_news + stablecoin_flows + macro_events
+        # 情绪分析师: fear_greed + market_overview + global_news + stablecoin_flows + macro_events + dxy
         macro_events = state.get("macro_events", {})
+        dxy_data = state.get("dxy_data", {})
         sentiment_data = {
             "fear_greed": fear_greed,
             "market_overview": market_overview,
             "global_news": global_news,
             "stablecoin_flows": stablecoin_flows,
             "macro_events": macro_events,
+            "dxy": dxy_data,
         }
-        # 基本面分析师: coin_info + btc_correlation + coin_news
+        defi_tvl = data.get("defi_tvl", {})
+
+        # 基本面分析师: coin_info + btc_correlation + coin_news + dilution + defi_tvl
         fundamental_data = {
             "coin_info": coin_info,
             "btc_correlation": btc_correlation,
             "coin_news": coin_news,
             "dilution_risk": dilution_risk,
+            "defi_tvl": defi_tvl,
         }
 
         tasks_for_symbol = [

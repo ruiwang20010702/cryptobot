@@ -79,9 +79,32 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
 
     # 恐惧贪婪极端值可升级为 volatile
     fg_val = fear_greed.get("current_value", 50)
+    is_volatile_upgrade = False
     if (fg_val < 20 or fg_val > 80) and regime_result["regime"] != "volatile":
         regime_result["regime"] = "volatile"
         regime_result["description"] += " (恐惧贪婪极端值触发升级)"
+        is_volatile_upgrade = True
+
+    # 平滑 regime 切换 (防止边界反复跳动)
+    from cryptobot.regime_smoother import smooth_regime_transition
+    from cryptobot.config import load_settings
+
+    settings = load_settings()
+    confirm_cycles = settings.get("market_regime", {}).get("smoothing_cycles", 2)
+    is_simulation = bool(market_data.get("_klines_override"))
+    old_regime = regime_result["regime"]
+
+    smoothed_regime, regime_changed = smooth_regime_transition(
+        regime_result["regime"],
+        confirm_cycles=confirm_cycles,
+        is_volatile_upgrade=is_volatile_upgrade,
+        is_simulation=is_simulation,
+    )
+    regime_result["regime"] = smoothed_regime
+
+    if regime_changed:
+        from cryptobot.notify import notify_regime_change
+        notify_regime_change(old_regime, smoothed_regime, _calc_confidence(regime_result))
 
     # 附加策略参数 (复用现有 _REGIME_PARAMS)
     regime_key = regime_result["regime"]
@@ -133,6 +156,15 @@ def collect_data(state: WorkflowState) -> dict:
     regime = _detect_market_regime(market_data, fear_greed)
     _console.print(f"    市场状态: {regime['regime']} (置信度 {regime['confidence']}%)")
 
+    # DXY 美元指数 (单独获取，不扩展 fetch_market_data tuple)
+    dxy_data = {}
+    try:
+        from cryptobot.data.dxy import get_dxy_trend
+        dxy_data = get_dxy_trend()
+    except Exception as e:
+        logger.warning("DXY 数据获取失败: %s", e)
+        errors.append(f"dxy: {e}")
+
     # 宏观风险标注
     if macro_events.get("has_high_impact"):
         regime["macro_risk"] = True
@@ -149,6 +181,7 @@ def collect_data(state: WorkflowState) -> dict:
         "global_news": global_news,
         "stablecoin_flows": stablecoin_flows,
         "macro_events": macro_events,
+        "dxy_data": dxy_data,
         "market_regime": regime,
         "errors": errors,
     }

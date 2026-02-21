@@ -114,6 +114,16 @@ def notify_daily_report(text: str) -> bool:
     return send_message(text, parse_mode="Markdown")
 
 
+def notify_regime_change(old_regime: str, new_regime: str, confidence: int) -> bool:
+    """通知: 市场状态切换"""
+    text = (
+        f"🔄 *市场状态切换*\n\n"
+        f"{old_regime} → *{new_regime}*\n"
+        f"置信度: {confidence}%"
+    )
+    return send_message(text)
+
+
 def notify_workflow_error(error_count: int, errors: list[str]) -> bool:
     """通知: 工作流异常"""
     detail = "\n".join(f"• {e[:100]}" for e in errors[:5])

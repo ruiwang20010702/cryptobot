@@ -37,6 +37,10 @@ data_sources:
     base_url: "https://finnhub.io/api/v1"
     cache_ttl: 3600
     pre_event_hours: 6
+  whale_alert:
+    base_url: "https://api.whale-alert.io/v1"
+    cache_ttl: 1800
+    min_value_usd: 500000
 
 # 风控参数
 risk:
@@ -123,6 +127,7 @@ market_regime:
     min_confidence: 70        # 高波动最低置信度
     max_leverage: 2           # 高波动最大杠杆
     trailing_stop: true       # 启用尾随止损
+  smoothing_cycles: 2         # 连续 N 个周期确认才切换 regime
 
 # LLM 提供商配置
 llm:

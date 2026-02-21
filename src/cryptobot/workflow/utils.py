@@ -202,6 +202,20 @@ def _fetch_symbol(symbol: str) -> tuple[str, dict, list]:
         logger.warning("期权情绪失败 %s: %s", symbol, e)
         data["options_sentiment"] = None
         errs.append(f"options_{symbol}: {e}")
+    try:
+        from cryptobot.data.defi_tvl import get_defi_tvl
+        data["defi_tvl"] = get_defi_tvl(symbol)
+    except Exception as e:
+        logger.warning("DeFi TVL 失败 %s: %s", symbol, e)
+        data["defi_tvl"] = None
+        errs.append(f"defi_tvl_{symbol}: {e}")
+    try:
+        from cryptobot.data.whale_tracker import get_whale_activity
+        data["whale_activity"] = get_whale_activity(symbol)
+    except Exception as e:
+        logger.warning("巨鲸追踪失败 %s: %s", symbol, e)
+        data["whale_activity"] = None
+        errs.append(f"whale_{symbol}: {e}")
     return symbol, data, errs
 
 
