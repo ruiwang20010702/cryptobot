@@ -42,11 +42,21 @@ class TestLiquidationCalc:
         assert dist == 20.0
 
     def test_risk_levels(self):
-        assert assess_liquidation_risk(60)["level"] == "safe"
-        assert assess_liquidation_risk(40)["level"] == "caution"
-        assert assess_liquidation_risk(25)["level"] == "warning"
-        assert assess_liquidation_risk(15)["level"] == "danger"
-        assert assess_liquidation_risk(5)["level"] == "critical"
+        # leverage=5 为基准 (factor=1.0, 阈值不变)
+        assert assess_liquidation_risk(60, leverage=5)["level"] == "safe"
+        assert assess_liquidation_risk(40, leverage=5)["level"] == "caution"
+        assert assess_liquidation_risk(25, leverage=5)["level"] == "warning"
+        assert assess_liquidation_risk(15, leverage=5)["level"] == "danger"
+        assert assess_liquidation_risk(5, leverage=5)["level"] == "critical"
+
+    def test_risk_levels_high_leverage(self):
+        """高杠杆时阈值更严格 (10x: factor=0.5)"""
+        # 10x 杠杆: safe 阈值 = 50*0.5 = 25
+        assert assess_liquidation_risk(30, leverage=10)["level"] == "safe"
+        assert assess_liquidation_risk(20, leverage=10)["level"] == "caution"
+        assert assess_liquidation_risk(12, leverage=10)["level"] == "warning"
+        assert assess_liquidation_risk(7, leverage=10)["level"] == "danger"
+        assert assess_liquidation_risk(3, leverage=10)["level"] == "critical"
 
     def test_full_analysis_long(self):
         result = full_liquidation_analysis(

@@ -85,9 +85,21 @@ def test_dxy_cache_hit(mock_get_cache):
 @patch("cryptobot.data.dxy.get_cache", return_value=None)
 @patch("cryptobot.data.dxy.httpx.get", side_effect=Exception("network error"))
 def test_dxy_api_error(mock_get, mock_get_cache):
-    """API 错误返回空结果"""
+    """API 错误且无过期缓存时返回空结果 (data_available=False)"""
     result = get_dxy_trend()
-    assert result == _empty_result()
+    assert result == _empty_result(data_available=False)
+
+
+@patch("cryptobot.data.dxy.get_cache")
+@patch("cryptobot.data.dxy.httpx.get", side_effect=Exception("network error"))
+def test_dxy_api_error_stale_fallback(mock_get, mock_get_cache):
+    """API 错误时使用过期缓存兜底"""
+    stale_data = {"current_value": 104.0, "trend": "stable", "signal": "neutral"}
+    # 第一次调用 (正常 TTL) 返回 None, 第二次调用 (stale TTL) 返回过期缓存
+    mock_get_cache.side_effect = [None, stale_data]
+    result = get_dxy_trend()
+    assert result["current_value"] == 104.0
+    assert result["_is_stale"] is True
 
 
 @patch("cryptobot.data.dxy.get_cache", return_value=None)
@@ -100,7 +112,7 @@ def test_dxy_insufficient_data(mock_get, mock_set_cache, mock_get_cache):
     mock_get.return_value = resp
 
     result = get_dxy_trend()
-    assert result == _empty_result()
+    assert result == _empty_result(data_available=False)
 
 
 @patch("cryptobot.data.dxy.get_cache", return_value=None)
@@ -123,3 +135,7 @@ def test_empty_result_structure():
     assert result["current_value"] == 0
     assert result["trend"] == "stable"
     assert result["signal"] == "neutral"
+    assert result["_data_available"] is True
+
+    result_unavail = _empty_result(data_available=False)
+    assert result_unavail["_data_available"] is False

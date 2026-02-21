@@ -1,28 +1,48 @@
 """统一的 Freqtrade REST API 访问"""
 
 import logging
+import os
 
 import httpx
 
-from cryptobot.config import load_settings
-
 logger = logging.getLogger(__name__)
+
+# 缓存 Freqtrade 连接配置，避免每次请求重复读取 settings.yaml
+_ft_config: dict | None = None
+
+
+def _get_ft_config() -> dict:
+    """获取 Freqtrade 配置（首次调用时从 settings.yaml 加载并缓存）"""
+    global _ft_config
+    if _ft_config is None:
+        from cryptobot.config import load_settings
+        settings = load_settings()
+        ft_cfg = settings.get("freqtrade", {})
+        api_server = ft_cfg.get("api_server", {})
+        _ft_config = {
+            "host": api_server.get("host", "127.0.0.1"),
+            "port": api_server.get("port", 8080),
+            "username": ft_cfg.get("username", "freqtrader"),
+            "password": os.environ.get("FREQTRADE_PASSWORD", ft_cfg.get("password", "")),
+        }
+    return _ft_config
+
+
+def reset_ft_config_cache() -> None:
+    """重置配置缓存（热更新或测试用）"""
+    global _ft_config
+    _ft_config = None
 
 
 def ft_api_get(endpoint: str) -> dict | list | None:
     """调用 Freqtrade REST API
 
-    从 settings.yaml 读取配置，连接失败返回 None。
+    从 settings.yaml 读取配置（带缓存），连接失败返回 None。
     """
-    settings = load_settings()
-    ft_cfg = settings.get("freqtrade", {})
-    api_server = ft_cfg.get("api_server", {})
-    host = api_server.get("host", "127.0.0.1")
-    port = api_server.get("port", 8080)
-    base_url = f"http://{host}:{port}/api/v1"
-    import os
-    username = ft_cfg.get("username", "freqtrader")
-    password = os.environ.get("FREQTRADE_PASSWORD", ft_cfg.get("password", ""))
+    cfg = _get_ft_config()
+    base_url = f"http://{cfg['host']}:{cfg['port']}/api/v1"
+    username = cfg["username"]
+    password = cfg["password"]
 
     try:
         resp = httpx.get(

@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from cryptobot.data.liquidation import _calc_clusters, _empty_result, get_force_orders
 

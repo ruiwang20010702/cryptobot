@@ -11,7 +11,6 @@
 
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 from cryptobot.workflow.nodes.execute import execute
 
@@ -179,7 +178,7 @@ class TestExecuteNode:
         mock_record_cls.from_signal.return_value = mock_record
 
         with patch("cryptobot.evolution.model_competition.record_competition_result"):
-            result = execute(_base_state(approved_signals=[sig]))
+            execute(_base_state(approved_signals=[sig]))
 
         assert mock_record.model_id == "deepseek-chat"
 

@@ -13,16 +13,27 @@ logger = logging.getLogger(__name__)
 
 YAHOO_CHART_API = "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB"
 CACHE_TTL = 3600  # 1 小时
+STALE_CACHE_TTL = 7 * 24 * 3600  # 7 天过期缓存作为兜底
 
 
-def _empty_result() -> dict:
+def _empty_result(data_available: bool = True) -> dict:
     return {
         "current_value": 0,
         "change_1d_pct": 0,
         "change_7d_pct": 0,
         "trend": "stable",
         "signal": "neutral",
+        "_data_available": data_available,
     }
+
+
+def _stale_fallback(cache_key: str) -> dict:
+    """失败时尝试返回过期缓存 (7 天内)"""
+    stale = get_cache("dxy", cache_key, STALE_CACHE_TTL)
+    if stale:
+        logger.info("DXY 使用过期缓存数据")
+        return {**stale, "_is_stale": True}
+    return _empty_result(data_available=False)
 
 
 def get_dxy_trend() -> dict:
@@ -49,7 +60,7 @@ def get_dxy_trend() -> dict:
         data = resp.json()
     except Exception as e:
         logger.warning("Yahoo Finance DXY 请求失败: %s", e)
-        return _empty_result()
+        return _stale_fallback(cache_key)
 
     try:
         result_data = data["chart"]["result"][0]
@@ -58,11 +69,11 @@ def get_dxy_trend() -> dict:
         closes = [c for c in closes if c is not None]
     except (KeyError, IndexError, TypeError) as e:
         logger.warning("DXY 数据解析失败: %s", e)
-        return _empty_result()
+        return _stale_fallback(cache_key)
 
     if len(closes) < 2:
         logger.warning("DXY 数据不足 (仅 %d 个数据点)", len(closes))
-        return _empty_result()
+        return _stale_fallback(cache_key)
 
     current = closes[-1]
     prev_1d = closes[-2] if len(closes) >= 2 else current

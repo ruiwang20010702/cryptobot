@@ -2,7 +2,6 @@
 
 from unittest.mock import patch
 
-import pytest
 
 from cryptobot.indicators.crypto_specific import (
     _analyze_funding,
@@ -295,12 +294,8 @@ class TestCompositeScore:
 
     def test_clamping_upper_bound(self):
         """得分超过 10 → 限制为 10"""
-        funding = {"score": 2, "signal": "极度看空"}
         oi = {"trend": "increasing"}
-        taker = {"score": 1.5, "signal": "主动买入强势"}
-        ls = {"score": 1, "bias": "bullish", "signal": "大户偏bullish"}
-
-        # 正常 5.5，手动构造极端数据
+        # 手动构造极端数据
         extreme_funding = {"score": 10, "signal": "极端"}
         extreme_taker = {"score": 10, "signal": "极端"}
         extreme_ls = {"score": 10, "bias": "bullish", "signal": "极端"}

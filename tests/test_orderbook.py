@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from cryptobot.data.orderbook import get_orderbook_depth
 

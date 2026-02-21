@@ -27,11 +27,16 @@ def get_dashboard():
     pending = read_pending_signals(filter_expired=False)
     perf = calc_performance(30)
 
-    from cryptobot.capital_strategy import _extract_usdt_balance
+    from cryptobot.capital_strategy import _extract_usdt_balance, detect_capital_tier
     account_balance = _extract_usdt_balance(ft_api_get("/balance"))
 
+    # 余额脱敏: 返回层级 + 近似值 (精确到百位)
+    tier_info = detect_capital_tier(account_balance)
+    masked_balance = round(account_balance, -2) if account_balance >= 100 else round(account_balance)
+
     return {
-        "account_balance": account_balance,
+        "account_balance": masked_balance,
+        "balance_tier": tier_info.get("tier", "unknown"),
         "positions": positions,
         "signals": signals,
         "pending_signals": pending,

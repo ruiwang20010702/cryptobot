@@ -201,9 +201,9 @@ def _backfill_symbol(
 
 
 def _make_signal_id(symbol: str, timestamp: str) -> str:
-    """幂等 signal_id: md5(symbol + timestamp)[:12]"""
+    """幂等 signal_id: sha256(symbol + timestamp)[:12]"""
     raw = f"{symbol}:{timestamp}"
-    return hashlib.md5(raw.encode()).hexdigest()[:12]
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
 def _calc_sl(entry: float, atr: float, action: str) -> float:

@@ -4,7 +4,6 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from cryptobot.indicators.market_structure import calc_btc_correlation
 

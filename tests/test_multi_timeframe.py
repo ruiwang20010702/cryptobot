@@ -55,8 +55,8 @@ class TestTfSummary:
     def test_bullish_alignment(self):
         """上涨趋势 → bullish 排列 + bullish 方向"""
         df = _make_df(150, trend="up")
-        c, h, l = _arrays(df)
-        result = _tf_summary(c, h, l)
+        c, h, lo = _arrays(df)
+        result = _tf_summary(c, h, lo)
 
         assert result["ema_alignment"] == "bullish"
         assert result["direction"] == "bullish"
@@ -65,8 +65,8 @@ class TestTfSummary:
     def test_bearish_alignment(self):
         """下跌趋势 → bearish 排列 + bearish 方向"""
         df = _make_df(150, trend="down")
-        c, h, l = _arrays(df)
-        result = _tf_summary(c, h, l)
+        c, h, lo = _arrays(df)
+        result = _tf_summary(c, h, lo)
 
         assert result["ema_alignment"] == "bearish"
         assert result["direction"] == "bearish"
@@ -75,8 +75,8 @@ class TestTfSummary:
     def test_mixed_alignment(self):
         """震荡趋势 → mixed 排列"""
         df = _make_df(150, trend="sideways")
-        c, h, l = _arrays(df)
-        result = _tf_summary(c, h, l)
+        c, h, lo = _arrays(df)
+        result = _tf_summary(c, h, lo)
 
         assert result["ema_alignment"] in ("mixed", "bullish", "bearish")
         # 震荡时方向通常是 neutral（可能不一定，但 alignment 不稳定）
@@ -85,8 +85,8 @@ class TestTfSummary:
     def test_return_keys(self):
         """返回包含所有必要 key"""
         df = _make_df(150, trend="up")
-        c, h, l = _arrays(df)
-        result = _tf_summary(c, h, l)
+        c, h, lo = _arrays(df)
+        result = _tf_summary(c, h, lo)
 
         expected_keys = {"ema_alignment", "rsi", "macd_cross", "adx", "direction", "trend_strength"}
         assert set(result.keys()) == expected_keys
@@ -94,8 +94,8 @@ class TestTfSummary:
     def test_rsi_in_range(self):
         """RSI 在 0-100 之间"""
         df = _make_df(150, trend="up")
-        c, h, l = _arrays(df)
-        result = _tf_summary(c, h, l)
+        c, h, lo = _arrays(df)
+        result = _tf_summary(c, h, lo)
 
         assert result["rsi"] is not None
         assert 0 <= result["rsi"] <= 100
@@ -103,8 +103,8 @@ class TestTfSummary:
     def test_adx_in_range(self):
         """ADX 在 0-100 之间"""
         df = _make_df(150, trend="up")
-        c, h, l = _arrays(df)
-        result = _tf_summary(c, h, l)
+        c, h, lo = _arrays(df)
+        result = _tf_summary(c, h, lo)
 
         assert result["adx"] is not None
         assert 0 <= result["adx"] <= 100
@@ -112,22 +112,21 @@ class TestTfSummary:
     def test_trend_strength_capped_at_100(self):
         """趋势强度上限为 100"""
         df = _make_df(200, trend="up")
-        c, h, l = _arrays(df)
-        result = _tf_summary(c, h, l)
+        c, h, lo = _arrays(df)
+        result = _tf_summary(c, h, lo)
 
         assert result["trend_strength"] <= 100
 
     def test_macd_cross_values(self):
         """MACD 交叉只能是三个值之一"""
         df = _make_df(150, trend="up")
-        c, h, l = _arrays(df)
-        result = _tf_summary(c, h, l)
+        c, h, lo = _arrays(df)
+        result = _tf_summary(c, h, lo)
 
         assert result["macd_cross"] in ("golden_cross", "death_cross", "none")
 
     def test_golden_cross_detection(self):
         """构造 MACD 金叉场景: 先下后急上"""
-        n = 150
         # 先 100 根下跌，再 50 根快速上涨
         part1 = np.linspace(100, 80, 100)
         part2 = np.linspace(80, 110, 50)
@@ -140,7 +139,6 @@ class TestTfSummary:
 
     def test_death_cross_detection(self):
         """构造 MACD 死叉场景: 先上后急跌"""
-        n = 150
         part1 = np.linspace(80, 110, 100)
         part2 = np.linspace(110, 85, 50)
         close = np.concatenate([part1, part2])

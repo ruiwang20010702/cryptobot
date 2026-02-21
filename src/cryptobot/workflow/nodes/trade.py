@@ -199,4 +199,4 @@ def trade(state: WorkflowState) -> dict:
 
     actions = [f"{d['symbol']}={d.get('action', '?')}" for d in decisions]
     _console.print(f"    完成: {', '.join(actions) or '无交易'}, 耗时 {time.time() - t0:.0f}s")
-    return {"decisions": decisions, "errors": errors}
+    return {"decisions": decisions, "portfolio_context": portfolio_ctx, "errors": errors}

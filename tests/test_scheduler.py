@@ -5,7 +5,6 @@
 
 from unittest.mock import patch, MagicMock
 
-import pytest
 from click.testing import CliRunner
 
 from cryptobot.cli.scheduler import (

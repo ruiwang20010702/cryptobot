@@ -190,13 +190,15 @@ def _extract_json(text: str) -> dict | list | None:
             return json.loads(m.group(1).strip())
         except json.JSONDecodeError:
             pass
-    # 2. 尝试找第一个 { ... } 块
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
+    # 2. 用 raw_decode 逐位查找第一个有效 JSON 对象
+    decoder = json.JSONDecoder()
+    idx = text.find("{")
+    while idx != -1:
         try:
-            return json.loads(m.group(0))
+            obj, _ = decoder.raw_decode(text, idx)
+            return obj
         except json.JSONDecodeError:
-            pass
+            idx = text.find("{", idx + 1)
     return None
 
 

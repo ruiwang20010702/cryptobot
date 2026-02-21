@@ -18,5 +18,6 @@ class WorkflowState(TypedDict, total=False):
     decisions: list          # trade: [{symbol, action, ...}]
     approved_signals: list   # risk_review: 通过风控的信号
     capital_tier: dict       # collect_data: {tier, balance, params}
+    portfolio_context: str   # trade: 持仓/账户上下文字符串 (缓存避免重复调用)
     executed: list           # execute: 写入 signal.json 的结果
     errors: list             # 各节点错误收集

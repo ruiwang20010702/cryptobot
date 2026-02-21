@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 # ─── _get_provider ─────────────────────────────────────────────────────
@@ -10,7 +9,6 @@ import pytest
 
 def test_get_provider_default():
     """默认 provider 为 claude"""
-    from cryptobot.workflow import llm as llm_mod
     from cryptobot.workflow.llm import _get_provider, reset_provider_cache
 
     reset_provider_cache()

@@ -15,6 +15,13 @@ from cryptobot.config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
+
+def _ensure_utc(dt: datetime) -> datetime:
+    """确保 datetime 带 UTC 时区信息"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
 _signal_lock = threading.Lock()
 
 SIGNAL_DIR = PROJECT_ROOT / "data" / "output" / "signals"
@@ -47,7 +54,7 @@ def read_signals(filter_expired: bool = True) -> list[dict]:
             now = datetime.now(timezone.utc)
             signals = [
                 s for s in signals
-                if datetime.fromisoformat(s["expires_at"]) > now
+                if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
             ]
         return signals
     except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -159,7 +166,7 @@ def cleanup_expired() -> int:
         before = len(data.get("signals", []))
         data["signals"] = [
             s for s in data.get("signals", [])
-            if datetime.fromisoformat(s["expires_at"]) > now
+            if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
         ]
         after = len(data["signals"])
         removed = before - after
@@ -249,7 +256,7 @@ def read_pending_signals(filter_expired: bool = True) -> list[dict]:
             now = datetime.now(timezone.utc)
             signals = [
                 s for s in signals
-                if datetime.fromisoformat(s["expires_at"]) > now
+                if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
             ]
         return signals
     except (json.JSONDecodeError, KeyError, ValueError) as e:

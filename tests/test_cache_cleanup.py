@@ -1,9 +1,7 @@
 """缓存清理测试"""
 
-import json
 import time
 
-import pytest
 
 from cryptobot.cache import cleanup_stale
 

@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 SIGNAL_FILE = Path("data/output/signals/signal.json")
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """确保 datetime 带 UTC 时区信息"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 class AgentSignalStrategy(IStrategy):
     """读取 Agent 团队生成的信号，由 Freqtrade 执行交易"""
 
@@ -49,9 +56,12 @@ class AgentSignalStrategy(IStrategy):
     ts_profit_2 = DecimalParameter(0.08, 0.15, default=0.10, space="sell")
     ts_profit_3 = DecimalParameter(0.15, 0.30, default=0.20, space="sell")
 
-    # 信号缓存（基于文件 mtime，避免每根 K 线重复读磁盘）
-    _signal_cache: list[dict] = []
-    _signal_mtime: float = 0.0
+    def __init__(self, config: dict | None = None) -> None:
+        if config is not None:
+            super().__init__(config)
+        # 信号缓存（基于文件 mtime，避免每根 K 线重复读磁盘）
+        self._signal_cache: list[dict] = []
+        self._signal_mtime: float = 0.0
 
     def _read_signals(self) -> list[dict]:
         """读取并过滤有效信号（带 mtime 缓存）"""
@@ -65,7 +75,7 @@ class AgentSignalStrategy(IStrategy):
             now = datetime.now(timezone.utc)
             self._signal_cache = [
                 s for s in data.get("signals", [])
-                if datetime.fromisoformat(s["expires_at"]) > now
+                if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
             ]
             self._signal_mtime = mtime
             return self._signal_cache

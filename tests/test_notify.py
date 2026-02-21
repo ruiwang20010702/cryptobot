@@ -5,7 +5,6 @@
 
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 from cryptobot.notify import (
     _get_config,

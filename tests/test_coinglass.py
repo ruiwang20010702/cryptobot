@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from cryptobot.data.coinglass import (
     _calc_nearest_liq_level,

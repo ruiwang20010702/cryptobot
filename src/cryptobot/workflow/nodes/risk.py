@@ -166,7 +166,7 @@ def risk_review(state: WorkflowState) -> dict:
         return {"approved_signals": [], "errors": errors}
 
     positions = ft_api_get("/status") or []
-    portfolio_ctx = _build_portfolio_context()
+    portfolio_ctx = state.get("portfolio_context") or _build_portfolio_context()
 
     # 获取历史绩效摘要
     perf_ctx = ""

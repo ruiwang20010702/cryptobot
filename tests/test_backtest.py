@@ -1,7 +1,7 @@
 """回测评估测试"""
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner

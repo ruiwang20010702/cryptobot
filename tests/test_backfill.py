@@ -286,7 +286,7 @@ class TestRunBackfill:
     def test_record_structure(self, mock_save, mock_get, mock_dl):
         mock_dl.return_value = _make_kline_df(300)
 
-        result = run_backfill(days=60, symbols=["BTCUSDT"])
+        run_backfill(days=60, symbols=["BTCUSDT"])
 
         if mock_save.call_count > 0:
             record = mock_save.call_args[0][0]

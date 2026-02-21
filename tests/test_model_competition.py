@@ -1,7 +1,6 @@
 """Model Competition 单元测试"""
 
-import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 

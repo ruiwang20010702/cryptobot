@@ -1,9 +1,8 @@
 """doctor 健康检查测试"""
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from cryptobot.cli.doctor import doctor, run_checks, _CHECKER_MAP

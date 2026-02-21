@@ -3,7 +3,7 @@
 覆盖: API 路由、HTML 视图、CLI 命令
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner

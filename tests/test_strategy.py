@@ -33,8 +33,8 @@ sys.modules["freqtrade"] = MagicMock()
 sys.modules["freqtrade.strategy"] = _mock_ft_strategy
 sys.modules["pandas_ta"] = MagicMock()
 
-# 现在可以安全导入
-from freqtrade_strategies.AgentSignalStrategy import AgentSignalStrategy, SIGNAL_FILE
+# 现在可以安全导入 (必须在 mock 注入之后)
+from freqtrade_strategies.AgentSignalStrategy import AgentSignalStrategy  # noqa: E402
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────

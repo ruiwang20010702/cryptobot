@@ -4,7 +4,6 @@
 """
 
 import json
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -18,8 +17,6 @@ from cryptobot.journal.storage import (
     get_records_by_symbol,
     update_record,
     find_active_record_for_symbol,
-    RECORDS_FILE,
-    JOURNAL_DIR,
 )
 from cryptobot.journal.analytics import calc_performance, build_performance_summary, calc_analyst_accuracy
 from cryptobot.cli.journal import journal

@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 from cryptobot.journal.confidence_tuner import (
-    calc_dynamic_threshold, build_threshold_context, _MIN_CLOSED,
+    calc_dynamic_threshold, build_threshold_context,
 )
 
 

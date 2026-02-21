@@ -89,8 +89,9 @@ def fetch_all_prices(symbols: list[str]) -> dict[str, float]:
     except ImportError:
         pass
 
-    # 缓存覆盖率足够则直接返回
-    if len(prices) >= len(symbols) * 0.8:
+    # 缓存覆盖率足够则直接返回 (90%: 10 币种允许缺 1 个)
+    if len(prices) >= len(symbols) * 0.9:
+        logger.info("WS 覆盖率: %d/%d", len(prices), len(symbols))
         return prices
 
     # Fallback REST

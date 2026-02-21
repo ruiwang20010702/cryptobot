@@ -1,8 +1,7 @@
 """Prompt Optimizer 单元测试"""
 
-import json
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 

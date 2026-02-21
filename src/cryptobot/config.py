@@ -32,7 +32,7 @@ def _load_dotenv() -> None:
             os.environ[key] = value
 
 
-_load_dotenv()
+_dotenv_loaded = False
 CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
 FREQTRADE_DATA_DIR = PROJECT_ROOT / "user_data" / "data" / "binance" / "futures"
@@ -44,7 +44,10 @@ _settings_mtime: float = 0.0
 
 
 def load_settings() -> dict:
-    global _settings_cache, _settings_mtime
+    global _settings_cache, _settings_mtime, _dotenv_loaded
+    if not _dotenv_loaded:
+        _load_dotenv()
+        _dotenv_loaded = True
 
     path = CONFIG_DIR / "settings.yaml"
     if not path.exists():
@@ -97,6 +100,26 @@ def get_pair_config(symbol: str) -> dict | None:
 def get_all_symbols() -> list[str]:
     pairs = load_pairs()
     return [p["symbol"] for p in pairs.get("pairs", [])]
+
+
+def get_correlation_groups() -> dict:
+    """获取相关性分组: 优先读动态文件, 否则用 pairs.yaml 静态值"""
+    import json
+    import time
+
+    dynamic_path = DATA_OUTPUT_DIR / "evolution" / "correlation.json"
+    if dynamic_path.exists():
+        try:
+            data = json.loads(dynamic_path.read_text())
+            # 7 天内有效
+            if time.time() - data.get("_updated_at", 0) < 7 * 24 * 3600:
+                return data.get("groups", {})
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    # 回退到 pairs.yaml 静态配置
+    pairs_data = load_pairs()
+    return pairs_data.get("correlation_groups", {})
 
 
 def get_coingecko_demo_key() -> str:

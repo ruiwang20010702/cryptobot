@@ -98,20 +98,24 @@ def calc_liquidation_distance(
     return round(abs(current_price - liquidation_price) / current_price * 100, 2)
 
 
-def assess_liquidation_risk(distance_pct: float) -> dict:
+def assess_liquidation_risk(distance_pct: float, leverage: int = 3) -> dict:
     """评估爆仓风险等级
+
+    高杠杆时阈值更严格: factor = min(5 / leverage, 2.0)
 
     返回:
         level: safe/caution/warning/danger/critical
         action: 建议操作
     """
-    if distance_pct > 50:
+    # 高杠杆缩放阈值 (5x 基准, 10x 杠杆阈值翻倍)
+    factor = min(5 / max(leverage, 1), 2.0)
+    if distance_pct > 50 * factor:
         return {"level": "safe", "color": "green", "action": "无需操作"}
-    elif distance_pct > 30:
+    elif distance_pct > 30 * factor:
         return {"level": "caution", "color": "yellow", "action": "记录日志，关注"}
-    elif distance_pct > 20:
+    elif distance_pct > 20 * factor:
         return {"level": "warning", "color": "orange", "action": "Telegram 告警"}
-    elif distance_pct > 10:
+    elif distance_pct > 10 * factor:
         return {"level": "danger", "color": "red", "action": "自动减仓 50%"}
     else:
         return {"level": "critical", "color": "red", "action": "自动全部平仓"}
@@ -132,7 +136,7 @@ def full_liquidation_analysis(
         maintenance_margin_rate = _get_maintenance_margin_rate(symbol, notional)
     liq_price = calc_liquidation_price(entry_price, leverage, side, maintenance_margin_rate)
     distance = calc_liquidation_distance(current_price, liq_price)
-    risk = assess_liquidation_risk(distance)
+    risk = assess_liquidation_risk(distance, leverage=leverage)
 
     # 当前盈亏
     if side == "long":

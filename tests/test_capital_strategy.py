@@ -3,9 +3,8 @@
 覆盖: 层级检测、参数合并、余额获取、Prompt addon、不可变性
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 from cryptobot.capital_strategy import (
     detect_capital_tier,

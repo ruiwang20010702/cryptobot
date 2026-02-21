@@ -159,10 +159,20 @@ def calc_support_resistance(symbol: str) -> dict:
     low = df_4h["low"].values.astype(np.float64)
     latest_close = close[-1]
 
-    # 1) 日线 Pivot Points (用最近 6 根 4h = 1 天的 H/L/C)
-    day_h = float(np.max(high[-6:]))
-    day_l = float(np.min(low[-6:]))
-    day_c = float(close[-1])
+    # 1) 日线 Pivot Points (优先用 1d K 线, 否则回退 6 根 4h)
+    try:
+        df_1d = load_klines(symbol, "1d")
+        if len(df_1d) >= 1:
+            last_day = df_1d.iloc[-1]
+            day_h = float(last_day["high"])
+            day_l = float(last_day["low"])
+            day_c = float(last_day["close"])
+        else:
+            raise ValueError("1d 数据为空")
+    except Exception:
+        day_h = float(np.max(high[-6:]))
+        day_l = float(np.min(low[-6:]))
+        day_c = float(close[-1])
     pivot = (day_h + day_l + day_c) / 3
     r1 = 2 * pivot - day_l
     s1 = 2 * pivot - day_h
@@ -179,10 +189,10 @@ def calc_support_resistance(symbol: str) -> dict:
     fib_500 = swing_high - fib_range * 0.5
     fib_618 = swing_high - fib_range * 0.618
 
-    # 3) 整数关口 (找最近的整数关口)
+    # 3) 整数关口 (找最近的整数关口, round 避免浮点误差)
     magnitude = 10 ** max(0, int(math.log10(latest_close)) - 1)
-    round_level = round(latest_close / magnitude) * magnitude
-    round_levels = [round_level - magnitude, round_level, round_level + magnitude]
+    round_level = round(round(latest_close / magnitude) * magnitude, 8)
+    round_levels = [round(round_level - magnitude, 8), round_level, round(round_level + magnitude, 8)]
 
     # 4) 综合支撑阻力
     supports = sorted([s1, s2, fib_618, fib_500, swing_low] + [r for r in round_levels if r < latest_close], reverse=True)
@@ -277,22 +287,31 @@ def calc_volume_analysis(symbol: str) -> dict:
 
 
 def _detect_obv_divergence(close: np.ndarray, obv: np.ndarray) -> str:
-    """检测 OBV 量价背离 (看最近 10 根 K 线趋势)"""
+    """检测 OBV 量价背离 (看最近 10 根 K 线趋势, 百分比变化)"""
     lookback = 10
     if len(close) < lookback or len(obv) < lookback:
         return "none"
 
-    price_trend = close[-1] - close[-lookback]
-    obv_clean = obv[-lookback:]
-    obv_clean = obv_clean[~np.isnan(obv_clean)]
-    if len(obv_clean) < 2:
+    base_price = close[-lookback]
+    if base_price == 0:
         return "none"
-    obv_trend = obv_clean[-1] - obv_clean[0]
+    price_change_pct = (close[-1] - base_price) / base_price * 100
+
+    # 最小阈值: 价格变化 > 1% 才判定有趋势
+    if abs(price_change_pct) < 1.0:
+        return "none"
+
+    obv_slice = np.nan_to_num(obv[-lookback:], nan=0.0)
+    obv_base = obv_slice[0]
+    if obv_base == 0:
+        obv_trend = obv_slice[-1]
+    else:
+        obv_trend = (obv_slice[-1] - obv_base) / abs(obv_base)
 
     # 看涨背离: 价格下跌但 OBV 上升
-    if price_trend < 0 and obv_trend > 0:
+    if price_change_pct < -1.0 and obv_trend > 0:
         return "bullish_divergence"
     # 看跌背离: 价格上涨但 OBV 下降
-    if price_trend > 0 and obv_trend < 0:
+    if price_change_pct > 1.0 and obv_trend < 0:
         return "bearish_divergence"
     return "none"

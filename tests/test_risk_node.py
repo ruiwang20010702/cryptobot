@@ -10,7 +10,6 @@
 
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 from cryptobot.workflow.nodes.risk import risk_review, _check_loss_limits
 
