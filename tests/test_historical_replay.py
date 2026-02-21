@@ -259,7 +259,7 @@ class TestParseToSignal:
             "action": "long",
             "entry_price_range": [99.0, 101.0],
             "stop_loss": 95.0,
-            "confidence": 50,
+            "confidence": 40,
             "reasoning": "Weak",
         }
         sig = _parse_to_signal(llm, self._snapshot())
