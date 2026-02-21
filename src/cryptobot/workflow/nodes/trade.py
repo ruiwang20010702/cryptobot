@@ -138,6 +138,15 @@ def trade(state: WorkflowState) -> dict:
         if capital_trader_addon:
             trader_system += capital_trader_addon
 
+        # 第5层: strategy advisor addon
+        try:
+            from cryptobot.evolution.strategy_advisor import get_strategy_addon
+            strategy_addon = get_strategy_addon("trader")
+            if strategy_addon:
+                trader_system += strategy_addon
+        except Exception:
+            pass
+
         # O13: 分析师加权一致性评分
         analyst_weight_map = {}
         try:

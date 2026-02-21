@@ -334,6 +334,20 @@ def job_urgent_review() -> None:
                 logger.error("紧急复审失败 %s: %s", symbol, e)
 
 
+def job_strategy_advisor() -> None:
+    """定时: 策略顾问每日分析"""
+    from cryptobot.evolution.strategy_advisor import run_advisor_cycle
+
+    try:
+        result = run_advisor_cycle()
+        if result["triggered"]:
+            logger.info("[调度] 策略顾问: %s", result["reason"])
+        else:
+            logger.debug("[调度] 策略顾问: %s", result["reason"])
+    except Exception as e:
+        logger.error("[调度] 策略顾问失败: %s", e, exc_info=True)
+
+
 def job_journal_sync() -> None:
     """定时: 同步 Freqtrade 平仓数据到交易日志"""
     from cryptobot.journal.storage import get_records_by_status, update_record
@@ -507,6 +521,16 @@ def start(run_now: bool, verbose: bool):
         hour=8, minute=0,
         id="prompt_optimization",
         name="Prompt 自动优化 (每日8:00)",
+        max_instances=1,
+    )
+
+    # 每日策略顾问: UTC 9:00 (在 prompt_optimization 之后 1 小时)
+    scheduler.add_job(
+        job_strategy_advisor,
+        "cron",
+        hour=9, minute=0,
+        id="strategy_advisor",
+        name="策略顾问 (每日9:00)",
         max_instances=1,
     )
 

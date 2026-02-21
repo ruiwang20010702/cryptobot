@@ -225,6 +225,14 @@ def risk_review(state: WorkflowState) -> dict:
         except Exception:
             pass
 
+    # 第5层: strategy advisor addon
+    _strategy_risk_addon = ""
+    try:
+        from cryptobot.evolution.strategy_advisor import get_strategy_addon
+        _strategy_risk_addon = get_strategy_addon("risk_manager")
+    except Exception:
+        pass
+
     # 宏观事件风险提示
     macro_events = state.get("macro_events", {})
     macro_ctx = ""
@@ -446,7 +454,7 @@ def risk_review(state: WorkflowState) -> dict:
             ),
             "model": "sonnet",
             "role": "risk_manager",
-            "system_prompt": RISK_MANAGER + capital_risk_addon,
+            "system_prompt": RISK_MANAGER + capital_risk_addon + _strategy_risk_addon,
             "json_schema": RISK_SCHEMA,
         })
         task_decisions.append(decision)
