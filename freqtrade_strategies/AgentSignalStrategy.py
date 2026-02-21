@@ -136,10 +136,10 @@ class AgentSignalStrategy(IStrategy):
             if entry_range and len(entry_range) == 2:
                 current_price = dataframe["close"].iloc[-1]
                 low, high = entry_range
-                tolerance = (high - low) * 0.5  # 50% 容差
+                tolerance = (high - low) * 0.15  # 15% 容差
                 if not (low - tolerance <= current_price <= high + tolerance):
                     logger.info(
-                        "[Agent] %s 价格 %.2f 不在范围 [%.2f, %.2f]±50%%, 跳过",
+                        "[Agent] %s 价格 %.2f 不在范围 [%.2f, %.2f]±15%%, 跳过",
                         metadata["pair"], current_price, low, high,
                     )
                     return dataframe
@@ -240,8 +240,8 @@ class AgentSignalStrategy(IStrategy):
         """
         signal = self._get_signal_for_pair(pair)
 
-        # 优先级 1: Agent 尾随止盈（盈利 > 5% 后激活）
-        if signal and signal.get("trailing_stop_pct") and current_profit > 0.05:
+        # 优先级 1: Agent 尾随止盈（盈利 > 2% 后激活）
+        if signal and signal.get("trailing_stop_pct") and current_profit > 0.02:
             trail_pct = signal["trailing_stop_pct"] / 100
             return -(current_profit - trail_pct)
 
@@ -259,6 +259,24 @@ class AgentSignalStrategy(IStrategy):
                 return self.stoploss
 
         # 优先级 3: 移动止盈（三档尾随）
+        # 若有 AI take_profit 且未全部执行完，跳过固定尾随（避免与分批止盈冲突）
+        if signal and signal.get("take_profit") and trade:
+            tp_list = signal["take_profit"]
+            filled_orders = trade.orders or []
+            all_tp_filled = all(
+                any(
+                    o.ft_order_tag == f"tp_{i}_{tp.get('price')}"
+                    and o.ft_is_open is False
+                    for o in filled_orders
+                )
+                for i, tp in enumerate(tp_list[:-1])
+            ) if len(tp_list) >= 2 else True
+            if not all_tp_filled:
+                return self.stoploss
+            # 全部 TP 完成后，保护尾随
+            if current_profit > 0.03:
+                return -(current_profit - 0.02)
+
         if current_profit > self.ts_profit_3.value:      # > 20%: 尾随 3%（收紧保护）
             return -(current_profit - 0.03)
         elif current_profit > self.ts_profit_2.value:     # > 10%: 尾随 5%
@@ -364,7 +382,7 @@ class AgentSignalStrategy(IStrategy):
                 )
                 remaining_pct = 100 - total_tp_pct_filled
                 reduce_pct = min(tp_pct, remaining_pct)
-                reduce_amount = trade.stake_amount * reduce_pct / 100
+                reduce_amount = trade.amount * current_rate / trade.leverage * reduce_pct / 100
                 logger.info(
                     "[Agent] %s 分批止盈 TP%d @ %.2f, 减仓 %.1f%% (剩余 %.1f%%)",
                     trade.pair, i + 1, tp_price, reduce_pct, remaining_pct,

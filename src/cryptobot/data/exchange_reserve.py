@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 CACHE_TTL = 3600  # 1 小时
 
 # 支持查询 OI 趋势的主流币种
-_SUPPORTED_SYMBOLS = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"}
+_SUPPORTED_SYMBOLS = {
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT",
+}
 
 
 def _empty_result(symbol: str) -> dict:

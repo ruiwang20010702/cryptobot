@@ -120,15 +120,15 @@ events:
 # 市场状态策略参数 (可覆盖 _REGIME_PARAMS 默认值)
 market_regime:
   trending:
-    min_confidence: 50        # 趋势市最低置信度
+    min_confidence: 58        # 趋势市最低置信度 (O16: 50→58)
     max_leverage: 5           # 趋势市最大杠杆
     trailing_stop: true       # 启用尾随止损
   ranging:
-    min_confidence: 58        # 震荡市最低置信度
+    min_confidence: 63        # 震荡市最低置信度 (O16: 58→63)
     max_leverage: 3           # 震荡市最大杠杆
     trailing_stop: false      # 不启用尾随
   volatile:
-    min_confidence: 63        # 高波动最低置信度
+    min_confidence: 68        # 高波动最低置信度 (O16: 63→68)
     max_leverage: 2           # 高波动最大杠杆
     trailing_stop: true       # 启用尾随止损
   smoothing_cycles: 2         # 连续 N 个周期确认才切换 regime
@@ -144,15 +144,9 @@ llm:
       sonnet: "deepseek-chat"         # 深度推理用
     max_concurrent: 10                # API 并发数
     timeout: 60                       # 单次请求超时 (秒)
-    # role_models:                    # 按角色指定模型 (可选，覆盖 models 映射)
-    #   technical: "deepseek-chat"
-    #   onchain: "deepseek-chat"
-    #   sentiment: "deepseek-chat"
-    #   fundamental: "deepseek-chat"
-    #   bull_researcher: "deepseek-chat"
-    #   bear_researcher: "deepseek-chat"
-    #   trader: "deepseek-reasoner"
-    #   risk_manager: "deepseek-reasoner"
+    role_models:                      # 按角色指定模型 (覆盖 models 映射)
+      trader: "deepseek-reasoner"
+      risk_manager: "deepseek-reasoner"
   # 多模型竞赛 (交易决策阶段并行调用多模型)
   competition:
     enabled: false          # 默认关闭

@@ -142,13 +142,16 @@ def _consensus_select(valid: list[dict]) -> dict:
         action = r["result"].get("action", "no_trade")
         actions[action] = actions.get(action, 0) + 1
 
-    # 找多数方向
     majority_action = max(actions, key=actions.get)
     majority_count = actions[majority_action]
 
     # 需要超半数同意 (> N/2)
     if majority_count <= len(valid) / 2 and majority_action != "no_trade":
-        # 无共识 → no_trade
+        # 2 模型分歧: 选置信度更高的
+        if len(valid) == 2:
+            winner = max(valid, key=lambda r: r["result"].get("confidence", 0))
+            return {"model_id": winner["model_id"], "result": winner["result"]}
+        # 3+ 模型无共识 → no_trade
         best = max(valid, key=lambda r: r["result"].get("confidence", 0))
         return {
             "model_id": best["model_id"],

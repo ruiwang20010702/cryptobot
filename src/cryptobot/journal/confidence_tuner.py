@@ -65,24 +65,40 @@ def calc_dynamic_threshold(days: int = 30) -> dict:
         midpoint = bucket_def["midpoint"]
         expected_wr = midpoint / 100  # 用中位数作为期望胜率
 
-        if actual_wr < expected_wr * 0.7:
-            # 偏乐观: 实际胜率远低于预期
+        if actual_wr < expected_wr * 0.5:
+            # 偏差>50%: 大幅调整
+            notes.append(
+                f"confidence {bucket_name}: 实际胜率 {actual_wr * 100:.0f}% "
+                f"远低于预期 {midpoint}%, 严重偏乐观"
+            )
+            if bucket_def["min"] <= 70:
+                adjustment += 15
+        elif actual_wr < expected_wr * 0.7:
+            # 偏差>30%: 中幅调整
             notes.append(
                 f"confidence {bucket_name}: 实际胜率 {actual_wr * 100:.0f}% "
                 f"远低于预期 {midpoint}%, 偏乐观"
             )
             if bucket_def["min"] <= 70:
-                adjustment += 5  # 提高阈值
+                adjustment += 10
+        elif actual_wr > expected_wr * 1.5:
+            # 偏差>50%: 大幅放宽
+            notes.append(
+                f"confidence {bucket_name}: 实际胜率 {actual_wr * 100:.0f}% "
+                f"远高于预期 {midpoint}%, 严重偏保守"
+            )
+            if bucket_def["min"] >= 70:
+                adjustment -= 15
         elif actual_wr > expected_wr * 1.2:
-            # 偏保守: 实际胜率远高于预期
+            # 偏差>20%: 中幅放宽
             notes.append(
                 f"confidence {bucket_name}: 实际胜率 {actual_wr * 100:.0f}% "
                 f"高于预期 {midpoint}%, 偏保守"
             )
             if bucket_def["min"] >= 70:
-                adjustment -= 5  # 可以放宽
+                adjustment -= 10
 
-    recommended = max(55, min(80, 60 + adjustment))
+    recommended = max(50, min(85, 60 + adjustment))
 
     return {
         "recommended_min_confidence": recommended,

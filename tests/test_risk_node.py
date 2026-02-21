@@ -211,3 +211,67 @@ class TestTieredMMR:
             position_size_usdt=50000, symbol="DOGEUSDT",
         )
         assert result["distance_pct"] > 0
+
+
+# ─── O11: RR 阈值 regime 联动 ────────────────────────────────────────────
+
+class TestRRThresholdByRegime:
+    """测试盈亏比阈值随 regime 动态调整"""
+
+    @patch("cryptobot.notify.notify_risk_rejected")
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.workflow.nodes.risk.call_claude_parallel")
+    @patch("cryptobot.freqtrade_api.ft_api_get")
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_trending_rr_threshold_lower(
+        self, mock_signals, mock_ft, mock_parallel, mock_notify, mock_reject
+    ):
+        """trending regime: RR>=1.2 通过, 同样的 RR 在 ranging 下被拒"""
+        def ft_side_effect(endpoint):
+            if endpoint == "/balance":
+                return {"currencies": [{"currency": "USDT", "balance": 10000}]}
+            if endpoint == "/status":
+                return []
+            return None
+
+        mock_ft.side_effect = ft_side_effect
+
+        # 构造 RR=1.3 的信号 (>1.2 trending, <2.0 ranging)
+        # entry_mid = 60500, sl=59500 → sl_dist=1000
+        # tp=61800 → tp_dist=1300 → RR=1.3
+        decision = {
+            "symbol": "BTCUSDT", "action": "long", "confidence": 75, "leverage": 3,
+            "entry_price_range": [60000, 61000], "stop_loss": 59500,
+            "take_profit": [{"price": 61800, "pct": 100}],
+            "position_size_pct": 10, "current_price": 60500, "reasoning": "test",
+        }
+
+        mock_parallel.return_value = [
+            {"decision": "approved", "risk_score": 3},
+        ]
+
+        # trending → RR 1.3 >= 1.2 → 通过
+        state_trending = _base_state(
+            decisions=[dict(decision)],
+            market_regime={"regime": "trending"},
+        )
+        with patch("cryptobot.journal.analytics.calc_performance", return_value={"closed": 0}):
+            with patch("cryptobot.journal.analytics.build_performance_summary", return_value=""):
+                with patch("cryptobot.journal.confidence_tuner.calc_dynamic_threshold",
+                           side_effect=Exception("skip")):
+                    result_trending = risk_review(state_trending)
+
+        assert len(result_trending["approved_signals"]) == 1
+
+        # ranging → RR 1.3 < 2.0 → 拒绝（在硬性规则阶段就被拦截，不会调用 LLM）
+        state_ranging = _base_state(
+            decisions=[dict(decision)],
+            market_regime={"regime": "ranging"},
+        )
+        with patch("cryptobot.journal.analytics.calc_performance", return_value={"closed": 0}):
+            with patch("cryptobot.journal.analytics.build_performance_summary", return_value=""):
+                with patch("cryptobot.journal.confidence_tuner.calc_dynamic_threshold",
+                           side_effect=Exception("skip")):
+                    result_ranging = risk_review(state_ranging)
+
+        assert len(result_ranging["approved_signals"]) == 0

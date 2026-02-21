@@ -200,9 +200,17 @@ def call_api(
     if json_schema:
         schema_str = json.dumps(json_schema, ensure_ascii=False, indent=2)
         sys_text += f"\n\n请严格按以下 JSON Schema 输出:\n{schema_str}"
-    if sys_text:
-        messages.append({"role": "system", "content": sys_text})
-    messages.append({"role": "user", "content": prompt})
+
+    # reasoner 模型不支持 system role，合并到 user message
+    if "reasoner" in actual_model and sys_text:
+        messages.append({
+            "role": "user",
+            "content": f"[系统指令]\n{sys_text}\n\n[用户请求]\n{prompt}",
+        })
+    else:
+        if sys_text:
+            messages.append({"role": "system", "content": sys_text})
+        messages.append({"role": "user", "content": prompt})
 
     # 构建请求体
     body: dict = {

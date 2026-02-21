@@ -58,6 +58,8 @@ def mock_trade_long():
         is_short=False,
         pair="BTC/USDT:USDT",
         stake_amount=1000,
+        amount=0.03,      # 持仓数量 (BTC)
+        leverage=3,
         orders=[],
     )
 
@@ -69,6 +71,8 @@ def mock_trade_short():
         is_short=True,
         pair="ETH/USDT:USDT",
         stake_amount=500,
+        amount=0.15,      # 持仓数量 (ETH)
+        leverage=3,
         orders=[],
     )
 
@@ -119,7 +123,7 @@ class TestCustomStoploss:
         assert result == pytest.approx(-(0.08 - 0.03))
 
     def test_agent_trailing_inactive(self, strategy, mock_trade_long):
-        """profit=3% (< 5%) → 尾随不激活，回退到固定止损"""
+        """profit=1% (< 2%) → 尾随不激活，回退到固定止损"""
         signal = _make_signal(trailing_stop_pct=3, stop_loss=92000)
         with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
             result = strategy.custom_stoploss(
@@ -268,7 +272,7 @@ class TestAdjustTradePosition:
     now = datetime.now(timezone.utc)
 
     def test_partial_tp_triggered(self, strategy, mock_trade_long):
-        """价格达到 TP1 → 返回负数减仓"""
+        """价格达到 TP1 → 返回负数减仓（基于当前仓位值）"""
         signal = _make_signal(take_profit=[
             {"price": 100000, "pct": 30},
             {"price": 110000, "pct": 70},
@@ -281,7 +285,10 @@ class TestAdjustTradePosition:
                 current_entry_rate=95000, current_exit_rate=100500,
                 current_entry_profit=0, current_exit_profit=0.05,
             )
-        assert result == pytest.approx(-300)  # 1000 * 30/100
+        # O6: amount * current_rate / leverage * reduce_pct / 100
+        # = 0.03 * 100500 / 3 * 30 / 100 = 301.5
+        expected = mock_trade_long.amount * 100500 / mock_trade_long.leverage * 30 / 100
+        assert result == pytest.approx(-expected)
 
     def test_already_filled_skipped(self, strategy, mock_trade_long):
         """同级别已执行 → 跳过"""
@@ -321,7 +328,8 @@ class TestAdjustTradePosition:
                 current_entry_profit=0, current_exit_profit=0.05,
             )
         # orders=None → [] → 无已填充记录 → 触发 TP1
-        assert result == pytest.approx(-300)
+        expected = mock_trade_long.amount * 100500 / mock_trade_long.leverage * 30 / 100
+        assert result == pytest.approx(-expected)
 
     def test_single_tp_returns_none(self, strategy, mock_trade_long):
         """只有一级 TP → None (由 custom_exit 处理)"""
@@ -445,3 +453,153 @@ class TestSignalCache:
         with patch("freqtrade_strategies.AgentSignalStrategy.SIGNAL_FILE", fake_path):
             result = strategy._read_signals()
             assert result == []
+
+
+# ─── O7: Trailing stop 激活阈值 2% ──────────────────────────────────────
+
+class TestTrailingActivation:
+    now = datetime.now(timezone.utc)
+
+    def test_trailing_activates_at_2pct(self, strategy, mock_trade_long):
+        """profit=2.5% (> 2%) → 尾随激活"""
+        signal = _make_signal(trailing_stop_pct=3)
+        with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
+            result = strategy.custom_stoploss(
+                "BTC/USDT:USDT", mock_trade_long, self.now,
+                current_rate=100000, current_profit=0.025, after_fill=False,
+            )
+        # 激活尾随: -(0.025 - 0.03) = 0.005 → 但 trail > profit, 返回正值
+        # 实际 trailing_stop_pct=3 → trail_pct=0.03
+        assert result == pytest.approx(-(0.025 - 0.03))
+
+    def test_trailing_not_active_below_2pct(self, strategy, mock_trade_long):
+        """profit=1.5% (< 2%) → 尾随不激活"""
+        signal = _make_signal(trailing_stop_pct=3, stop_loss=92000)
+        with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
+            result = strategy.custom_stoploss(
+                "BTC/USDT:USDT", mock_trade_long, self.now,
+                current_rate=95000, current_profit=0.015, after_fill=False,
+            )
+        # 不激活，进入固定止损
+        expected_sl_pct = (95000 - 92000) / 95000
+        assert result == pytest.approx(-expected_sl_pct)
+
+
+# ─── O27: 入场容差 15% ──────────────────────────────────────────────────
+
+class TestEntryTolerance:
+    now = datetime.now(timezone.utc)
+
+    def test_entry_tolerance_15pct(self, strategy):
+        """容差 15%: 范围 [100, 200] 容差 15 → 有效 [85, 215]"""
+        import pandas as pd
+        signal = _make_signal(
+            entry_price_range=[100, 200],
+            action="long",
+        )
+        # 构造 dataframe
+        df = pd.DataFrame({
+            "close": [250.0],  # 超出 [85, 215] → 应跳过
+            "enter_long": [0],
+            "enter_short": [0],
+        })
+        with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
+            result = strategy.populate_entry_trend(df, {"pair": "BTC/USDT:USDT"})
+        assert result["enter_long"].iloc[-1] == 0
+
+    def test_entry_within_tolerance(self, strategy):
+        """价格在容差范围内 → 允许入场"""
+        import pandas as pd
+        signal = _make_signal(
+            entry_price_range=[100, 200],
+            action="long",
+        )
+        # 210 在 [85, 215] 范围内
+        df = pd.DataFrame({
+            "close": [210.0],
+            "enter_long": [0],
+            "enter_short": [0],
+        })
+        with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
+            result = strategy.populate_entry_trend(df, {"pair": "BTC/USDT:USDT"})
+        assert result["enter_long"].iloc[-1] == 1
+
+
+# ─── O6: 分批止盈基于当前仓位值 ──────────────────────────────────────────
+
+class TestPartialTpReduceAmount:
+    now = datetime.now(timezone.utc)
+
+    def test_partial_tp_reduce_amount(self, strategy, mock_trade_long):
+        """验证用 trade.amount * current_rate / trade.leverage 计算减仓"""
+        signal = _make_signal(take_profit=[
+            {"price": 100000, "pct": 50},
+            {"price": 110000, "pct": 50},
+        ])
+        current_rate = 100500
+        with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
+            result = strategy.adjust_trade_position(
+                mock_trade_long, self.now,
+                current_rate=current_rate, current_profit=0.05,
+                min_stake=10, max_stake=5000,
+                current_entry_rate=95000, current_exit_rate=current_rate,
+                current_entry_profit=0, current_exit_profit=0.05,
+            )
+        # amount=0.03, rate=100500, leverage=3, pct=50
+        expected = mock_trade_long.amount * current_rate / mock_trade_long.leverage * 50 / 100
+        assert result == pytest.approx(-expected)
+
+
+# ─── O9: 三档尾随与 AI take_profit 冲突解决 ──────────────────────────────
+
+class TestTrailingSkipsWhenTpNotFilled:
+    now = datetime.now(timezone.utc)
+
+    def test_trailing_skips_when_tp_not_filled(self, strategy, mock_trade_long):
+        """有未完成的 TP → 跳过固定尾随，返回 self.stoploss"""
+        signal = _make_signal(take_profit=[
+            {"price": 100000, "pct": 30},
+            {"price": 110000, "pct": 70},
+        ])
+        mock_trade_long.orders = []  # TP0 未填充
+        with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
+            result = strategy.custom_stoploss(
+                "BTC/USDT:USDT", mock_trade_long, self.now,
+                current_rate=112000, current_profit=0.25, after_fill=False,
+            )
+        # 有 TP 未完成 → 跳过三档尾随 → 返回 self.stoploss
+        assert result == strategy.stoploss
+
+    def test_trailing_activates_after_all_tp_filled(self, strategy, mock_trade_long):
+        """所有 TP 完成后 + profit>3% → 保护尾随"""
+        signal = _make_signal(take_profit=[
+            {"price": 100000, "pct": 30},
+            {"price": 110000, "pct": 70},
+        ])
+        # 模拟 TP0 已填充（只有 tp_list[:-1] 需要检查，即 TP0）
+        filled_order = SimpleNamespace(
+            ft_order_tag="tp_0_100000",
+            ft_is_open=False,
+        )
+        mock_trade_long.orders = [filled_order]
+        with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
+            result = strategy.custom_stoploss(
+                "BTC/USDT:USDT", mock_trade_long, self.now,
+                current_rate=115000, current_profit=0.15, after_fill=False,
+            )
+        # 全部 TP 完成 + profit>3% → -(profit - 0.02)
+        assert result == pytest.approx(-(0.15 - 0.02))
+
+    def test_single_tp_no_skip(self, strategy, mock_trade_long):
+        """只有 1 级 TP → len(tp_list) < 2 → all_tp_filled=True → 不跳过"""
+        signal = _make_signal(take_profit=[
+            {"price": 110000, "pct": 100},
+        ])
+        mock_trade_long.orders = []
+        with patch.object(strategy, "_get_signal_for_pair", return_value=signal):
+            result = strategy.custom_stoploss(
+                "BTC/USDT:USDT", mock_trade_long, self.now,
+                current_rate=115000, current_profit=0.15, after_fill=False,
+            )
+        # 单级 TP → all_tp_filled=True → profit>3% → 保护尾随
+        assert result == pytest.approx(-(0.15 - 0.02))

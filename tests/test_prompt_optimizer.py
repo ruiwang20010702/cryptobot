@@ -80,6 +80,60 @@ class TestAnalyzeFailures:
             assert "1 笔亏损" in result
 
 
+class TestAnalyzeWins:
+    def test_no_wins(self, opt_setup):
+        po = opt_setup
+        with patch("cryptobot.journal.storage.get_all_records", return_value=[]):
+            result = po.analyze_wins()
+            assert "无盈利" in result
+
+    def test_with_wins(self, opt_setup):
+        po = opt_setup
+        from cryptobot.journal.models import SignalRecord
+        now = datetime.now(timezone.utc).isoformat()
+        records = [
+            SignalRecord(
+                symbol="BTCUSDT", action="long", timestamp=now,
+                confidence=85, actual_pnl_pct=6.0, status="closed",
+                reasoning="盈利交易",
+            ),
+        ]
+        with patch("cryptobot.journal.storage.get_all_records", return_value=records):
+            result = po.analyze_wins()
+            assert "1 笔盈利" in result
+
+    def test_early_exit_detected(self, opt_setup):
+        """MFE >> 实际盈利 → 检测过早退出"""
+        po = opt_setup
+        from cryptobot.journal.models import SignalRecord
+        now = datetime.now(timezone.utc).isoformat()
+        record = SignalRecord(
+            symbol="ETHUSDT", action="long", timestamp=now,
+            confidence=75, actual_pnl_pct=3.0, status="closed",
+            reasoning="盈利但过早退出",
+        )
+        # 手动设置 mfe_pct 属性
+        record.mfe_pct = 10.0
+        with patch("cryptobot.journal.storage.get_all_records", return_value=[record]):
+            result = po.analyze_wins()
+            assert "过早退出" in result
+            assert "ETHUSDT" in result
+
+    def test_high_confidence_large_profit(self, opt_setup):
+        """高信心 + 大盈利 → 仓位可能不足"""
+        po = opt_setup
+        from cryptobot.journal.models import SignalRecord
+        now = datetime.now(timezone.utc).isoformat()
+        record = SignalRecord(
+            symbol="BTCUSDT", action="long", timestamp=now,
+            confidence=85, actual_pnl_pct=8.0, status="closed",
+            reasoning="高置信度大盈利",
+        )
+        with patch("cryptobot.journal.storage.get_all_records", return_value=[record]):
+            result = po.analyze_wins()
+            assert "仓位可能不足" in result
+
+
 class TestRunOptimizationCycle:
     def test_no_trigger(self, opt_setup):
         po = opt_setup
@@ -96,6 +150,7 @@ class TestRunOptimizationCycle:
         with (
             patch.object(po, "check_performance_decline") as mock_check,
             patch.object(po, "analyze_failures") as mock_analyze,
+            patch.object(po, "analyze_wins") as mock_wins,
             patch.object(po, "generate_improved_prompt") as mock_gen,
         ):
             mock_check.return_value = {
@@ -103,6 +158,7 @@ class TestRunOptimizationCycle:
                 "gap_pct": 50.0, "closed_7d": 8, "closed_30d": 30,
             }
             mock_analyze.return_value = "测试失败分析"
+            mock_wins.return_value = "测试盈利分析"
             mock_gen.return_value = {
                 "addons": {"TRADER": "改进提示"},
                 "note": "测试改进",
@@ -111,3 +167,7 @@ class TestRunOptimizationCycle:
             result = po.run_optimization_cycle()
             assert result["triggered"]
             assert result["new_version"] == "v1.1"
+            # 验证 generate_improved_prompt 收到失败+盈利分析
+            call_args = mock_gen.call_args[0][0]
+            assert "测试失败分析" in call_args
+            assert "测试盈利分析" in call_args

@@ -26,7 +26,7 @@ def _load_kelly_params(symbol: str, action: str | None = None) -> tuple[float, f
         perf = calc_performance(30)
         closed = perf.get("closed", 0)
         if closed < 10:
-            return 0.35, 1.2
+            return 0.50, 1.5
 
         # 币种级别胜率
         by_symbol = perf.get("by_symbol", {})
@@ -65,6 +65,8 @@ def calc_position_size(
     win_rate: float | None = None,
     avg_win_loss_ratio: float | None = None,
     action: str | None = None,
+    confidence: int | None = None,
+    regime: str = "",
 ) -> dict:
     """计算仓位大小
 
@@ -122,8 +124,18 @@ def calc_position_size(
         q = 1 - win_rate
         kelly_fraction = (win_rate * avg_win_loss_ratio - q) / avg_win_loss_ratio
         kelly_fraction = max(0, kelly_fraction)
-        # 使用半凯利 (更保守)
-        kelly_fraction *= 0.5
+        # 动态半 Kelly 比例：基于 regime 和 confidence 查表
+        _KELLY_SCALE = {
+            ("trending", True): 0.6,
+            ("trending", False): 0.5,
+            ("ranging", True): 0.4,
+            ("ranging", False): 0.3,
+            ("volatile", True): 0.35,
+            ("volatile", False): 0.25,
+        }
+        high_conf = confidence >= 85 if confidence is not None else False
+        kelly_scale = _KELLY_SCALE.get((regime, high_conf), 0.5)
+        kelly_fraction *= kelly_scale
 
     kelly_position = account_balance * kelly_fraction
 

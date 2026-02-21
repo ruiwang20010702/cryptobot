@@ -127,6 +127,46 @@ def analyze_failures(days: int = 7) -> str:
     return "\n".join(lines)
 
 
+def analyze_wins(days: int = 7) -> str:
+    """分析过早退出和仓位不足的盈利交易"""
+    from datetime import timedelta
+    from cryptobot.journal.storage import get_all_records
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    records = get_all_records()
+
+    wins = [
+        r for r in records
+        if r.status == "closed"
+        and r.timestamp >= cutoff
+        and (r.actual_pnl_pct or 0) > 0
+    ]
+
+    if not wins:
+        return "近期无盈利交易记录。"
+
+    lines = [f"近 {days} 天 {len(wins)} 笔盈利交易分析:"]
+    early_exits = 0
+    small_positions = 0
+    for r in wins:
+        mfe = getattr(r, "mfe_pct", None)
+        if mfe and r.actual_pnl_pct and mfe > r.actual_pnl_pct * 2:
+            early_exits += 1
+            lines.append(
+                f"- {r.symbol} 过早退出: 实际盈利 {r.actual_pnl_pct:+.1f}% "
+                f"但 MFE={mfe:.1f}% (少赚 {mfe - r.actual_pnl_pct:.1f}%)"
+            )
+        if r.confidence and r.confidence >= 80 and r.actual_pnl_pct and r.actual_pnl_pct > 5:
+            small_positions += 1
+
+    if early_exits:
+        lines.append(f"\n过早退出: {early_exits}/{len(wins)} 笔 (MFE >> 实际盈利)")
+    if small_positions:
+        lines.append(f"高信心大盈利但仓位可能不足: {small_positions} 笔")
+
+    return "\n".join(lines)
+
+
 def generate_improved_prompt(failure_analysis: str) -> dict:
     """用 LLM 基于失败分析生成改进 prompt addon
 
@@ -197,8 +237,12 @@ def run_optimization_cycle() -> dict:
     analysis = analyze_failures(7)
     logger.info("失败分析完成: %d 字", len(analysis))
 
+    # 2b. 分析盈利模式
+    win_analysis = analyze_wins(7)
+    logger.info("盈利分析完成: %d 字", len(win_analysis))
+
     # 3. AI 生成改进
-    improvement = generate_improved_prompt(analysis)
+    improvement = generate_improved_prompt(analysis + "\n\n" + win_analysis)
 
     # 4. 创建新版本
     addons = improvement.get("addons", {})

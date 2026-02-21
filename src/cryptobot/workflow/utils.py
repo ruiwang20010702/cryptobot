@@ -67,6 +67,20 @@ def _build_portfolio_context() -> str:
         lines.append(f"空头仓位占比: {short_used / usdt_balance * 100:.1f}%")
         lines.append(f"总仓位占比: {(long_used + short_used) / usdt_balance * 100:.1f}%")
 
+    # O29: 持仓类别分布
+    if positions:
+        from cryptobot.config import get_pair_config
+        cat_count: dict[str, int] = {}
+        for p in positions:
+            pair = p.get("pair", "")
+            sym = pair.replace("/", "").replace(":USDT", "")
+            cfg = get_pair_config(sym) or {}
+            cat = cfg.get("category", "unknown")
+            cat_count[cat] = cat_count.get(cat, 0) + 1
+        if cat_count:
+            cat_parts = [f"{c}={n}" for c, n in sorted(cat_count.items(), key=lambda x: -x[1])]
+            lines.append(f"类别分布: {', '.join(cat_parts)}")
+
     lines.append("")
     lines.append("### 风控规则")
     lines.append(f"- 同方向总仓位上限: {risk_cfg.get('max_same_direction_pct', 50)}%")
@@ -81,6 +95,8 @@ def _build_portfolio_context() -> str:
 def _fetch_global(symbols: list[str]) -> tuple:
     """获取全局市场数据 (恐惧贪婪、市场概览、全局新闻、稳定币流、宏观日历)
 
+    O32: 5 个 HTTP 请求并行化 (ThreadPoolExecutor)
+
     Returns:
         (fear_greed, market_overview, global_news, stablecoin_flows, macro_events, errors)
     """
@@ -91,28 +107,37 @@ def _fetch_global(symbols: list[str]) -> tuple:
     from cryptobot.data.economic_calendar import get_upcoming_events
 
     _fg, _mo, _gn, _sf, _me = None, None, None, None, None
-    _errs = []
-    try:
-        _fg = get_fear_greed_index()
-    except Exception as e:
-        _errs.append(f"fear_greed: {e}")
-    try:
-        _mo = get_market_overview()
-    except Exception as e:
-        _errs.append(f"market_overview: {e}")
-    try:
-        currencies = [s.replace("USDT", "") for s in symbols]
-        _gn = get_crypto_news(currencies)
-    except Exception as e:
-        _errs.append(f"global_news: {e}")
-    try:
-        _sf = get_stablecoin_flows()
-    except Exception as e:
-        _errs.append(f"stablecoin_flows: {e}")
-    try:
-        _me = get_upcoming_events()
-    except Exception as e:
-        _errs.append(f"macro_events: {e}")
+    _errs: list[str] = []
+
+    currencies = [s.replace("USDT", "") for s in symbols]
+
+    def _safe_call(name: str, fn, *args):
+        try:
+            return name, fn(*args), None
+        except Exception as e:
+            return name, None, f"{name}: {e}"
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [
+            pool.submit(_safe_call, "fear_greed", get_fear_greed_index),
+            pool.submit(_safe_call, "market_overview", get_market_overview),
+            pool.submit(_safe_call, "global_news", get_crypto_news, currencies),
+            pool.submit(_safe_call, "stablecoin_flows", get_stablecoin_flows),
+            pool.submit(_safe_call, "macro_events", get_upcoming_events),
+        ]
+        results = {}
+        for future in as_completed(futures):
+            name, data, err = future.result()
+            results[name] = data
+            if err:
+                _errs.append(err)
+
+    _fg = results.get("fear_greed")
+    _mo = results.get("market_overview")
+    _gn = results.get("global_news")
+    _sf = results.get("stablecoin_flows")
+    _me = results.get("macro_events")
+
     return _fg, _mo, _gn, _sf, _me, _errs
 
 

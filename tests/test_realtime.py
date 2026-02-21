@@ -138,6 +138,7 @@ class TestCheckEntry:
 
 class TestConfirmIndicators:
     def test_long_confirmed(self, monkeypatch):
+        """EMA 对齐 + RSI 正常 → score=2, 通过"""
         from cryptobot.realtime import monitor as mon_mod
 
         monkeypatch.setattr(
@@ -146,16 +147,28 @@ class TestConfirmIndicators:
         )
         assert mon_mod._confirm_indicators("BTCUSDT", "long") is True
 
-    def test_long_overbought(self, monkeypatch):
+    def test_long_overbought_extreme(self, monkeypatch):
+        """EMA 对齐(+2) + RSI>=80(-3) → score=-1, 不通过"""
         from cryptobot.realtime import monitor as mon_mod
 
         monkeypatch.setattr(
             mon_mod, "_load_5m_indicators",
-            lambda s: {"rsi": 80, "ema7": 100, "ema25": 95},
+            lambda s: {"rsi": 85, "ema7": 100, "ema25": 95},
         )
         assert mon_mod._confirm_indicators("BTCUSDT", "long") is False
 
-    def test_long_downtrend(self, monkeypatch):
+    def test_long_overbought_moderate(self, monkeypatch):
+        """EMA 对齐(+2) + RSI 70-80(-1) → score=1, 通过"""
+        from cryptobot.realtime import monitor as mon_mod
+
+        monkeypatch.setattr(
+            mon_mod, "_load_5m_indicators",
+            lambda s: {"rsi": 75, "ema7": 100, "ema25": 95},
+        )
+        assert mon_mod._confirm_indicators("BTCUSDT", "long") is True
+
+    def test_long_downtrend_neutral_rsi(self, monkeypatch):
+        """EMA 反向(-1) + RSI 中性(0) → score=-1, 不通过"""
         from cryptobot.realtime import monitor as mon_mod
 
         monkeypatch.setattr(
@@ -164,21 +177,33 @@ class TestConfirmIndicators:
         )
         assert mon_mod._confirm_indicators("BTCUSDT", "long") is False
 
-    def test_short_confirmed(self, monkeypatch):
+    def test_long_downtrend_low_rsi(self, monkeypatch):
+        """EMA 反向(-1) + RSI<40(+1) → score=0, 通过"""
         from cryptobot.realtime import monitor as mon_mod
 
         monkeypatch.setattr(
             mon_mod, "_load_5m_indicators",
-            lambda s: {"rsi": 40, "ema7": 90, "ema25": 95},
+            lambda s: {"rsi": 35, "ema7": 99, "ema25": 100},
+        )
+        assert mon_mod._confirm_indicators("BTCUSDT", "long") is True
+
+    def test_short_confirmed(self, monkeypatch):
+        """EMA 对齐(+2) + RSI>60(+1) → score=3, 通过"""
+        from cryptobot.realtime import monitor as mon_mod
+
+        monkeypatch.setattr(
+            mon_mod, "_load_5m_indicators",
+            lambda s: {"rsi": 65, "ema7": 90, "ema25": 95},
         )
         assert mon_mod._confirm_indicators("BTCUSDT", "short") is True
 
-    def test_short_oversold(self, monkeypatch):
+    def test_short_oversold_extreme(self, monkeypatch):
+        """EMA 对齐(+2) + RSI<=20(-3) → score=-1, 不通过"""
         from cryptobot.realtime import monitor as mon_mod
 
         monkeypatch.setattr(
             mon_mod, "_load_5m_indicators",
-            lambda s: {"rsi": 20, "ema7": 90, "ema25": 95},
+            lambda s: {"rsi": 15, "ema7": 90, "ema25": 95},
         )
         assert mon_mod._confirm_indicators("BTCUSDT", "short") is False
 
@@ -186,6 +211,36 @@ class TestConfirmIndicators:
         from cryptobot.realtime import monitor as mon_mod
 
         monkeypatch.setattr(mon_mod, "_load_5m_indicators", lambda s: None)
+        assert mon_mod._confirm_indicators("BTCUSDT", "long") is True
+
+    def test_scoring_long_ema_aligned_rsi_normal(self, monkeypatch):
+        """评分制入场确认: EMA 对齐 + RSI 正常 → 通过"""
+        from cryptobot.realtime import monitor as mon_mod
+
+        monkeypatch.setattr(
+            mon_mod, "_load_5m_indicators",
+            lambda s: {"rsi": 50, "ema7": 100, "ema25": 99},
+        )
+        assert mon_mod._confirm_indicators("BTCUSDT", "long") is True
+
+    def test_scoring_long_rsi_extreme_overbought(self, monkeypatch):
+        """评分制入场确认: RSI 极端超买 → 不通过"""
+        from cryptobot.realtime import monitor as mon_mod
+
+        monkeypatch.setattr(
+            mon_mod, "_load_5m_indicators",
+            lambda s: {"rsi": 85, "ema7": 100, "ema25": 99},
+        )
+        assert mon_mod._confirm_indicators("BTCUSDT", "long") is False
+
+    def test_scoring_long_ema_reversed_rsi_low(self, monkeypatch):
+        """评分制入场确认: EMA 反向但 RSI 低 → 总分 -1+1=0 → 通过"""
+        from cryptobot.realtime import monitor as mon_mod
+
+        monkeypatch.setattr(
+            mon_mod, "_load_5m_indicators",
+            lambda s: {"rsi": 35, "ema7": 99, "ema25": 100},
+        )
         assert mon_mod._confirm_indicators("BTCUSDT", "long") is True
 
 

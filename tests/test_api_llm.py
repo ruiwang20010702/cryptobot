@@ -196,6 +196,43 @@ def test_usage_tracking():
     assert get_usage_stats()["total_calls"] == 0
 
 
+def test_call_api_reasoner_merges_system_to_user():
+    """reasoner 模型应将 system prompt 合并到 user message"""
+    from cryptobot.workflow.api_llm import call_api
+
+    api_cfg = {
+        "base_url": "https://api.example.com/v1",
+        "api_key_env": "",
+        "models": {},
+        "timeout": 30,
+        "role_models": {"trader": "deepseek-reasoner"},
+    }
+    settings = {"llm": {"provider": "api", "api": api_cfg}}
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": '{"action": "long"}'}}]
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    with (
+        patch("cryptobot.workflow.api_llm.load_settings", return_value=settings),
+        patch("cryptobot.workflow.api_llm.httpx.post", return_value=mock_response) as mock_post,
+    ):
+        result = call_api("分析 BTC", model="sonnet", role="trader", system_prompt="你是交易员")
+
+    assert result == {"action": "long"}
+    body = mock_post.call_args[1]["json"]
+    assert body["model"] == "deepseek-reasoner"
+    # reasoner: 只有一条 user message，包含系统指令
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["role"] == "user"
+    assert "[系统指令]" in body["messages"][0]["content"]
+    assert "你是交易员" in body["messages"][0]["content"]
+    assert "分析 BTC" in body["messages"][0]["content"]
+
+
 def test_call_api_no_system_prompt():
     """无 system_prompt 时 messages 只有 user"""
     from cryptobot.workflow.api_llm import call_api

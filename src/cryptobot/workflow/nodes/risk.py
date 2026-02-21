@@ -82,7 +82,7 @@ def _extract_votes(analyses: dict, symbol: str) -> dict | None:
 
 def _decision_to_signal(
     decision: dict, risk_result: dict, account_balance: float,
-    *, analyst_votes: dict | None = None,
+    *, analyst_votes: dict | None = None, regime: str = "",
 ) -> dict:
     """将交易决策转换为信号格式，调用 position_sizer 计算仓位"""
     from cryptobot.risk.position_sizer import calc_position_size
@@ -134,6 +134,7 @@ def _decision_to_signal(
         },
         "timestamp": now.isoformat(),
         "analyst_votes": analyst_votes,
+        "regime": regime,
     }
 
 
@@ -345,7 +346,11 @@ def risk_review(state: WorkflowState) -> dict:
                 decision["leverage"] = capital_lev_cap
                 leverage = capital_lev_cap
 
-        # P3: 盈亏比 RR >= 1.5 检查
+        # P3: 盈亏比 RR 检查（阈值随 regime 动态调整）
+        _RR_THRESHOLDS = {"trending": 1.2, "ranging": 2.0, "volatile": 2.0}
+        regime_name = regime.get("regime", "")
+        rr_threshold = _RR_THRESHOLDS.get(regime_name, 1.5)
+
         stop_loss = decision.get("stop_loss")
         tp_list = decision.get("take_profit", [])
         if entry_range and len(entry_range) == 2 and entry_range[0] and stop_loss and tp_list:
@@ -356,9 +361,14 @@ def risk_review(state: WorkflowState) -> dict:
             )
             tp_dist = abs(first_tp - entry_mid) if first_tp else 0
             rr = tp_dist / sl_dist if sl_dist > 0 else 0
-            if rr < 1.5:
-                logger.info("硬性拒绝 %s: RR %.2f < 1.5", symbol, rr)
-                _console.print(f"    [red]拒绝 {symbol}: 盈亏比 {rr:.2f} < 1.5[/red]")
+            if rr < rr_threshold:
+                logger.info(
+                    "硬性拒绝 %s: RR %.2f < %.1f (%s)",
+                    symbol, rr, rr_threshold, regime_name,
+                )
+                _console.print(
+                    f"    [red]拒绝 {symbol}: 盈亏比 {rr:.2f} < {rr_threshold} ({regime_name})[/red]"
+                )
                 continue
 
         # 计算爆仓距离
@@ -428,8 +438,10 @@ def risk_review(state: WorkflowState) -> dict:
                             if k in _ADJUSTABLE_FIELDS:
                                 decision[k] = v
                     votes = _extract_votes(analyses, symbol)
+                    regime_name = regime.get("regime", "")
                     sig = _decision_to_signal(
-                        decision, result, account_balance, analyst_votes=votes,
+                        decision, result, account_balance,
+                        analyst_votes=votes, regime=regime_name,
                     )
                     # P20: 注入风控修改内容
                     if result.get("decision") == "modified" and result.get("adjustments"):

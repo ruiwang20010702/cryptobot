@@ -97,8 +97,14 @@ def write_signal(signal: dict) -> dict:
     return validated
 
 
-def validate_signal(signal: dict) -> dict:
-    """校验并补全信号字段"""
+def validate_signal(signal: dict, *, regime: str = "") -> dict:
+    """校验并补全信号字段
+
+    Args:
+        signal: 信号数据
+        regime: 市场状态，用于动态调整过期时间
+               trending → 6h, ranging → 2h, volatile → 1.5h, 默认 → 4h
+    """
     # 必填校验
     symbol = signal.get("symbol")
     action = signal.get("action")
@@ -131,6 +137,11 @@ def validate_signal(signal: dict) -> dict:
     if sl is not None and entry_high is not None and action == "short" and sl <= entry_high:
         raise ValueError(f"空单止损 {sl} 不能低于入场价上限 {entry_high}")
 
+    # regime 动态过期时间：优先使用参数，其次从 signal dict 中读取
+    _REGIME_EXPIRY_HOURS = {"trending": 6, "ranging": 2, "volatile": 1.5}
+    effective_regime = regime or signal.get("regime", "")
+    expiry_hours = _REGIME_EXPIRY_HOURS.get(effective_regime, 4)
+
     # 构建完整信号
     return {
         "symbol": symbol,
@@ -146,7 +157,7 @@ def validate_signal(signal: dict) -> dict:
         "analysis_summary": signal.get("analysis_summary", {}),
         "expires_at": signal.get(
             "expires_at",
-            (now + timedelta(hours=4)).isoformat(),
+            (now + timedelta(hours=expiry_hours)).isoformat(),
         ),
     }
 

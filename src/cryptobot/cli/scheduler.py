@@ -299,6 +299,41 @@ def job_prompt_optimization() -> None:
         logger.error("[调度] Prompt 优化失败: %s", e, exc_info=True)
 
 
+def job_urgent_review() -> None:
+    """P&L 分级紧急复审: 亏损>3% 或盈利>10% 时立即复审"""
+    from cryptobot.freqtrade_api import ft_api_get
+    from cryptobot.workflow.graph import collect_data_for_symbols, re_review
+    from cryptobot.signal.bridge import update_signal_field
+
+    try:
+        positions = ft_api_get("/status") or []
+    except Exception as e:
+        logger.error("[调度] 紧急复审获取持仓失败: %s", e)
+        return
+
+    for pos in positions:
+        pnl_pct = (pos.get("profit_ratio", 0) or 0) * 100
+        pair = pos.get("pair", "")
+        symbol = pair.replace("/", "").replace(":USDT", "")
+        if pnl_pct < -3 or pnl_pct > 10:
+            logger.info("紧急复审触发: %s P&L=%.1f%%", symbol, pnl_pct)
+            try:
+                state = collect_data_for_symbols([symbol])
+                suggestions = re_review([pos], state)
+                for s in suggestions:
+                    if s["decision"] == "adjust_stop_loss" and s.get("new_stop_loss"):
+                        updated = update_signal_field(
+                            s["symbol"], "stop_loss", s["new_stop_loss"],
+                        )
+                        if updated:
+                            logger.info(
+                                "[调度] 紧急复审更新 %s 止损 → %s",
+                                s["symbol"], s["new_stop_loss"],
+                            )
+            except Exception as e:
+                logger.error("紧急复审失败 %s: %s", symbol, e)
+
+
 def job_journal_sync() -> None:
     """定时: 同步 Freqtrade 平仓数据到交易日志"""
     from cryptobot.journal.storage import get_records_by_status, update_record
@@ -325,6 +360,21 @@ def job_journal_sync() -> None:
                 pnl_pct = (trade.get("profit_ratio", 0) or 0) * 100
                 pnl_usdt = trade.get("profit_abs", 0) or 0
 
+                # O26: 补全 exit_reason + duration_hours
+                exit_reason = trade.get("exit_reason", "")
+                duration_hours = None
+                open_date_str = trade.get("open_date", "")
+                close_date_str = trade.get("close_date", "")
+                if open_date_str and close_date_str:
+                    try:
+                        from datetime import datetime
+                        fmt = "%Y-%m-%d %H:%M:%S"
+                        od = datetime.strptime(open_date_str[:19], fmt)
+                        cd = datetime.strptime(close_date_str[:19], fmt)
+                        duration_hours = round((cd - od).total_seconds() / 3600, 1)
+                    except (ValueError, TypeError):
+                        pass
+
                 update_record(
                     record.signal_id,
                     status="closed",
@@ -332,6 +382,8 @@ def job_journal_sync() -> None:
                     actual_exit_price=trade.get("close_rate"),
                     actual_pnl_pct=round(pnl_pct, 2),
                     actual_pnl_usdt=round(pnl_usdt, 2),
+                    exit_reason=exit_reason,
+                    duration_hours=duration_hours,
                 )
                 synced += 1
                 break
@@ -425,6 +477,16 @@ def start(run_now: bool, verbose: bool):
         minutes=30,
         id="journal_sync",
         name="交易日志同步 (每30min)",
+        max_instances=1,
+    )
+
+    # 紧急复审检查: 每 30min
+    scheduler.add_job(
+        job_urgent_review,
+        "interval",
+        minutes=30,
+        id="urgent_review",
+        name="紧急复审检查 (每30min)",
         max_instances=1,
     )
 

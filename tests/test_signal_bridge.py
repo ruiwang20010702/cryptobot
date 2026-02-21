@@ -106,3 +106,31 @@ class TestSignalClear:
         data = json.loads((signal_dir / "signal.json").read_text())
         assert len(data["signals"]) == 1
         assert data["signals"][0]["symbol"] == "ETHUSDT"
+
+
+# ─── O5: regime 动态过期时间 ─────────────────────────────────────────────
+
+class TestValidateSignalRegimeExpiry:
+    def test_validate_signal_regime_expiry(self):
+        """regime 动态过期时间"""
+        from cryptobot.signal.bridge import validate_signal
+        from datetime import datetime
+
+        base = {"symbol": "BTCUSDT", "action": "long", "leverage": 3}
+
+        sig_trend = validate_signal({**base}, regime="trending")
+        sig_range = validate_signal({**base}, regime="ranging")
+        sig_volatile = validate_signal({**base}, regime="volatile")
+        sig_default = validate_signal({**base})
+
+        # 解析 expires_at
+        t_trend = datetime.fromisoformat(sig_trend["expires_at"])
+        t_range = datetime.fromisoformat(sig_range["expires_at"])
+        t_volatile = datetime.fromisoformat(sig_volatile["expires_at"])
+        t_default = datetime.fromisoformat(sig_default["expires_at"])
+
+        # trending 过期最晚 (6h)，volatile 最早 (1.5h)
+        assert t_trend > t_range
+        assert t_range > t_volatile
+        # default = 4h，应在 trending(6h) 和 ranging(2h) 之间
+        assert t_trend > t_default > t_range

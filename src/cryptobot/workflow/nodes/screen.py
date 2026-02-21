@@ -1,7 +1,6 @@
 """Node: screen — 规则筛选 3-5 个最值得分析的币种"""
 
 import logging
-import time
 
 from rich.console import Console
 
@@ -45,6 +44,19 @@ def screen(state: WorkflowState) -> dict:
     market_data = state.get("market_data", {})
     errors = list(state.get("errors", []))
     scores = []
+
+    # O12: 获取当前持仓币种
+    _held_symbols: set[str] = set()
+    try:
+        from cryptobot.freqtrade_api import ft_api_get
+        positions = ft_api_get("/status") or []
+        for pos in positions:
+            pair = pos.get("pair", "")
+            sym = pair.replace("/", "").replace(":USDT", "")
+            if sym:
+                _held_symbols.add(sym)
+    except Exception:
+        pass
 
     for symbol, data in market_data.items():
         score = 0
@@ -106,10 +118,21 @@ def screen(state: WorkflowState) -> dict:
         if vol and vol.get("obv_divergence") in ("bullish_divergence", "bearish_divergence"):
             score += 2
 
+        # O10: perf_feedback 低胜率币种扣分
+        perf_feedback = state.get("perf_feedback", {})
+        by_symbol = perf_feedback.get("by_symbol", {})
+        sym_perf = by_symbol.get(symbol, {})
+        if sym_perf.get("count", 0) >= 5 and sym_perf.get("win_rate", 1) < 0.3:
+            score -= 3
+
         # 配对配置优先级 (BTC/ETH 权重高)
         pair_cfg = get_pair_config(symbol)
         if pair_cfg and pair_cfg.get("category") in ("store_of_value", "smart_contract"):
             score += 1
+
+        # O12: 持仓币种优先（确保持仓币种持续被分析）
+        if symbol in _held_symbols:
+            score += 5
 
         # 资金层级优选币种加分
         capital_tier = state.get("capital_tier", {})
@@ -129,24 +152,33 @@ def screen(state: WorkflowState) -> dict:
     _console.print(f"    筛选结果: {', '.join(f'{s}({sc})' for s, sc in ranked)}")
     logger.info("筛选结果: %s", ranked)
 
-    # 延迟加载: 只对筛选出的 5 个币种获取 CoinGecko + CryptoPanic 数据
-    for i, symbol in enumerate(screened):
-        base = symbol.replace("USDT", "")
-        # CoinGecko coin_info (间隔 2s 避免 429)
-        if i > 0:
-            time.sleep(2)
+    # O23: 延迟加载并行化 — CoinGecko + CryptoPanic (Semaphore 限速)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
+    _cg_semaphore = threading.Semaphore(2)  # CoinGecko 限速 2 并发
+
+    def _fetch_coin_extra(sym: str) -> tuple[str, dict | None, dict | None, list]:
+        base = sym.replace("USDT", "")
+        info, news = None, None
+        errs = []
+        with _cg_semaphore:
+            try:
+                info = get_coin_info(base)
+            except Exception as e:
+                errs.append(f"coin_info_{sym}: {e}")
         try:
-            market_data[symbol]["coin_info"] = get_coin_info(base)
+            news = get_coin_specific_news(sym)
         except Exception as e:
-            logger.warning("币种信息失败 %s: %s", symbol, e)
-            market_data[symbol]["coin_info"] = None
-            errors.append(f"coin_info_{symbol}: {e}")
-        # CryptoPanic 币种新闻
-        try:
-            market_data[symbol]["coin_news"] = get_coin_specific_news(symbol)
-        except Exception as e:
-            logger.warning("币种新闻失败 %s: %s", symbol, e)
-            market_data[symbol]["coin_news"] = None
-            errors.append(f"coin_news_{symbol}: {e}")
+            errs.append(f"coin_news_{sym}: {e}")
+        return sym, info, news, errs
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {pool.submit(_fetch_coin_extra, s): s for s in screened}
+        for future in as_completed(futures):
+            sym, info, news, errs = future.result()
+            market_data[sym]["coin_info"] = info
+            market_data[sym]["coin_news"] = news
+            errors.extend(errs)
 
     return {"screened_symbols": screened, "market_data": market_data, "errors": errors}

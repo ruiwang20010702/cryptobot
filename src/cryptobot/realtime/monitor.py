@@ -113,10 +113,9 @@ def _load_5m_indicators(symbol: str) -> dict | None:
 
 
 def _confirm_indicators(symbol: str, action: str) -> bool:
-    """5m 指标确认：RSI 不极端 + EMA7 方向与交易方向一致"""
+    """5m 指标评分制确认：替代硬性 pass/fail"""
     indicators = _load_5m_indicators(symbol)
     if indicators is None:
-        # 无法加载指标时通过（降级处理）
         return True
 
     rsi = indicators.get("rsi")
@@ -126,22 +125,40 @@ def _confirm_indicators(symbol: str, action: str) -> bool:
     if rsi is None or ema7 is None or ema25 is None:
         return True
 
-    if action == "long":
-        if rsi >= 75:
-            logger.info("%s RSI=%.1f 严重超买，暂不入场", symbol, rsi)
-            return False
-        if ema7 <= ema25:
-            logger.info("%s EMA7 <= EMA25，短期趋势向下，暂不做多", symbol)
-            return False
-    elif action == "short":
-        if rsi <= 25:
-            logger.info("%s RSI=%.1f 严重超卖，暂不入场", symbol, rsi)
-            return False
-        if ema7 >= ema25:
-            logger.info("%s EMA7 >= EMA25，短期趋势向上，暂不做空", symbol)
-            return False
+    score = 0
 
-    return True
+    if action == "long":
+        # EMA 方向
+        if ema7 > ema25:
+            score += 2
+        else:
+            score -= 1
+        # RSI
+        if rsi >= 80:
+            score -= 3
+        elif rsi >= 70:
+            score -= 1
+        elif rsi < 40:
+            score += 1
+    elif action == "short":
+        # EMA 方向
+        if ema7 < ema25:
+            score += 2
+        else:
+            score -= 1
+        # RSI
+        if rsi <= 20:
+            score -= 3
+        elif rsi <= 30:
+            score -= 1
+        elif rsi > 60:
+            score += 1
+
+    logger.info(
+        "%s 入场评分: score=%d (RSI=%.1f, EMA7=%.2f, EMA25=%.2f)",
+        symbol, score, rsi, ema7, ema25,
+    )
+    return score >= 0
 
 
 def _promote_signal(signal: dict) -> None:

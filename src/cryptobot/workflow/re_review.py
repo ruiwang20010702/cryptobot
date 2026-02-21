@@ -31,11 +31,20 @@ def collect_data_for_symbols(symbols: list[str]) -> dict:
         for err in errors:
             logger.warning("数据采集: %s", err)
 
+    # O28: 复审时也检测 regime
+    regime = {}
+    try:
+        from cryptobot.workflow.nodes.collect import _detect_market_regime
+        regime = _detect_market_regime(market_data, fear_greed)
+    except Exception as e:
+        logger.warning("复审 regime 检测失败: %s", e)
+
     return {
         "market_data": market_data,
         "fear_greed": fear_greed,
         "market_overview": market_overview,
         "global_news": global_news,
+        "market_regime": regime,
     }
 
 
@@ -88,6 +97,10 @@ def re_review(positions: list[dict], state: dict) -> list[dict]:
             ("onchain", ONCHAIN_ANALYST, {
                 "derivatives": data.get("crypto"),
                 "liquidation": data.get("liquidation"),
+                "coinglass_liq": data.get("coinglass_liq"),
+                "open_interest": data.get("open_interest"),
+                "options_sentiment": data.get("options_sentiment"),
+                "whale_activity": data.get("whale_activity"),
             }),
             ("sentiment", SENTIMENT_ANALYST, {
                 "fear_greed": fear_greed,
@@ -116,6 +129,23 @@ def re_review(positions: list[dict], state: dict) -> list[dict]:
                 analyses[symbol] = {}
             analyses[symbol][analyst_type] = result
 
+    # O28: 构建 regime + 绩效上下文
+    regime = state.get("market_regime", {})
+    regime_ctx = ""
+    if regime:
+        regime_ctx = (
+            f"### 市场状态\n"
+            f"- 状态: {regime.get('regime', 'unknown')}\n"
+            f"- {regime.get('description', '')}\n\n"
+        )
+
+    perf_ctx = ""
+    try:
+        from cryptobot.journal.analytics import build_performance_summary
+        perf_ctx = build_performance_summary(30)
+    except Exception:
+        pass
+
     # Step 2: 对每个持仓运行复审
     review_tasks = []
     review_positions = []
@@ -131,6 +161,8 @@ def re_review(positions: list[dict], state: dict) -> list[dict]:
         review_tasks.append({
             "prompt": (
                 f"## 持仓复审: {symbol}\n\n"
+                f"{regime_ctx}"
+                f"{perf_ctx}"
                 f"### 当前持仓\n"
                 f"- 方向: {'空' if pos.get('is_short') else '多'}\n"
                 f"- 入场价: {pos.get('open_rate')}\n"

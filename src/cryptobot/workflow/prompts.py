@@ -43,6 +43,7 @@ TECHNICAL_ANALYST = """\
 - **multi_timeframe**: 1h/4h/1d 三个时间框架的趋势方向、共振判断 (aligned_direction/aligned_count)
 - **volume_analysis**: VWAP 位置、量比 (放量/缩量)、OBV 量价背离检测
 - **support_resistance**: Pivot Points、Fibonacci 回撤位、前高前低、整数关口
+- **orderbook**: 订单簿深度、买卖挂单比、密集挂单区（大单堆积价位是关键支撑/阻力）
 
 ## 分析框架
 1. **趋势判断**: EMA 排列 + ADX 强度 + MACD 动量
@@ -67,6 +68,10 @@ ONCHAIN_ANALYST = """\
 你将收到以下数据:
 - **derivatives**: 资金费率、持仓量 (OI)、主动买卖比、多空比综合分析
 - **liquidation**: 最近强平记录统计 (多/空清算数量和金额、清算聚集区域、清算强度)
+- **coinglass_liquidation**: 清算热力图（多空清算密集价位，预示可能的磁吸效应）
+- **open_interest**: OI 趋势变化（OI 增+价涨=新多入场，OI 减+价涨=空头回补）
+- **options_sentiment**: 期权情绪（Put/Call 比率、Max Pain 价位、隐含波动率 IV 变化）
+- **whale_activity**: 大额转账方向（交易所流入=卖压，流出=囤币信号）
 
 ## 分析框架
 1. **资金费率**: 正费率偏高→市场过热做空可能获利；负费率→市场过冷做多机会
@@ -91,6 +96,9 @@ SENTIMENT_ANALYST = """\
 - **fear_greed**: 恐惧贪婪指数 (当前值/分类/7日/30日趋势)
 - **market_overview**: 市场总量、BTC 主导率、24h 变化率
 - **global_news**: 全币种新闻聚合 (正/负/中性计数、情绪评分、近期重要新闻)
+- **stablecoin_flows**: 稳定币流动（USDT/USDC 市值增减，增发=资金流入信号）
+- **macro_events**: 宏观经济日历（CPI/FOMC/非农等，事件前后波动率放大）
+- **dxy**: 美元指数（DXY 走强通常压制加密货币，反相关性分析）
 
 ## 分析框架
 1. **恐惧贪婪指数**: <25 极度恐惧(可能见底)；>75 极度贪婪(可能见顶)
@@ -115,6 +123,8 @@ FUNDAMENTAL_ANALYST = """\
 - **coin_info**: 市值、排名、24h/7d/30d 价格变化、ATH 距离、供应量、社区情绪
 - **btc_correlation**: 与 BTC 的 Pearson 相关系数、相关性等级、BTC 当前趋势/RSI/主导率、联动含义
 - **coin_news**: 该币种近期新闻、正/负面计数、情绪评分、重要新闻
+- **dilution_risk**: 代币稀释风险（未来解锁计划、抛压时间节点、流通/总供应比）
+- **defi_tvl**: DeFi TVL 趋势（TVL 持续增长=生态健康，骤降=资金出逃信号）
 
 ## 分析框架
 1. **价格动量**: 24h/7d/30d 价格变化趋势
@@ -184,6 +194,10 @@ TRADER = """\
 - 已有持仓的方向和占比，避免同方向过度集中
 - 账户可用余额，仓位建议要与实际余额匹配
 - 高相关币种（如 BTC/ETH/SOL）不应同时同向开仓过多
+
+## 入场方式
+- **market**: 信号强烈、价格已在入场区间内，建议市价立即入场
+- **limit_wait**: 价格尚未到达理想入场位，建议挂限价单等待回调入场
 
 ## 风控约束
 - 杠杆不超过配置的上限
@@ -306,6 +320,10 @@ TRADE_SCHEMA = {
         "leverage": {"type": "integer", "minimum": 1, "maximum": 5},
         "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
         "position_size_pct": {"type": "number", "minimum": 0.5, "maximum": 25},
+        "entry_type": {
+            "type": "string",
+            "enum": ["market", "limit_wait"],
+        },
         "reasoning": {"type": "string"},
     },
     "required": ["action", "confidence", "reasoning", "stop_loss", "entry_price_range"],

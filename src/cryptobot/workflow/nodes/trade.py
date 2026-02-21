@@ -104,6 +104,10 @@ def trade(state: WorkflowState) -> dict:
         except Exception:
             pass
 
+    # O22: 获取币种级绩效数据
+    perf_feedback = state.get("perf_feedback", {})
+    by_symbol_perf = perf_feedback.get("by_symbol", {})
+
     all_tasks = []
     task_meta = []  # (symbol, current_price)
 
@@ -134,15 +138,27 @@ def trade(state: WorkflowState) -> dict:
         if capital_trader_addon:
             trader_system += capital_trader_addon
 
-        # P19: 分析师一致性评分
-        votes = [
-            a.get("direction", "neutral")
-            for a in analysis.values() if isinstance(a, dict)
-        ]
-        bullish_cnt = votes.count("bullish")
-        bearish_cnt = votes.count("bearish")
-        total_votes = len(votes) or 1
-        consistency = max(bullish_cnt, bearish_cnt) / total_votes
+        # O13: 分析师加权一致性评分
+        analyst_weight_map = {}
+        try:
+            from cryptobot.journal.analyst_weights import load_weights
+            analyst_weight_map = load_weights()
+        except Exception:
+            pass
+
+        weighted_bull = 0.0
+        weighted_bear = 0.0
+        total_weight = 0.0
+        for role, a in analysis.items():
+            if not isinstance(a, dict) or "direction" not in a:
+                continue
+            w = analyst_weight_map.get(role, 1.0)
+            total_weight += w
+            if a["direction"] == "bullish":
+                weighted_bull += w
+            elif a["direction"] == "bearish":
+                weighted_bear += w
+        consistency = max(weighted_bull, weighted_bear) / total_weight if total_weight > 0 else 0
         consistency_note = ""
         if consistency < 0.5:
             consistency_note = (
@@ -150,6 +166,17 @@ def trade(state: WorkflowState) -> dict:
             )
         elif consistency < 0.75:
             consistency_note = "\n\n⚠️ 分析师意见中度分歧，建议 confidence ≤ 75"
+
+        # O22: 币种级历史绩效注入
+        symbol_perf_ctx = ""
+        sp = by_symbol_perf.get(symbol, {})
+        if sp.get("count", 0) >= 3:
+            symbol_perf_ctx = (
+                f"### {symbol} 历史绩效 (30天)\n"
+                f"- 交易次数: {sp['count']}\n"
+                f"- 胜率: {sp.get('win_rate', 0):.0%}\n"
+                f"- 平均盈亏: {sp.get('avg_pnl_pct', 0):+.1f}%\n\n"
+            )
 
         all_tasks.append({
             "prompt": (
@@ -162,6 +189,7 @@ def trade(state: WorkflowState) -> dict:
                 f"{regime_ctx}"
                 f"{capital_ctx}"
                 f"{confidence_ctx}"
+                f"{symbol_perf_ctx}"
                 f"### 看多研究员观点\n{json.dumps(bull, ensure_ascii=False, indent=2)}\n\n"
                 f"### 看空研究员观点\n{json.dumps(bear, ensure_ascii=False, indent=2)}\n\n"
                 f"### 分析师数据\n{json.dumps(analysis, ensure_ascii=False, indent=2)}\n\n"

@@ -17,19 +17,19 @@ _console = Console()
 # 各状态的策略参数默认值
 _REGIME_PARAMS = {
     "trending": {
-        "min_confidence": 50,
+        "min_confidence": 58,
         "max_leverage": 5,
         "trailing_stop": True,
         "description": "趋势市: EMA 多头/空头排列，ADX>25。适合顺势交易，可适度加仓。",
     },
     "ranging": {
-        "min_confidence": 58,
+        "min_confidence": 63,
         "max_leverage": 3,
         "trailing_stop": False,
         "description": "震荡市: ADX<20，布林带收窄。区间交易为主，轻仓博反弹。",
     },
     "volatile": {
-        "min_confidence": 63,
+        "min_confidence": 68,
         "max_leverage": 2,
         "trailing_stop": True,
         "description": "剧烈波动: ATR 显著放大，恐惧贪婪极端。降低杠杆，严格止损。",

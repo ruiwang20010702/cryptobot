@@ -5,6 +5,8 @@
 > 第二轮审计: 2026-02-21 | 审查范围: 盈利能力深度审查 (40+ 核心文件)
 > 第二轮发现: 22 个新问题 (5 CRITICAL + 9 HIGH + 8 MEDIUM)
 > 第二轮修复: 22/22 全部修复
+> 第三轮审计: 2026-02-21 | 审查范围: 盈利能力优化 (信号质量/入场出场/资金效率/数据利用率)
+> 第三轮发现: 32 个优化点 (2 极高 + 7 高 + 10 中高 + 9 中 + 4 低中)
 > 状态标记: [ ] 待修复 | [x] 已修复 | [-] 不修复(接受风险)
 
 ---
@@ -574,3 +576,335 @@
 
 ### 第三批 — P11,P15,P16,P17,P18,P19,P21,P22 (MEDIUM 级优化)
 - 实时情绪(P11) + 置信度定义(P15) + 权重粒度(P16) + 样本门槛(P17) + regime 权重(P18) + 矛盾检测(P19) + 复审间隔(P21) + EMA 间距(P22)
+
+---
+
+# 第三轮审计 — 盈利能力优化审查
+
+> 审计日期: 2026-02-21 | 审查范围: 全部核心模块 (信号质量/入场出场/资金效率/数据利用率)
+> 核心目标: 以"能否多赚钱、少亏钱"为标准，审查优化空间
+> 发现: 32 个优化点 (2 极高 + 7 高 + 10 中高 + 9 中 + 4 低中)
+> 状态标记: [ ] 待修复 | [x] 已修复 | [-] 不修复(接受现状)
+
+---
+
+## P0 — 极高影响，改动极小（2 个）
+
+### O1. 交易决策未用强推理模型 — haiku/sonnet 都映射到同一模型
+- **文件**: `config/settings.yaml:142-155`
+- **问题**: `haiku` 和 `sonnet` 均映射到 `deepseek-chat`。系统设计中 trader/risk_manager 应用 sonnet（强模型），但实际落地两者完全相同。注释中已有 `deepseek-reasoner` 配置但被注释掉
+- **影响**: 交易决策（最关键环节）没有得到更强模型加持，方向判断准确率和止损精度受限
+- **修复**: 取消注释 `role_models`，为 trader/risk_manager 启用 `deepseek-reasoner`
+- **工作量**: 改 1 行配置
+- [x] 已修复
+
+### O2. 11 个数据源在 prompt 中缺少分析指引 — AI 可能完全忽略
+- **文件**: `src/cryptobot/workflow/prompts.py:34-130`（四个分析师 prompt）
+- **问题**: 系统采集了 16+ 数据源并注入 AI，但 prompt 的分析框架中遗漏了大量数据源:
+  - TECHNICAL_ANALYST: 缺 `orderbook`（订单簿深度）
+  - ONCHAIN_ANALYST: 缺 `coinglass_liquidation`, `open_interest`, `options_sentiment`, `whale_activity`
+  - SENTIMENT_ANALYST: 缺 `stablecoin_flows`, `macro_events`, `dxy`（美元指数）
+  - FUNDAMENTAL_ANALYST: 缺 `dilution_risk`（代币稀释）, `defi_tvl`
+- **影响**: 花大力气接入的数据源（订单簿、期权、巨鲸、稳定币流、DXY 等）AI 完全没在看
+- **修复**: 为每个分析师 prompt 补全数据维度说明和分析框架
+- **工作量**: 仅修改 prompt 文本
+- [x] 已修复
+
+---
+
+## P1 — 高影响优化（7 个）
+
+### O3. TRADER 缺少「入场类型」定价锚定指引
+- **文件**: `src/cryptobot/workflow/prompts.py:168-204`
+- **问题**: TRADER prompt 要求「设定合理入场范围」，但未区分「市价立即入场」和「限价等待回调」。realtime 监控有 120 分钟最大等待窗口（monitor.py:187），entry_range 离当前价太远则永远不被 promote；太近则丧失等待更好入场价的机会
+- **影响**: 入场价差 1% 在 3x 杠杆下影响 3% 盈亏
+- **修复**: (1) prompt 增加入场类型指引 (2) TRADE_SCHEMA 增加 `entry_type: "market"|"limit_wait"` (3) execute 节点据此决定写 signal.json 还是 pending
+- **工作量**: 中
+- [x] 已修复
+
+### O4. 研究员只看分析师结论，看不到原始数据
+- **文件**: `src/cryptobot/workflow/nodes/research.py:30-38`
+- **问题**: 看多/看空研究员只收到 4 位分析师的结论性 JSON（direction/confidence/summary），完全看不到原始数据（价格、指标数值、资金费率等）。「多空辩论」变成「分析师结论的重新包装」
+- **影响**: 研究员无法独立验证分析师判断、发现遗漏、构建更有说服力的论据
+- **修复**: research 节点中将关键原始数据摘要（current_price, rsi, funding_rate, nearest_support/resistance 等）一并注入研究员 prompt
+- **工作量**: 中
+- [x] 已修复
+
+### O5. 信号过期时间固定 4 小时，不区分市场状态
+- **文件**: `src/cryptobot/signal/bridge.py:147-150`
+- **问题**: 无论趋势/震荡/高波动，无论 BTC 还是 DOGE，信号有效期均固定 4 小时。趋势市好信号可能过早过期，震荡市过时信号仍有效
+- **影响**: 趋势行情中好信号过早丢失（错过盈利），震荡市中过时信号导致亏损入场
+- **修复**: (1) TRADE_SCHEMA 增加 `suggested_expiry_hours` (2) regime 兜底: trending=6h, ranging=2h, volatile=1.5h
+- **工作量**: 中
+- [x] 已修复
+
+### O6. 分批止盈减仓量基于初始 stake_amount 而非当前剩余
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:367`
+- **问题**: `reduce_amount = trade.stake_amount * reduce_pct / 100`，`trade.stake_amount` 是初始保证金。已执行第一次减仓后，该值不反映当前剩余仓位
+- **影响**: 分批止盈精度直接影响利润锁定效率
+- **修复**: 改为基于当前实际仓位: `current_value = trade.amount * current_rate`
+- **工作量**: 低（1 行）
+- [x] 已修复
+
+### O7. Agent trailing_stop 激活门槛过高（5%）
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:244`
+- **问题**: `current_profit > 0.05` — 需净利润超 5% 才激活。很多交易在 2-4% 利润时回撤变为亏损
+- **影响**: trailing stop 在大量盈利交易中完全不生效
+- **修复**: 降低到 2%，或让 AI 在信号中指定 `trailing_activation_pct`
+- **工作量**: 低
+- [x] 已修复
+
+### O8. 入场确认逻辑 EMA7/EMA25 过于刚性
+- **文件**: `src/cryptobot/realtime/monitor.py:115-144`
+- **问题**: 做多要求 EMA7>EMA25（好的回调入场恰发生在 EMA7 暂时 <= EMA25 时）；RSI>=75 直接拒绝（强趋势中 RSI 可持续高位）；无成交量确认
+- **影响**: 信号在最佳入场点被拒绝
+- **修复**: (1) EMA 改为软信号 (2) RSI 阈值根据 regime 动态调整 (3) 增加放量突破确认
+- **工作量**: 中
+- [x] 已修复
+
+### O9. 移动止盈三档固定参数与 AI 止盈规划冲突
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:261-268`
+- **问题**: 固定三档（>20% 尾随 3%，>10% 尾随 5%，>5% 移至成本线）与 AI 分批止盈冲突: AI 计划 +15% 止第一批，但三档在 +10% 就用 5% 尾随，+12% 就平仓了
+- **影响**: 过早退出盈利交易
+- **修复**: 有 take_profit 列表时以 AI 规划为参考，仅超过所有 TP 后启用固定尾随
+- **工作量**: 中
+- [x] 已修复
+
+---
+
+## P2 — 中高影响优化（10 个）
+
+### O10. perf_feedback 收集了但 screen/trade 节点未使用
+- **文件**: `src/cryptobot/workflow/nodes/collect.py:196-208`
+- **问题**: collect 节点计算了 `perf_feedback`（含 by_symbol 币种级胜率），存入 state，但 screen/trade 节点都没用
+- **影响**: 反复在历史表现差的币种上亏损
+- **修复**: (1) screen 对胜率 <30% 的币种减分 (2) trade 注入该币种历史表现到 prompt
+- **工作量**: 低
+- [x] 已修复
+
+### O11. 盈亏比硬性门槛 1.5 在所有市场状态下一刀切
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:358-362`
+- **问题**: 趋势市胜率高 RR 1.2 即可盈利但被 1.5 门槛拒绝；震荡市 regime_prompts 建议 RR>=2.0 但只检查 1.5
+- **影响**: 趋势市少交易机会，震荡市多低质量交易
+- **修复**: RR 门槛与 regime 联动: trending=1.2, ranging=2.0, volatile=2.0
+- **工作量**: 低
+- [x] 已修复
+
+### O12. screen 筛选未考虑已持仓币种优先级
+- **文件**: `src/cryptobot/workflow/nodes/screen.py:49-126`
+- **问题**: screen 选出 3-5 个币种深度分析，但不知道当前持仓。已持仓币种未被选中则产生风险盲区
+- **影响**: 已持仓币种的市场反转信号可能被漏掉
+- **修复**: 对已持仓币种增加优先级加权（+5 分确保始终在分析列表中）
+- **工作量**: 低
+- [x] 已修复
+
+### O13. 分析师权重仅作为文字建议，投票时等权
+- **文件**: `src/cryptobot/workflow/nodes/trade.py:138-152`
+- **问题**: 一致性评分中 4 位分析师等权投票。准确率 80% 的技术分析师和 40% 的情绪分析师投票权相同
+- **影响**: 低质量分析师拉偏方向判断
+- **修复**: (1) 一致性评分中使用加权投票 (2) prompt 中呈现加权方向结论
+- **工作量**: 中
+- [x] 已修复
+
+### O14. 半凯利系数固定 0.5，不随信号质量调整
+- **文件**: `src/cryptobot/risk/position_sizer.py:126`
+- **问题**: 高确信度趋势交易（90+）和低确信度震荡交易（62）用相同 0.5 保守系数
+- **影响**: 高确信度仓位偏小，低确信度仓位可能仍偏大
+- **修复**: 根据 confidence 和 regime 动态调整: confidence>=85+trending=0.6, confidence<70+volatile=0.3
+- **工作量**: 低
+- [x] 已修复
+
+### O15. Kelly 冷启动默认值导致公式输出为零
+- **文件**: `src/cryptobot/risk/position_sizer.py:28-29`
+- **问题**: 默认 win_rate=0.35, ratio=1.2 → f*=-0.192 → 半凯利=0。系统启动初期 Kelly 完全不生效
+- **影响**: 前 10 笔交易仓位仅靠 2% 风险法
+- **修复**: 冷启动默认值改为 win_rate=0.50, ratio=1.5（f*=0.167, 半凯利=8.3%）
+- **工作量**: 低（改 2 个数值）
+- [x] 已修复
+
+### O16. trending 市最低置信度仅 50，几乎所有信号都能通过
+- **文件**: `config/settings.yaml:123`, `src/cryptobot/workflow/prompts.py:192`
+- **问题**: prompt 写「<60 建议不交易」，但 trending regime 设 min_confidence=50。50%≈抛硬币
+- **影响**: 低质量信号通过硬性检查
+- **修复**: trending 50→58, ranging 58→63, volatile 63→68
+- **工作量**: 低
+- [x] 已修复
+
+### O17. 持仓复审链上数据严重不足
+- **文件**: `src/cryptobot/workflow/re_review.py:88-91`
+- **问题**: 复审链上分析师只收到 2/6 个数据源（缺 coinglass_liq, open_interest, options_sentiment, whale_activity）
+- **影响**: 复审分析质量远低于首次分析
+- **修复**: 补全 4 个数据源注入
+- **工作量**: 低（增加 4 行）
+- [x] 已修复
+
+### O18. 持仓复审间隔不区分盈亏状态
+- **文件**: `src/cryptobot/cli/scheduler.py:371`
+- **问题**: 所有持仓统一每 2 小时复审。浮亏 8% 高危持仓和浮盈 15% 安全持仓用相同频率
+- **影响**: 高危持仓可能从可救变为止损
+- **修复**: pnl<-3% 或 pnl>10% 时触发单币种紧急复审
+- **工作量**: 中
+- [x] 已修复
+
+### O19. Prompt 优化只分析亏损，不分析盈利优化空间
+- **文件**: `src/cryptobot/evolution/prompt_optimizer.py:73-127`
+- **问题**: `analyze_failures()` 只分析亏损。盈利交易也有优化空间: 止盈太早（MFE 远超止盈价）、高置信度仓位偏小
+- **影响**: 只减少亏损但不增加盈利上限
+- **修复**: 增加 `analyze_wins()` 函数
+- **工作量**: 中
+- [x] 已修复
+
+---
+
+## P3 — 中等影响（9 个）
+
+### O20. 模型竞赛 consensus 在 2 模型场景下过于保守
+- **文件**: `src/cryptobot/evolution/model_competition.py:148-150`
+- **问题**: 2 模型意见不一致时强制 no_trade（1/2 不算超半数）
+- **影响**: 竞赛模式交易频率大幅降低
+- **修复**: 不一致时取更强模型结论；或增加第三模型打破平局
+- **工作量**: 低
+- [x] 已修复
+
+### O21. confidence_tuner 动态调整幅度过小
+- **文件**: `src/cryptobot/journal/confidence_tuner.py:74-85`
+- **问题**: 每区间最多 ±5，总范围 [55,80]。严重过度自信时 +5 不够
+- **影响**: 适应置信度偏差的速度太慢
+- **修复**: 偏差 >30% 时 +10，>50% 时 +15；范围扩到 [50,85]
+- **工作量**: 低
+- [x] 已修复
+
+### O22. Trader 没有收到该币种历史表现数据
+- **文件**: `src/cryptobot/workflow/nodes/trade.py:154-174`
+- **问题**: 全局绩效摘要有但无该币种的 `by_symbol` 数据
+- **影响**: AI 无法在反复亏损的币种上更谨慎
+- **修复**: trade prompt 中提取该币种历史表现
+- **工作量**: 低
+- [x] 已修复
+
+### O23. screen 节点 CoinGecko API 串行调用，每币 2s 间隔
+- **文件**: `src/cryptobot/workflow/nodes/screen.py:133-150`
+- **问题**: 5 币种串行 + 2s 间隔 = 8-10s 延迟
+- **影响**: 工作流延迟增加，数据时效降低
+- **修复**: ThreadPoolExecutor(3) + Semaphore(2) 并行化
+- **工作量**: 中
+- [x] 已修复
+
+### O24. 分析周期固定 30 分钟，4h K 线不变
+- **文件**: `config/settings.yaml:78`
+- **问题**: 30min 内 4h K 线几乎不变，浪费 LLM 调用
+- **影响**: 浪费 API 成本
+- **修复**: 根据 regime 动态调整: trending=90-120min, ranging=60min, volatile=30min
+- **工作量**: 低
+- [ ] 延迟 (需改 APScheduler 运行时调度架构)
+
+### O25. exchange_reserve OI 数据仅支持 5/10 币种
+- **文件**: `src/cryptobot/data/exchange_reserve.py:20`
+- **问题**: ADAUSDT/DOGEUSDT/AVAXUSDT/LINKUSDT/SUIUSDT 无 OI 数据
+- **影响**: 5 个币种链上分析缺 open_interest 维度
+- **修复**: 验证 CoinGlass API 后扩展列表
+- **工作量**: 低
+- [x] 已修复
+
+### O26. journal 同步缺少 exit_reason 和 duration_hours
+- **文件**: `src/cryptobot/cli/scheduler.py:328-335`
+- **问题**: 未填充退出原因和持仓时长，SignalRecord 模型已有这两个字段
+- **影响**: 绩效分析不完整
+- **修复**: 从 Freqtrade trade 数据提取
+- **工作量**: 低
+- [x] 已修复
+
+### O27. Freqtrade 入场容差 50% 过大
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:139`
+- **问题**: entry_range=[100,102] 时容差=1，允许 [99,103] 入场
+- **影响**: 远离理想入场价建仓，恶化盈亏比
+- **修复**: 容差 50%→15%
+- **工作量**: 低
+- [x] 已修复
+
+### O28. RE_REVIEWER 缺少 regime 和绩效上下文
+- **文件**: `src/cryptobot/workflow/re_review.py:130-149`
+- **问题**: 复审员不知道市场 regime、币种历史、账户盈亏
+- **影响**: 复审决策不贴合市场环境
+- **修复**: 注入 regime 和绩效上下文到 prompt
+- **工作量**: 低
+- [x] 已修复
+
+---
+
+## P4 — 低影响 / 长期（4 个）
+
+### O29. portfolio_context 缺少类别/相关性分组信息
+- **文件**: `src/cryptobot/workflow/utils.py:19-78`
+- **问题**: 未展示类别分布和相关性分组。pairs.yaml 有数据但未被利用
+- **影响**: 无法评估组合集中度风险
+- **修复**: 增加类别分布统计
+- **工作量**: 低
+- [x] 已修复
+
+### O30. Prompt 版本缓存使用全局可变变量
+- **文件**: `src/cryptobot/workflow/prompts.py:10-22`
+- **问题**: 同一轮中 prompt 版本切换后仍用旧版本
+- **影响**: 极少数边界情况
+- **修复**: 改为每次读取或带 TTL 缓存
+- **工作量**: 低
+- [ ] 延迟 (已有 reset_prompt_version_cache 每轮重置)
+
+### O31. 回测策略与实盘策略逻辑差异大
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:163-191`
+- **问题**: 回测用简单规则，与实盘 AI 分析完全不同。回测结果不可信
+- **影响**: Hyperopt 参数可能不适用于 AI 信号
+- **修复**: 建立信号回放式回测框架
+- **工作量**: 高
+- [ ] 延迟 (独立子项目，数周级别)
+
+### O32. 全局数据获取 _fetch_global 内部串行
+- **文件**: `src/cryptobot/workflow/utils.py:81-116`
+- **问题**: 5 个 HTTP 请求串行执行，可能耗时 5-10s
+- **影响**: 数据采集延迟
+- **修复**: 内部也使用 ThreadPoolExecutor 并行
+- **工作量**: 低
+- [x] 已修复
+
+---
+
+## 数据利用率审计表
+
+| 数据源 | 采集模块 | 注入分析师 | prompt 有说明 | 状态 | 关联 |
+|--------|---------|-----------|-------------|------|------|
+| tech_indicators | calculator.py | technical | 有 | 完整 | - |
+| multi_timeframe | multi_timeframe.py | technical | 有 | 完整 | - |
+| volume_analysis | multi_timeframe.py | technical | 有 | 完整 | - |
+| support_resistance | multi_timeframe.py | technical | 有 | 完整 | - |
+| orderbook | orderbook.py | technical | 有 | 完整 | O2 ✅ |
+| derivatives | crypto_specific.py | onchain | 有 | 完整 | - |
+| liquidation | liquidation.py | onchain | 有 | 完整 | - |
+| coinglass_liq | coinglass.py | onchain | 有 | 完整 | O2 ✅ |
+| open_interest | exchange_reserve.py | onchain | 有 | 完整 | O2 ✅ |
+| options_sentiment | options.py | onchain | 有 | 完整 | O2 ✅ |
+| whale_activity | whale_tracker.py | onchain | 有 | 完整 | O2 ✅ |
+| fear_greed | sentiment.py | sentiment | 有 | 完整 | - |
+| market_overview | news.py | sentiment | 有 | 完整 | - |
+| global_news | crypto_news.py | sentiment | 有 | 完整 | - |
+| stablecoin_flows | stablecoin.py | sentiment | 有 | 完整 | O2 ✅ |
+| macro_events | macro_calendar.py | sentiment+risk | 有 | 完整 | O2 ✅ |
+| dxy | dxy.py | sentiment | 有 | 完整 | O2 ✅ |
+| coin_info | news.py | fundamental | 有 | 完整 | - |
+| btc_correlation | market_structure.py | fundamental | 有 | 完整 | - |
+| coin_news | crypto_news.py | fundamental | 有 | 完整 | - |
+| dilution_risk | token_unlocks.py | fundamental | 有 | 完整 | O2 ✅ |
+| defi_tvl | defi_tvl.py | fundamental | 有 | 完整 | O2 ✅ |
+| perf_feedback | analytics.py | screen+trade | 有 | 完整 | O10/O22 ✅ |
+
+---
+
+## 第三轮统计
+
+| 优先级 | 数量 | 已修复 | 延迟 | 描述 |
+|--------|------|--------|------|------|
+| P0 极高影响 | 2 | 2 | 0 | O1-O2: 模型能力 + 数据利用 |
+| P1 高影响 | 7 | 7 | 0 | O3-O9: 入场出场策略 |
+| P2 中高影响 | 10 | 10 | 0 | O10-O19: 信号质量 + 资金效率 |
+| P3 中等影响 | 9 | 8 | 1 | O20-O28: 精细化调优 (O24 延迟) |
+| P4 低影响 | 4 | 2 | 2 | O29-O32: 长期优化 (O30/O31 延迟) |
+| **合计** | **32** | **29** | **3** | |

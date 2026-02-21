@@ -12,6 +12,7 @@ from cryptobot.cli.scheduler import (
     job_check_alerts,
     job_cleanup,
     job_re_review,
+    job_urgent_review,
     job_workflow_run,
     _maybe_reload_config,
     _maybe_reschedule,
@@ -201,8 +202,8 @@ class TestDaemonCLI:
 
         assert result.exit_code == 0
         assert "调度器启动" in result.output
-        # 验证 8 个 job 被添加 (含 config_reload + daily_report + prompt_optimization)
-        assert mock_sched.add_job.call_count == 8
+        # 验证 9 个 job 被添加 (含 config_reload + daily_report + prompt_optimization + urgent_review)
+        assert mock_sched.add_job.call_count == 9
         job_ids = {
             call.kwargs.get("id") or call[2].get("id")
             for call in mock_sched.add_job.call_args_list
@@ -302,3 +303,76 @@ class TestSymbolToFtPair:
 
     def test_eth(self):
         assert _symbol_to_ft_pair("ETHUSDT") == "ETH/USDT:USDT"
+
+
+# ─── job_urgent_review ────────────────────────────────────────────────────
+
+class TestJobUrgentReview:
+    @patch("cryptobot.freqtrade_api.ft_api_get", return_value=[])
+    def test_no_positions(self, mock_ft, caplog):
+        """无持仓时不触发复审"""
+        import logging
+        with caplog.at_level(logging.INFO):
+            job_urgent_review()
+        assert "紧急复审触发" not in caplog.text
+
+    @patch("cryptobot.freqtrade_api.ft_api_get", return_value=None)
+    def test_none_positions(self, mock_ft, caplog):
+        """API 返回 None 不报错"""
+        job_urgent_review()
+        assert "紧急复审触发" not in caplog.text
+
+    @patch("cryptobot.freqtrade_api.ft_api_get")
+    def test_triggers_on_large_loss(self, mock_ft, caplog):
+        """亏损>3% 时触发紧急复审"""
+        import logging
+        mock_ft.return_value = [
+            {"pair": "BTC/USDT:USDT", "profit_ratio": -0.05},  # -5%
+        ]
+        with (
+            caplog.at_level(logging.INFO),
+            patch("cryptobot.workflow.graph.collect_data_for_symbols", return_value={}),
+            patch("cryptobot.workflow.graph.re_review", return_value=[]),
+        ):
+            job_urgent_review()
+        assert "紧急复审触发" in caplog.text
+        assert "BTCUSDT" in caplog.text
+
+    @patch("cryptobot.freqtrade_api.ft_api_get")
+    def test_triggers_on_large_profit(self, mock_ft, caplog):
+        """盈利>10% 时触发紧急复审"""
+        import logging
+        mock_ft.return_value = [
+            {"pair": "ETH/USDT:USDT", "profit_ratio": 0.12},  # +12%
+        ]
+        with (
+            caplog.at_level(logging.INFO),
+            patch("cryptobot.workflow.graph.collect_data_for_symbols", return_value={}),
+            patch("cryptobot.workflow.graph.re_review", return_value=[]),
+        ):
+            job_urgent_review()
+        assert "紧急复审触发" in caplog.text
+
+    @patch("cryptobot.freqtrade_api.ft_api_get")
+    def test_skips_normal_pnl(self, mock_ft, caplog):
+        """P&L 在正常范围内不触发"""
+        import logging
+        mock_ft.return_value = [
+            {"pair": "BTC/USDT:USDT", "profit_ratio": 0.02},  # +2%
+        ]
+        with caplog.at_level(logging.INFO):
+            job_urgent_review()
+        assert "紧急复审触发" not in caplog.text
+
+    @patch("cryptobot.freqtrade_api.ft_api_get")
+    def test_handles_review_exception(self, mock_ft, caplog):
+        """复审异常不中断"""
+        mock_ft.return_value = [
+            {"pair": "BTC/USDT:USDT", "profit_ratio": -0.05},
+        ]
+        with patch(
+            "cryptobot.workflow.graph.collect_data_for_symbols",
+            side_effect=RuntimeError("boom"),
+        ):
+            job_urgent_review()
+        assert "紧急复审失败" in caplog.text
