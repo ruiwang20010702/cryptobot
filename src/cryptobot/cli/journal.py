@@ -189,6 +189,58 @@ def sync(json_output: bool):
         console.print(f"同步完成: {synced} 笔交易已更新")
 
 
+@journal.command("backfill")
+@click.option("--days", default=180, help="回溯天数")
+@click.option("--dry-run", is_flag=True, help="预览不写入")
+@click.option("--symbol", multiple=True, help="指定币种 (可多次)")
+@click.option("--json-output", is_flag=True, help="输出 JSON 格式")
+def backfill(days: int, dry_run: bool, symbol: tuple, json_output: bool):
+    """历史信号回填 (从 K 线生成模拟记录)"""
+    from dataclasses import asdict
+
+    from cryptobot.journal.backfill import run_backfill
+
+    symbols = list(symbol) if symbol else None
+
+    if not json_output:
+        mode = "预览模式" if dry_run else "写入模式"
+        console.print(f"[cyan]开始回填 ({mode}, {days} 天)...[/cyan]")
+
+    result = run_backfill(days=days, symbols=symbols, dry_run=dry_run)
+
+    if json_output:
+        click.echo(json.dumps(asdict(result), indent=2, ensure_ascii=False))
+        return
+
+    lines = [
+        f"生成: {result.total_generated} 笔",
+        f"保存: {result.total_saved} 笔",
+        f"跳过(已存在): {result.skipped_existing} 笔",
+        f"胜率: {result.win_rate:.1%}",
+        f"平均盈亏: {result.avg_pnl_pct:+.2f}%",
+    ]
+
+    if result.by_symbol:
+        lines.append("")
+        lines.append("按币种:")
+        for sym, cnt in sorted(result.by_symbol.items()):
+            lines.append(f"  {sym}: {cnt} 笔")
+
+    if result.by_exit_reason:
+        lines.append("")
+        lines.append("按退出原因:")
+        for reason, cnt in sorted(result.by_exit_reason.items()):
+            lines.append(f"  {reason}: {cnt} 笔")
+
+    if result.errors:
+        lines.append("")
+        lines.append("[red]错误:[/red]")
+        for err in result.errors:
+            lines.append(f"  {err}")
+
+    console.print(Panel("\n".join(lines), title="回填结果"))
+
+
 def _infer_exit_reason(trade: dict) -> str:
     """从 Freqtrade 交易推断退出原因"""
     exit_reason = trade.get("exit_reason", "") or ""
