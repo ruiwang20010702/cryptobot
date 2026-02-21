@@ -102,6 +102,7 @@ execute                         5m 指标确认?
 | `evolution/regime_prompts.py` | Regime 级 Prompt Addon：趋势市/震荡市/高波动市分别注入不同偏好到 trader/analyst |
 | `evolution/capital_prompts.py` | 资金层级 Prompt Addon：micro/small 层级注入保守偏好到 trader/analyst/risk_manager |
 | `evolution/prompt_optimizer.py` | 绩效驱动 Prompt 自动迭代：检测退化 → 分析失败 → AI 生成改进 → 创建新版本 |
+| `evolution/strategy_advisor.py` | 策略顾问 Agent：绩效模式发现 → 规则生成 → Prompt Addon 注入 → 14天评估 → 续期/淘汰 |
 | `evolution/model_competition.py` | 多模型竞赛：并行调用多模型决策，consensus/best_performer 策略择优 |
 | `risk/` | 仓位计算(Kelly)、爆仓距离计算 |
 | `notify.py` | Telegram 通知：信号/风控/告警/日报/错误推送（silent fallback） |
@@ -127,6 +128,7 @@ execute                         5m 指标确认?
 - Prompt 版本: `data/output/evolution/prompt_versions.json`
 - Prompt 迭代记录: `data/output/evolution/iterations.json`
 - 模型竞赛记录: `data/output/evolution/competition.json`
+- 策略规则: `data/output/evolution/strategy_rules.json`
 - 决策归档: `data/output/archive/{YYYY-MM}/{run_id}.json`
 - 配置: `config/settings.yaml`、`config/pairs.yaml`
 
