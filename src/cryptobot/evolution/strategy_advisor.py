@@ -142,7 +142,63 @@ def _expire_old_rules(data: dict) -> dict:
 
 
 def _evaluate_expired_rule(rule: dict) -> dict:
-    """评估规则有效性: 对比启用前后绩效"""
+    """评估规则有效性: Regime 感知对比启用前后绩效
+
+    使用 regime_evaluator 在相同 regime 下对比，避免 regime 切换导致的误判。
+    """
+    try:
+        from cryptobot.journal.regime_evaluator import evaluate_rule_effectiveness
+        from cryptobot.journal.storage import get_all_records
+
+        created_at = rule.get("created_at", "")
+        all_records = get_all_records()
+        closed = [
+            r for r in all_records
+            if r.status == "closed" and r.actual_pnl_pct is not None
+        ]
+
+        before = [r for r in closed if r.timestamp < created_at]
+        after = [r for r in closed if r.timestamp >= created_at]
+
+        if len(before) < 2 or len(after) < 2:
+            return {
+                "verdict": "neutral",
+                "improvement_pct": 0,
+                "reason": "前后样本不足，无法评估",
+            }
+
+        result = evaluate_rule_effectiveness(rule.get("id", ""), before, after)
+
+        verdict = result["overall_verdict"]
+        # 汇总各 regime 改善百分比 (加权平均)
+        total_samples = 0
+        weighted_improvement = 0.0
+        for regime_data in result["by_regime"].values():
+            n = regime_data["sample_size"]
+            total_samples += n
+            weighted_improvement += regime_data["improvement_pct"] * n
+        avg_improvement = (
+            weighted_improvement / total_samples if total_samples > 0 else 0.0
+        )
+
+        regime_details = ", ".join(
+            f"{k}: {v['verdict']}"
+            for k, v in result["by_regime"].items()
+        )
+
+        return {
+            "verdict": verdict,
+            "improvement_pct": round(avg_improvement, 1),
+            "regime_analysis": result["by_regime"],
+            "reason": f"Regime 感知评估: {regime_details}",
+        }
+    except Exception as e:
+        logger.warning("Regime 感知评估失败，回退到简单对比: %s", e)
+        return _evaluate_expired_rule_simple(rule)
+
+
+def _evaluate_expired_rule_simple(rule: dict) -> dict:
+    """简单胜率对比 (回退方案)"""
     try:
         from cryptobot.journal.analytics import calc_performance
         current = calc_performance(RULE_TTL_DAYS)

@@ -313,6 +313,73 @@ def edge(days: int, ci: bool, json_output: bool):
         console.print(f"[red bold]{decay['warning']}[/red bold]")
 
 
+@journal.command("regime-eval")
+@click.option("--days-a", default=30, help="Period A 天数 (基准期)")
+@click.option("--days-b", default=14, help="Period B 天数 (评估期)")
+@click.option("--json-output", is_flag=True, help="输出 JSON 格式")
+def regime_eval(days_a: int, days_b: int, json_output: bool):
+    """Regime 感知绩效评估: 按市场状态分组对比"""
+    from dataclasses import asdict
+    from datetime import datetime, timedelta, timezone
+
+    from cryptobot.journal.regime_evaluator import evaluate_by_regime
+    from cryptobot.journal.storage import get_all_records
+
+    now = datetime.now(timezone.utc)
+    cutoff_a = (now - timedelta(days=days_a + days_b)).isoformat()
+    cutoff_b = (now - timedelta(days=days_b)).isoformat()
+
+    all_records = get_all_records()
+    closed = [
+        r for r in all_records
+        if r.status == "closed" and r.actual_pnl_pct is not None
+    ]
+
+    records_a = [r for r in closed if cutoff_a <= r.timestamp < cutoff_b]
+    records_b = [r for r in closed if r.timestamp >= cutoff_b]
+
+    results = evaluate_by_regime(records_a, records_b)
+
+    if json_output:
+        click.echo(json.dumps(
+            [asdict(r) for r in results],
+            indent=2, ensure_ascii=False,
+        ))
+        return
+
+    if not results:
+        console.print("[yellow]无足够数据进行 regime 评估[/yellow]")
+        return
+
+    table = Table(title=f"Regime 感知评估 (A: {days_a}d前~{days_b}d前 vs B: 近{days_b}d)")
+    table.add_column("Regime", style="cyan")
+    table.add_column("A 样本", justify="right")
+    table.add_column("A 胜率", justify="right")
+    table.add_column("A Sharpe", justify="right")
+    table.add_column("B 样本", justify="right")
+    table.add_column("B 胜率", justify="right")
+    table.add_column("B Sharpe", justify="right")
+    table.add_column("改善%", justify="right")
+    table.add_column("显著", justify="center")
+
+    for r in results:
+        imp_color = "green" if r.improvement_pct > 0 else "red"
+        sig_str = "[green]Yes[/green]" if r.significant else "[dim]No[/dim]"
+        table.add_row(
+            r.regime,
+            str(r.period_a["count"]),
+            f"{r.period_a['win_rate']:.1%}",
+            f"{r.period_a['sharpe']:.2f}",
+            str(r.period_b["count"]),
+            f"{r.period_b['win_rate']:.1%}",
+            f"{r.period_b['sharpe']:.2f}",
+            f"[{imp_color}]{r.improvement_pct:+.1f}%[/{imp_color}]",
+            sig_str,
+        )
+
+    console.print(table)
+
+
 def _infer_exit_reason(trade: dict) -> str:
     """从 Freqtrade 交易推断退出原因"""
     exit_reason = trade.get("exit_reason", "") or ""

@@ -52,6 +52,14 @@ risk:
   max_same_direction_pct: 50        # 同方向总仓位上限 %
   max_correlated_same_direction: 3  # 高相关组内同向持仓上限
 
+  # 月度亏损熔断
+  circuit_breaker:
+    enabled: true
+    reduce_after_months: 2            # 连续 N 月亏损 → 降仓
+    suspend_after_months: 3           # 连续 N 月亏损 → 暂停交易
+    suspend_days: 7                   # 暂停天数
+    position_scale: 0.5               # 降仓时仓位缩放系数
+
   # P13.2: 置信度绝对下限（在所有其他检查之前）
   confidence_floor: 60                # 绝对下限
   confidence_floor_ranging: 65        # 震荡市绝对下限
@@ -200,6 +208,19 @@ realtime:
   price_tolerance_pct: 0.1          # 价格容忍度（entry_range 外 0.1% 也算进入）
   require_indicator_confirm: true   # 是否需要 5m 指标确认
   max_wait_minutes: 120             # 单信号最长等待时间（超过则放弃）
+
+# 策略 (虚拟盘)
+strategies:
+  funding_arb:
+    enabled: false                    # 默认关闭
+    min_funding_rate: 0.01            # 0.01% / 8h 最低费率阈值
+    consecutive_positive: 3           # 连续正费率期数
+    max_positions: 3                  # 最大同时持仓数
+    position_size_pct: 20             # 每个头寸占余额 %
+    virtual_balance: 10000            # 虚拟盘初始余额
+  grid:
+    enabled: false                    # 默认关闭
+    virtual_balance: 10000            # 虚拟盘初始余额
 
 # 资金感知策略 (可覆盖默认层级参数)
 # capital_strategy:

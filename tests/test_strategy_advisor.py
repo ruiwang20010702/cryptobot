@@ -196,30 +196,87 @@ class TestExpireOldRules:
 # ── _evaluate_expired_rule ────────────────────────────────────────────
 
 class TestEvaluateExpiredRule:
-    @patch("cryptobot.journal.analytics.calc_performance")
-    def test_effective_when_improved(self, mock_perf):
-        mock_perf.return_value = {"win_rate": 0.55}
+    @patch("cryptobot.journal.regime_evaluator.evaluate_rule_effectiveness")
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_effective_when_improved(self, mock_records, mock_eval):
         rule = _make_rule(win_rate=0.35)
+        created_at = rule["created_at"]
+        before_ts = (datetime.fromisoformat(created_at) - timedelta(days=1)).isoformat()
+        after_ts = (datetime.fromisoformat(created_at) + timedelta(days=1)).isoformat()
+        mock_records.return_value = [
+            MagicMock(status="closed", actual_pnl_pct=-1.0, timestamp=before_ts),
+            MagicMock(status="closed", actual_pnl_pct=-2.0, timestamp=before_ts),
+            MagicMock(status="closed", actual_pnl_pct=3.0, timestamp=after_ts),
+            MagicMock(status="closed", actual_pnl_pct=2.0, timestamp=after_ts),
+        ]
+        mock_eval.return_value = {
+            "overall_verdict": "effective",
+            "by_regime": {
+                "trending": {
+                    "verdict": "effective",
+                    "improvement_pct": 20.0,
+                    "sample_size": 4,
+                },
+            },
+        }
 
         result = _evaluate_expired_rule(rule)
 
         assert result["verdict"] == "effective"
         assert result["improvement_pct"] > 5
 
-    @patch("cryptobot.journal.analytics.calc_performance")
-    def test_harmful_when_declined(self, mock_perf):
-        mock_perf.return_value = {"win_rate": 0.25}
+    @patch("cryptobot.journal.regime_evaluator.evaluate_rule_effectiveness")
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_harmful_when_declined(self, mock_records, mock_eval):
         rule = _make_rule(win_rate=0.35)
+        created_at = rule["created_at"]
+        before_ts = (datetime.fromisoformat(created_at) - timedelta(days=1)).isoformat()
+        after_ts = (datetime.fromisoformat(created_at) + timedelta(days=1)).isoformat()
+        mock_records.return_value = [
+            MagicMock(status="closed", actual_pnl_pct=2.0, timestamp=before_ts),
+            MagicMock(status="closed", actual_pnl_pct=3.0, timestamp=before_ts),
+            MagicMock(status="closed", actual_pnl_pct=-5.0, timestamp=after_ts),
+            MagicMock(status="closed", actual_pnl_pct=-3.0, timestamp=after_ts),
+        ]
+        mock_eval.return_value = {
+            "overall_verdict": "harmful",
+            "by_regime": {
+                "trending": {
+                    "verdict": "harmful",
+                    "improvement_pct": -30.0,
+                    "sample_size": 4,
+                },
+            },
+        }
 
         result = _evaluate_expired_rule(rule)
 
         assert result["verdict"] == "harmful"
         assert result["improvement_pct"] < -5
 
-    @patch("cryptobot.journal.analytics.calc_performance")
-    def test_neutral_when_similar(self, mock_perf):
-        mock_perf.return_value = {"win_rate": 0.36}
+    @patch("cryptobot.journal.regime_evaluator.evaluate_rule_effectiveness")
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_neutral_when_similar(self, mock_records, mock_eval):
         rule = _make_rule(win_rate=0.35)
+        created_at = rule["created_at"]
+        before_ts = (datetime.fromisoformat(created_at) - timedelta(days=1)).isoformat()
+        after_ts = (datetime.fromisoformat(created_at) + timedelta(days=1)).isoformat()
+        mock_records.return_value = [
+            MagicMock(status="closed", actual_pnl_pct=1.0, timestamp=before_ts),
+            MagicMock(status="closed", actual_pnl_pct=1.0, timestamp=before_ts),
+            MagicMock(status="closed", actual_pnl_pct=1.0, timestamp=after_ts),
+            MagicMock(status="closed", actual_pnl_pct=1.0, timestamp=after_ts),
+        ]
+        mock_eval.return_value = {
+            "overall_verdict": "neutral",
+            "by_regime": {
+                "trending": {
+                    "verdict": "neutral",
+                    "improvement_pct": 1.0,
+                    "sample_size": 4,
+                },
+            },
+        }
 
         result = _evaluate_expired_rule(rule)
 

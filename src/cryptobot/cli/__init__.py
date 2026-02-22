@@ -18,6 +18,10 @@ from cryptobot.cli.doctor import doctor
 from cryptobot.cli.init_cmd import init_cmd
 from cryptobot.cli.prompt import prompt
 from cryptobot.cli.archive import archive
+from cryptobot.cli.features_cmd import features
+from cryptobot.cli.ml_cmd import ml
+from cryptobot.cli.risk_cmd import risk
+from cryptobot.cli.strategy_cmd import strategy
 
 
 @click.group()
@@ -52,3 +56,7 @@ cli.add_command(doctor)
 cli.add_command(init_cmd)
 cli.add_command(prompt)
 cli.add_command(archive)
+cli.add_command(features)
+cli.add_command(ml)
+cli.add_command(risk)
+cli.add_command(strategy)

@@ -23,10 +23,12 @@ execute                        └─写入→ signal.json  ─读取→  自动
 - **16 个数据源** — 链上(CoinGlass)、情绪(Fear&Greed)、新闻、订单簿、期权、稳定币流、DXY、DeFi TVL、巨鲸追踪等
 - **市场状态感知** — ADX+Hurst 加权 Regime 检测（趋势/震荡/高波动），差异化参数 + Prompt 注入
 - **多策略路由** — 趋势市→AI 趋势策略 / 震荡市→BB 均值回归 / 高波动→观望，自适应切换
+- **虚拟盘策略** — 资金费率套利（delta 中性赚正费率）+ 网格交易（震荡区间低买高卖），虚拟盘独立运行
 - **资金感知策略** — 根据账户余额自动调整（micro/small/medium/large 四档），小账户更保守
 - **自动进化** — 绩效驱动 Prompt 迭代、分析师动态权重、多模型竞赛、策略顾问(自动发现失败模式 → 生成规则 → 14天评估 → 淘汰/续期)
 - **量化回测** — 成本模型(手续费+滑点+资金费率) + 逐根K线模拟 + MFE自适应止盈 + Walk-forward验证 + 历史回放(LLM驱动) + 基线对照 + 统计检验
-- **全链路风控** — 最大杠杆/仓位/方向/相关性硬性限制 + 置信度下限过滤(60/65) + 做多加严(≥65) + 震荡市禁多 + AI 软审核
+- **全链路风控** — 最大杠杆/仓位/方向/相关性硬性限制 + 置信度下限过滤(60/65) + 做多加严(≥65) + 震荡市禁多 + 币种分级(A/B/C/D) + 月度亏损熔断 + AI 软审核
+- **ML 信号评分** — LightGBM 二分类器(5-fold CV)预测涨跌概率 + 多因子 lead-lag 相关性分析识别预测因子
 - **Telegram 通知** — 信号/告警/日报/摘要，极端市场无信号也推送分析摘要
 - **决策归档** — 每轮工作流完整决策链(筛选/分析/风控/信号)持久化，支持 CLI 回溯
 - **Web Dashboard** — FastAPI + HTMX 实时面板 + K 线图
@@ -125,6 +127,12 @@ cryptobot prompt list                      # Prompt 版本管理
 cryptobot archive list                     # 决策归档列表
 cryptobot archive show <run_id>            # 查看完整归档
 cryptobot archive history <symbol>         # 币种决策历史
+cryptobot risk symbol-profile               # 币种 A/B/C/D 分级
+cryptobot features factor-analysis         # 多因子 lead-lag 相关性
+cryptobot ml train/score/evaluate          # LightGBM 模型管理
+cryptobot strategy funding-scan/run/status # 资金费率套利 (虚拟盘)
+cryptobot strategy grid-create/status/check # 网格交易 (虚拟盘)
+cryptobot strategy portfolio               # 虚拟盘总览
 cryptobot web start [--port 8000]          # Web Dashboard
 cryptobot doctor                           # 环境健康检查
 cryptobot init                             # 环境初始化
@@ -157,7 +165,10 @@ src/cryptobot/
 │   ├── multi_timeframe.py #   多时间框架共振
 │   └── hurst.py           #   Hurst 指数 (R/S 分析)
 ├── strategy/              # 交易策略
-│   └── mean_reversion.py  #   BB均值回归策略 (震荡市)
+│   ├── mean_reversion.py  #   BB均值回归策略 (震荡市)
+│   ├── virtual_portfolio.py#  虚拟盘基础设施 (不可变Portfolio)
+│   ├── funding_arb.py     #   资金费率套利 (delta中性)
+│   └── grid_trading.py    #   网格交易 (等距网格低买高卖)
 ├── evolution/             # 自动进化引擎
 │   ├── prompt_manager.py  #   Prompt 版本管理
 │   ├── prompt_optimizer.py#   绩效驱动自动优化
@@ -168,13 +179,14 @@ src/cryptobot/
 ├── signal/                # 信号读写
 ├── realtime/              # 实时入场监控 + WebSocket
 ├── events/                # 价格异动监控
-├── risk/                  # 仓位计算(Kelly 5级) + 爆仓距离 + 相关性风控 + 执行优化
-├── journal/               # 交易日志 + 绩效分析 + Edge 仪表盘
-├── features/              # 特征工程 (7提取器 + 标准化管道 + 持久化)
+├── risk/                  # 仓位计算(Kelly) + 爆仓距离 + 相关性风控 + 月度熔断 + 币种分级
+├── journal/               # 交易日志 + 绩效分析 + Edge 仪表盘 + Regime感知评估
+├── features/              # 特征工程 (7提取器 + 标准化管道 + 持久化 + 多因子分析)
+├── ml/                    # ML模型 (LightGBM 信号评分 + 5-fold CV)
 ├── backtest/              # 量化回测 (成本模型/模拟器/净值追踪/基线/统计检验/历史回放/walk-forward/bootstrap CI/过拟合检测)
 ├── web/                   # Dashboard (FastAPI + HTMX)
 ├── archive/               # AI 决策归档 (写入/读取/历史)
-├── cli/                   # 18 个 CLI 子命令
+├── cli/                   # 27 个 CLI 子命令
 ├── capital_strategy.py    # 资金感知策略
 ├── regime_smoother.py     # 市场状态平滑
 ├── notify.py              # Telegram 通知
@@ -268,6 +280,7 @@ uv run ruff check src/                     # Lint 检查
 - **FastAPI** — Web Dashboard + API
 - **APScheduler** — 定时任务调度
 - **Freqtrade** — 交易执行引擎
+- **LightGBM** — ML 信号评分模型
 - **httpx** — HTTP 客户端
 - **Rich** — CLI 输出美化
 

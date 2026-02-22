@@ -327,6 +327,15 @@ def calc_position_size(
     max_lev = pair_cfg["leverage_range"][1] if pair_cfg else 5
     leverage = min(leverage, max_lev)
 
+    # 币种分级杠杆限制
+    try:
+        from cryptobot.risk.symbol_profile import get_symbol_grade
+        sym_grade = get_symbol_grade(symbol)
+        if sym_grade is not None and sym_grade.recommended_leverage < leverage:
+            leverage = sym_grade.recommended_leverage
+    except Exception:
+        pass
+
     # 波动率杠杆调整
     if current_atr_pct is not None and hist_atr_pct is not None:
         leverage = calc_volatility_adjusted_leverage(

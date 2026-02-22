@@ -60,6 +60,19 @@ uv run cryptobot backtest overfit-check             # 过拟合检测
 uv run cryptobot backtest walk-forward --days 180   # Walk-forward 滚动验证
 uv run cryptobot backtest features                  # 查看最新特征矩阵
 uv run cryptobot journal edge                       # Edge 仪表盘 (期望值/SQN/R分布)
+uv run cryptobot journal regime-eval                # Regime 感知评估 (按 regime 分组对比绩效)
+uv run cryptobot risk symbol-profile                # 币种 A/B/C/D 分级管理
+uv run cryptobot features factor-analysis           # 多因子 lead-lag 相关性分析
+uv run cryptobot ml train --days 180                # LightGBM 模型训练
+uv run cryptobot ml score --symbol BTCUSDT          # 单币种 ML 评分
+uv run cryptobot ml evaluate                        # 模型评估报告
+uv run cryptobot strategy funding-scan              # 扫描资金费率套利机会
+uv run cryptobot strategy funding-run               # 执行资金费率套利 (虚拟盘)
+uv run cryptobot strategy funding-status            # 查看套利虚拟盘状态
+uv run cryptobot strategy grid-create --symbol BTCUSDT  # 创建网格
+uv run cryptobot strategy grid-status               # 查看网格状态
+uv run cryptobot strategy grid-check                # 检查网格触发
+uv run cryptobot strategy portfolio --strategy funding_arb  # 虚拟盘总览
 uv run cryptobot doctor                       # 环境健康检查 (12项)
 uv run cryptobot doctor --json-output         # JSON 格式健康检查
 uv run cryptobot init                         # 初始化运行环境 (创建目录+.env+doctor)
@@ -111,6 +124,9 @@ execute                         5m 指标确认?
 | `regime_smoother.py` | 市场状态转换平滑：连续 N 周期确认才切换 regime，防止边界反复跳动 |
 | `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→观望 |
 | `strategy/mean_reversion.py` | BB 均值回归策略: 下轨+RSI<35 做多 / 上轨+RSI>65 做空，仅 ranging 时启用 |
+| `strategy/virtual_portfolio.py` | 虚拟盘基础设施：不可变 VirtualPortfolio/VirtualPosition + 原子写入持久化 |
+| `strategy/funding_arb.py` | 资金费率套利：扫描正费率 → delta 中性开仓 → 费率转负平仓 (虚拟盘) |
+| `strategy/grid_trading.py` | 网格交易：支撑阻力间等距网格 + 价格触发自动买卖 (虚拟盘) |
 | `capital_strategy.py` | 资金感知策略：根据余额自动调整层级(micro/small/medium/large)，与 regime 正交叠加取更严格值 |
 | `evolution/prompt_manager.py` | Prompt 版本管理：版本化存储/切换/对比 addon，持久化 `prompt_versions.json` |
 | `evolution/regime_prompts.py` | Regime 级 Prompt Addon：趋势市/震荡市/高波动市分别注入不同偏好到 trader/analyst |
@@ -118,7 +134,10 @@ execute                         5m 指标确认?
 | `evolution/prompt_optimizer.py` | 绩效驱动 Prompt 自动迭代：检测退化 → 分析失败 → AI 生成改进 → 创建新版本 |
 | `evolution/strategy_advisor.py` | 策略顾问 Agent：绩效模式发现 → 规则生成 → Prompt Addon 注入 → 14天评估 → 续期/淘汰 |
 | `evolution/model_competition.py` | 多模型竞赛：并行调用多模型决策，consensus/best_performer 策略择优 |
-| `risk/position_sizer.py` | 仓位计算：Kelly 5级 fallback + 相关性折算 + 波动率自适应杠杆 |
+| `journal/regime_evaluator.py` | Regime 感知评估：按市场状态分组 Welch t-test 对比前后绩效 |
+| `risk/position_sizer.py` | 仓位计算：Kelly 5级 fallback + 相关性折算 + 波动率自适应杠杆 + 币种分级杠杆限制 |
+| `risk/monthly_circuit_breaker.py` | 月度亏损熔断：连续 2 月亏损降仓 50%+暂停做多; 连续 3 月暂停 7 天 |
+| `risk/symbol_profile.py` | 币种差异化：按 180d 历史 A/B/C/D 四档分级，差异化杠杆/置信度/过滤 |
 | `risk/correlation.py` | 跨币种 Pearson 相关性矩阵 + 组合风控（高相关同向限仓） |
 | `risk/execution_optimizer.py` | 执行窗口优化 + 资金费率调度 + 滑点估算 |
 | `risk/liquidation_calc.py` | 爆仓距离计算 + 预警分级 |
@@ -143,10 +162,12 @@ execute                         5m 指标确认?
 | `features/extractors.py` | 7 个特征提取器：技术/多TF/链上/情绪/订单簿/宏观/相关性 |
 | `features/pipeline.py` | 特征管道：FeatureVector/FeatureMatrix + z_score/min_max 标准化 |
 | `features/feature_store.py` | 特征持久化：按日期存储/加载/清理(保留90天) |
+| `features/factor_analysis.py` | 多因子分析：因子×多 lag lead-lag Pearson 相关性 + p-value 显著性筛选 |
+| `ml/lgb_scorer.py` | LightGBM 信号评分：特征→涨跌概率分类器，5-fold CV 训练/评估/模型持久化 |
 | `cli/doctor.py` | 12 项环境健康检查（Python/TA-Lib/API/目录等） |
 | `cli/init_cmd.py` | 环境初始化：创建目录 + .env + 交互 API key + doctor |
 | `archive/` | AI 决策归档：每轮工作流保存完整决策链(筛选评分/分析/风控细节/信号)到 JSON，支持 CLI 查阅 |
-| `cli/` | Click 命令组，17 个子命令 |
+| `cli/` | Click 命令组，27 个子命令 |
 | `web/routes/api.py` | Dashboard API：仪表盘/信号/持仓/告警/绩效 + K 线数据 + 交易历史 |
 | `freqtrade_strategies/AgentSignalStrategy.py` | Freqtrade 策略：动态止损(含 Agent 尾随 + MFE 2×ATR 保本)、分批止盈(adjust_trade_position)、仓位控制 |
 
@@ -165,6 +186,11 @@ execute                         5m 指标确认?
 - 回测报告: `data/output/backtest/bt_{timestamp}.json`
 - 特征矩阵: `data/output/features/{date}.json`
 - 相关性矩阵: `data/output/evolution/correlation.json`
+- 币种分级: `data/output/evolution/symbol_profiles.json`
+- 因子分析: `data/output/evolution/factor_analysis.json`
+- ML 模型: `data/output/ml/models/`
+- 虚拟盘: `data/output/virtual/{strategy}_portfolio.json`
+- 网格状态: `data/output/virtual/grid_{symbol}_state.json`
 - 配置: `config/settings.yaml`、`config/pairs.yaml`
 
 ### 交易对配置

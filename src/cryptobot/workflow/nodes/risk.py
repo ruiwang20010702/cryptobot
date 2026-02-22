@@ -266,6 +266,20 @@ def risk_review(state: WorkflowState) -> dict:
         send_message(f"🚫 *亏损限制触发*\n\n{loss_reason}\n已拒绝所有新开仓")
         return {"approved_signals": [], "errors": errors}
 
+    # ── C1.5: 月度亏损熔断检查 ──
+    from cryptobot.risk.monthly_circuit_breaker import check_circuit_breaker
+
+    cb_state = check_circuit_breaker()
+    if cb_state.action == "suspend":
+        logger.warning("月度熔断触发: %s", cb_state.reason)
+        _console.print(f"    [red]月度熔断: {cb_state.reason}[/red]")
+        from cryptobot.notify import send_message
+        send_message(f"🚫 *月度熔断触发*\n\n{cb_state.reason}")
+        return {"approved_signals": [], "errors": errors}
+    if cb_state.action == "reduce":
+        logger.info("月度熔断降仓: %s", cb_state.reason)
+        _console.print(f"    [yellow]月度熔断降仓: {cb_state.reason}[/yellow]")
+
     analyses = state.get("analyses", {})
     approved = []
     hard_rule_results = []
@@ -290,6 +304,34 @@ def risk_review(state: WorkflowState) -> dict:
 
         # ── 硬性规则检查（不依赖 AI 判断）──
         hard_checks: list[dict] = []
+
+        # ── 月度熔断: 降仓 + 禁止做多 ──
+        if cb_state.action == "reduce":
+            if action == "long" and cb_state.block_long:
+                reason = f"月度熔断禁止做多: {cb_state.reason}"
+                hard_checks.append({
+                    "rule": "monthly_circuit_breaker", "passed": False,
+                    "reason": reason,
+                })
+                hard_rule_results.append({
+                    "symbol": symbol, "passed": False, "checks": hard_checks,
+                })
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
+                _console.print(f"    [red]拒绝 {symbol}: {reason}[/red]")
+                continue
+            # 缩放杠杆
+            scaled_lev = max(1, int(leverage * cb_state.position_scale))
+            if scaled_lev != leverage:
+                logger.info(
+                    "月度熔断降杠杆 %s: %dx → %dx", symbol, leverage, scaled_lev,
+                )
+                _console.print(
+                    f"    [yellow]{symbol}: 杠杆 {leverage}x → {scaled_lev}x (月度熔断)[/yellow]"
+                )
+                decision["leverage"] = scaled_lev
+                leverage = scaled_lev
+            hard_checks.append({"rule": "monthly_circuit_breaker", "passed": True})
 
         # ── P13.2: 置信度绝对下限 ──
         decision_conf = decision.get("confidence", 0)
@@ -582,6 +624,90 @@ def risk_review(state: WorkflowState) -> dict:
                 hard_checks.append({"rule": "correlation", "passed": True})
         except Exception as e:
             logger.warning("相关性检查跳过: %s", e)
+
+        # ── 币种分级检查 ──
+        try:
+            from cryptobot.risk.symbol_profile import get_symbol_grade
+            sym_grade = get_symbol_grade(symbol)
+            if sym_grade is not None:
+                if sym_grade.blocked:
+                    reason = f"币种 {symbol} 为 D 级，禁止交易"
+                    hard_checks.append({
+                        "rule": "symbol_grade", "passed": False, "reason": reason,
+                    })
+                    hard_rule_results.append({
+                        "symbol": symbol, "passed": False, "checks": hard_checks,
+                    })
+                    rejected_signals.append({"symbol": symbol, "reason": reason})
+                    logger.info("硬性拒绝 %s: %s", symbol, reason)
+                    _console.print(f"    [red]拒绝 {symbol}: D 级禁止[/red]")
+                    continue
+
+                # B/C 级加严置信度
+                if sym_grade.min_confidence > 0:
+                    base_conf = risk_cfg.get("confidence_floor", 60)
+                    required = base_conf + sym_grade.min_confidence
+                    if decision_conf < required:
+                        reason = (
+                            f"置信度 {decision_conf} < "
+                            f"币种 {sym_grade.grade} 级阈值 {required}"
+                        )
+                        hard_checks.append({
+                            "rule": "symbol_grade_confidence",
+                            "passed": False,
+                            "reason": reason,
+                        })
+                        hard_rule_results.append({
+                            "symbol": symbol, "passed": False,
+                            "checks": hard_checks,
+                        })
+                        rejected_signals.append({
+                            "symbol": symbol, "reason": reason,
+                        })
+                        logger.info("硬性拒绝 %s: %s", symbol, reason)
+                        _console.print(
+                            f"    [red]拒绝 {symbol}: {reason}[/red]"
+                        )
+                        continue
+
+                # C 级降杠杆
+                if sym_grade.recommended_leverage < leverage:
+                    logger.info(
+                        "币种分级降杠杆 %s: %dx → %dx (%s级)",
+                        symbol, leverage, sym_grade.recommended_leverage,
+                        sym_grade.grade,
+                    )
+                    decision["leverage"] = sym_grade.recommended_leverage
+                    leverage = sym_grade.recommended_leverage
+
+                hard_checks.append({"rule": "symbol_grade", "passed": True})
+        except Exception as e:
+            logger.warning("币种分级检查跳过: %s", e)
+
+        # ── 月度熔断降仓 ──
+        if cb_state.action == "reduce":
+            old_lev = leverage
+            leverage = max(1, int(leverage * cb_state.position_scale))
+            decision["leverage"] = leverage
+            if cb_state.block_long and action == "long":
+                reason = f"月度熔断禁止做多 (连亏{cb_state.consecutive_loss_months}月)"
+                hard_checks.append({
+                    "rule": "monthly_circuit_breaker",
+                    "passed": False,
+                    "reason": reason,
+                })
+                hard_rule_results.append({
+                    "symbol": symbol, "passed": False, "checks": hard_checks,
+                })
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("月度熔断拒绝 %s: %s", symbol, reason)
+                _console.print(f"    [red]拒绝 {symbol}: {reason}[/red]")
+                continue
+            if old_lev != leverage:
+                hard_checks.append({
+                    "rule": "monthly_circuit_breaker", "passed": True,
+                    "note": f"杠杆 {old_lev}x → {leverage}x (月度熔断)",
+                })
 
         # 硬规则全部通过
         hard_rule_results.append({"symbol": symbol, "passed": True, "checks": hard_checks})
