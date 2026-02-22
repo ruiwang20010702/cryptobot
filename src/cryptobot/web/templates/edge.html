@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Edge Dashboard{% endblock %}
+{% block content %}
+<h1>Edge Dashboard</h1>
+<div id="edge-data"><p id="loading">Loading...</p></div>
+
+<script>
+function loadEdge() {
+    fetch('/api/edge?days=30')
+        .then(r => r.json())
+        .then(data => renderEdge(data))
+        .catch(() => {
+            document.getElementById('edge-data').innerHTML =
+                '<p class="red">Failed to load edge data</p>';
+        });
+}
+
+function renderEdge(data) {
+    const m = data.metrics || {};
+    const d = data.decay || {};
+    const rvb = m.recent_vs_baseline || {};
+    const recent = rvb.recent_7d || {};
+    const baseline = rvb.baseline_30d || {};
+    const change = rvb.change || {};
+    const rdist = m.r_distribution || {};
+
+    let html = '';
+
+    // Decay warning
+    if (d.decaying) {
+        html += `<div class="card" style="border-color:#f85149;margin-bottom:16px">
+            <p class="red" style="font-weight:600">${d.warning || 'Edge Decay Detected'}</p>
+        </div>`;
+    }
+
+    // Four quadrant grid
+    html += '<div class="grid">';
+
+    // Q1: Core metrics
+    const expCls = m.expectancy_pct >= 0 ? 'green' : 'red';
+    html += `<div class="card">
+        <h2>Core Metrics</h2>
+        <div class="stats-row">
+            <div class="stat-box">
+                <div class="stat ${expCls}">${m.expectancy_pct?.toFixed(4) || '0'}%</div>
+                <div class="stat-label">Expectancy</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat">${m.edge_ratio?.toFixed(4) || '0'}</div>
+                <div class="stat-label">Edge Ratio</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat">${m.sqn?.toFixed(2) || '0'}</div>
+                <div class="stat-label">SQN</div>
+            </div>
+        </div>
+    </div>`;
+
+    // Q2: R Distribution
+    html += `<div class="card"><h2>R-Multiple Distribution</h2><div>`;
+    const maxR = Math.max(...Object.values(rdist), 1);
+    for (const [bucket, count] of Object.entries(rdist)) {
+        const pct = maxR > 0 ? (count / maxR * 100) : 0;
+        const color = bucket.includes('-') && !bucket.includes('>') ? '#f85149' : '#3fb950';
+        html += `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
+            <span style="width:70px;text-align:right;font-size:12px;color:#8b949e">${bucket}</span>
+            <div style="flex:1;background:#21262d;border-radius:3px;height:16px">
+                <div style="width:${pct}%;background:${color};height:100%;border-radius:3px;
+                     min-width:${count > 0 ? 2 : 0}px"></div>
+            </div>
+            <span style="width:30px;font-size:12px">${count}</span>
+        </div>`;
+    }
+    html += '</div></div>';
+
+    // Q3: Regime Edge
+    const regimes = m.regime_edge || {};
+    html += `<div class="card"><h2>Regime Breakdown</h2>`;
+    if (Object.keys(regimes).length === 0) {
+        html += '<p style="color:#8b949e">No regime data</p>';
+    } else {
+        html += '<table><tr><th>Regime</th><th>Count</th><th>Win Rate</th><th>Expectancy</th></tr>';
+        for (const [name, info] of Object.entries(regimes)) {
+            const eCls = info.expectancy >= 0 ? 'green' : 'red';
+            html += `<tr><td>${name}</td><td>${info.count}</td>
+                <td>${(info.win_rate * 100).toFixed(1)}%</td>
+                <td class="${eCls}">${info.expectancy > 0 ? '+' : ''}${info.expectancy.toFixed(4)}%</td></tr>`;
+        }
+        html += '</table>';
+    }
+    html += '</div>';
+
+    // Q4: Recent vs Baseline
+    html += `<div class="card"><h2>7d vs 30d Comparison</h2>
+        <table>
+            <tr><th></th><th>Recent 7d</th><th>Baseline 30d</th><th>Change</th></tr>
+            <tr><td>Trades</td><td>${recent.count || 0}</td>
+                <td>${baseline.count || 0}</td><td>-</td></tr>
+            <tr><td>Expectancy</td>
+                <td>${(recent.expectancy || 0).toFixed(4)}%</td>
+                <td>${(baseline.expectancy || 0).toFixed(4)}%</td>
+                <td class="${(change.expectancy || 0) >= 0 ? 'green' : 'red'}">
+                    ${(change.expectancy || 0) > 0 ? '+' : ''}${(change.expectancy || 0).toFixed(1)}%</td></tr>
+            <tr><td>Win Rate</td>
+                <td>${((recent.win_rate || 0) * 100).toFixed(1)}%</td>
+                <td>${((baseline.win_rate || 0) * 100).toFixed(1)}%</td>
+                <td class="${(change.win_rate || 0) >= 0 ? 'green' : 'red'}">
+                    ${(change.win_rate || 0) > 0 ? '+' : ''}${(change.win_rate || 0).toFixed(1)}%</td></tr>
+        </table>
+    </div>`;
+
+    html += '</div>';
+    document.getElementById('edge-data').innerHTML = html;
+}
+
+loadEdge();
+</script>
+{% endblock %}

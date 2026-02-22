@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from cryptobot.journal.storage import get_all_records
 
 
-def calc_performance(days: int = 30) -> dict:
+def calc_performance(days: int = 30, *, with_ci: bool = False) -> dict:
     """计算最近 N 天的绩效统计
 
     Returns:
@@ -75,7 +75,7 @@ def calc_performance(days: int = 30) -> dict:
             "avg_pnl_pct": round(stats["total_pnl_pct"] / stats["count"], 2) if stats["count"] > 0 else 0,
         }
 
-    return {
+    result = {
         "period_days": days,
         "total_signals": total_signals,
         "entered": len(entered),
@@ -83,12 +83,46 @@ def calc_performance(days: int = 30) -> dict:
         "expired": len(expired),
         "win_rate": round(win_rate, 3),
         "avg_pnl_pct": round(avg_pnl_pct, 2),
-        "profit_factor": round(profit_factor, 2) if profit_factor != float("inf") else "inf",
-        "total_pnl_usdt": round(sum(r.actual_pnl_usdt or 0 for r in closed), 2),
+        "profit_factor": (
+            round(profit_factor, 2)
+            if profit_factor != float("inf")
+            else "inf"
+        ),
+        "total_pnl_usdt": round(
+            sum(r.actual_pnl_usdt or 0 for r in closed), 2,
+        ),
         "confidence_calibration": calibration,
         "by_direction": by_direction,
         "by_symbol": by_symbol_result,
     }
+
+    if with_ci:
+        from cryptobot.backtest.bootstrap import bootstrap_metric_ci
+
+        ci_pnl = [r.actual_pnl_pct or 0 for r in closed]
+        ci_results = bootstrap_metric_ci(ci_pnl)
+        if ci_results.get("win_rate_ci"):
+            result["win_rate_ci"] = {
+                "lower": ci_results["win_rate_ci"].lower,
+                "upper": ci_results["win_rate_ci"].upper,
+            }
+        if ci_results.get("avg_pnl_ci"):
+            result["avg_pnl_pct_ci"] = {
+                "lower": ci_results["avg_pnl_ci"].lower,
+                "upper": ci_results["avg_pnl_ci"].upper,
+            }
+        if ci_results.get("sharpe_ci"):
+            result["sharpe_ci"] = {
+                "lower": ci_results["sharpe_ci"].lower,
+                "upper": ci_results["sharpe_ci"].upper,
+            }
+        if ci_results.get("profit_factor_ci"):
+            result["profit_factor_ci"] = {
+                "lower": ci_results["profit_factor_ci"].lower,
+                "upper": ci_results["profit_factor_ci"].upper,
+            }
+
+    return result
 
 
 def _calc_confidence_calibration(closed_records: list) -> dict:

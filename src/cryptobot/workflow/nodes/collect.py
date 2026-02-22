@@ -207,6 +207,39 @@ def collect_data(state: WorkflowState) -> dict:
     except Exception:
         pass
 
+    # 特征工程（非关键路径）
+    try:
+        from datetime import datetime, timezone
+        from cryptobot.features.pipeline import build_feature_vector, FeatureMatrix
+        from cryptobot.features.feature_store import save_features
+
+        ts = datetime.now(tz=timezone.utc).isoformat()
+        vectors = []
+        for symbol in symbols:
+            sym_data = market_data.get(symbol, {})
+            vec = build_feature_vector(
+                symbol=symbol,
+                timestamp=ts,
+                tech=sym_data.get("tech"),
+                multi_tf=sym_data.get("multi_tf"),
+                crypto=sym_data.get("crypto"),
+                fear_greed=fear_greed,
+                news=global_news,
+                orderbook=sym_data.get("orderbook"),
+                dxy=dxy_data,
+                macro=macro_events,
+                stablecoin=stablecoin_flows,
+                btc_corr=sym_data.get("btc_correlation") or 0.0,
+            )
+            vectors.append(vec)
+
+        if vectors:
+            feat_names = sorted(vectors[0].features.keys())
+            matrix = FeatureMatrix(vectors=vectors, feature_names=feat_names)
+            save_features(matrix)
+    except Exception as e:
+        logger.debug("特征提取跳过: %s", e)
+
     return {
         "market_data": market_data,
         "market_overview": market_overview,

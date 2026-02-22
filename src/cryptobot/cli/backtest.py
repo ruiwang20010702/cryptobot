@@ -274,6 +274,43 @@ def run(days: int, source: str, json_output: bool):
     console.print(f"\n报告已保存: {path}")
 
 
+@backtest.command("features")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def features(json_output: bool):
+    """查看最新特征矩阵"""
+    from cryptobot.features.feature_store import load_latest_features
+    from cryptobot.features.pipeline import to_csv_rows
+
+    matrix = load_latest_features()
+    if not matrix:
+        console.print("[yellow]无特征数据[/yellow]")
+        return
+
+    if json_output:
+        rows = to_csv_rows(matrix)
+        click.echo(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+
+    console.print(
+        f"\n[bold]最新特征矩阵[/bold] ({len(matrix.vectors)} 币种, "
+        f"{len(matrix.feature_names)} 维特征)\n"
+    )
+
+    table = Table(title="特征矩阵")
+    table.add_column("币种", style="cyan")
+    for name in matrix.feature_names:
+        table.add_column(name, justify="right")
+
+    for vec in matrix.vectors:
+        row = [vec.symbol]
+        for name in matrix.feature_names:
+            val = vec.features.get(name, 0.0)
+            row.append(f"{val:.4f}")
+        table.add_row(*row)
+
+    console.print(table)
+
+
 @backtest.command("baseline")
 @click.option("--days", default=90, help="回溯天数")
 @click.option(
@@ -561,22 +598,98 @@ def analyze_replay(report: str, json_output: bool):
         console.print("\n[green]未发现显著问题[/green]")
 
 
+@backtest.command("overfit-check")
+@click.option("--days", default=30, help="回溯天数")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def overfit_check(days: int, json_output: bool):
+    """过拟合检测"""
+    from dataclasses import asdict
+
+    from cryptobot.evolution.overfit_detector import detect_overfit
+
+    report = detect_overfit(days)
+
+    if json_output:
+        click.echo(
+            json.dumps(asdict(report), indent=2, ensure_ascii=False)
+        )
+        return
+
+    # 颜色表示风险等级
+    if report.overfit_score >= 70:
+        score_style = "red bold"
+    elif report.overfit_score >= 40:
+        score_style = "yellow"
+    else:
+        score_style = "green"
+
+    console.print(f"\n[bold]过拟合检测 (近 {days} 天)[/bold]\n")
+    console.print(
+        f"  过拟合分数: [{score_style}]"
+        f"{report.overfit_score:.0f}/100[/{score_style}]"
+    )
+
+    # 修改频率
+    freq = report.modification_frequency
+    console.print("\n  近7天修改:")
+    console.print(
+        f"    Prompt 迭代: {freq.get('iterations_7d', 0)} 次"
+    )
+    console.print(
+        f"    策略规则: {freq.get('strategy_rules_7d', 0)} 次"
+    )
+    console.print(
+        f"    Prompt 版本: {freq.get('prompt_versions_7d', 0)} 次"
+    )
+
+    # 信号列表
+    if report.signals:
+        console.print("\n  [yellow]过拟合信号:[/yellow]")
+        for s in report.signals:
+            console.print(f"    - {s}")
+
+    console.print(f"\n  建议: {report.recommendation}")
+
+
 @backtest.command("replay-history")
 @click.option("--days", default=90, help="回溯天数")
 @click.option("--symbols", default="", help="币种列表(逗号分隔)，空=前5")
 @click.option("--interval", default=24, help="采样间隔(小时)")
 @click.option("--resume", is_flag=True, help="断点续跑")
+@click.option(
+    "--preset",
+    type=click.Choice(["90d", "180d", "365d"]),
+    default=None,
+    help="预设周期",
+)
 @click.option("--json-output", is_flag=True, help="JSON 输出")
 @click.option("--yes", "-y", is_flag=True, help="跳过确认")
 def replay_history(
-    days: int, symbols: str, interval: int, resume: bool, json_output: bool, yes: bool,
+    days: int,
+    symbols: str,
+    interval: int,
+    resume: bool,
+    preset: str | None,
+    json_output: bool,
+    yes: bool,
 ):
     """历史回放: 用历史 K 线驱动 LLM 生成交易信号并回测"""
     from dataclasses import asdict
-    from cryptobot.backtest.historical_replay import ReplayConfig, run_historical_replay
+    from cryptobot.backtest.historical_replay import (
+        ReplayConfig,
+        run_historical_replay,
+    )
     from cryptobot.backtest.engine import save_report
 
-    sym_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else []
+    _PRESET_MAP = {"90d": 90, "180d": 180, "365d": 365}
+    if preset:
+        days = _PRESET_MAP[preset]
+
+    sym_list = (
+        [s.strip() for s in symbols.split(",") if s.strip()]
+        if symbols
+        else []
+    )
     config = ReplayConfig(
         days=days, symbols=sym_list, interval_hours=interval,
     )
@@ -665,3 +778,102 @@ def replay_history(
 
     path = save_report(report)
     console.print(f"\n报告已保存: {path}")
+
+
+@backtest.command("replay-compare")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def replay_compare(json_output: bool):
+    """对比多周期回放结果"""
+    import json as json_mod
+    from dataclasses import asdict
+
+    from cryptobot.backtest.equity_tracker import BacktestMetrics
+    from cryptobot.backtest.replay_comparator import (
+        compare_replay_periods,
+    )
+    from cryptobot.config import DATA_OUTPUT_DIR
+
+    bt_dir = DATA_OUTPUT_DIR / "backtest"
+    if not bt_dir.exists():
+        console.print("[yellow]无回测报告[/yellow]")
+        return
+
+    # 加载最近的回放报告 (按文件名匹配 bt_*.json)
+    reports = []
+    for f in sorted(bt_dir.glob("bt_*.json"), reverse=True)[:10]:
+        try:
+            data = json_mod.loads(f.read_text())
+            if data.get("signal_source") != "replay":
+                continue
+            m_data = data.get("metrics", {})
+            metrics = BacktestMetrics(**m_data)
+
+            class _LightReport:
+                pass
+
+            r = _LightReport()
+            r.metrics = metrics
+            r.config = data.get("config", {})
+            reports.append(r)
+        except Exception:
+            continue
+
+    if len(reports) < 2:
+        console.print(
+            "[yellow]需要至少2个回放报告才能对比[/yellow]"
+        )
+        return
+
+    comparison = compare_replay_periods(reports)
+
+    if json_output:
+        click.echo(
+            json.dumps(
+                asdict(comparison),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    console.print("\n[bold]多周期回放对比[/bold]\n")
+
+    # 周期表
+    table = Table(title="各周期指标")
+    table.add_column("周期")
+    table.add_column("交易数", justify="right")
+    table.add_column("胜率", justify="right")
+    table.add_column("Sharpe", justify="right")
+    table.add_column("最大回撤", justify="right")
+    table.add_column("总收益", justify="right")
+
+    for p in comparison.periods:
+        table.add_row(
+            f"{p.days}天",
+            str(p.total_trades),
+            f"{p.win_rate * 100:.1f}%",
+            f"{p.sharpe_ratio:.2f}",
+            f"{p.max_drawdown_pct:.1f}%",
+            f"{p.total_return_pct:+.1f}%",
+        )
+    console.print(table)
+
+    # 稳定性
+    grade_color = {
+        "A": "green",
+        "B": "cyan",
+        "C": "yellow",
+        "D": "red",
+    }
+    color = grade_color.get(comparison.stability_grade, "white")
+    console.print(
+        f"\n  稳定性等级: [{color}]"
+        f"{comparison.stability_grade}[/{color}]"
+    )
+    console.print(f"  Sharpe CV: {comparison.sharpe_cv:.3f}")
+    console.print(f"  胜率 CV: {comparison.win_rate_cv:.3f}")
+
+    if comparison.warnings:
+        console.print("\n  [yellow]警告:[/yellow]")
+        for w in comparison.warnings:
+            console.print(f"    - {w}")

@@ -241,6 +241,78 @@ def backfill(days: int, dry_run: bool, symbol: tuple, json_output: bool):
     console.print(Panel("\n".join(lines), title="回填结果"))
 
 
+@journal.command("edge")
+@click.option("--days", default=30, help="回溯天数")
+@click.option("--ci", is_flag=True, help="显示置信区间")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def edge(days: int, ci: bool, json_output: bool):
+    """Edge 仪表盘: 期望值/SQN/R分布"""
+    from dataclasses import asdict
+
+    from cryptobot.journal.edge import calc_edge, detect_edge_decay
+
+    metrics = calc_edge(days)
+    decay = detect_edge_decay()
+
+    if json_output:
+        click.echo(json.dumps(
+            {"metrics": asdict(metrics), "decay": decay},
+            indent=2, ensure_ascii=False,
+        ))
+        return
+
+    # 核心指标
+    exp_color = "green" if metrics.expectancy_pct > 0 else "red"
+    lines = [
+        f"统计周期: 近 {days} 天",
+        "",
+        f"期望值: [{exp_color}]{metrics.expectancy_pct:+.4f}%[/{exp_color}]",
+        f"Edge Ratio: {metrics.edge_ratio:.4f}",
+        f"SQN: {metrics.sqn:.4f}",
+    ]
+    console.print(Panel("\n".join(lines), title="Edge 核心指标"))
+
+    # R 分布
+    r_lines = []
+    for bucket, count in metrics.r_distribution.items():
+        bar = "#" * count
+        r_lines.append(f"  {bucket:>8s}: {count:3d} {bar}")
+    if any(v > 0 for v in metrics.r_distribution.values()):
+        console.print(Panel("\n".join(r_lines), title="R 倍数分布"))
+
+    # Regime 分组
+    if metrics.regime_edge:
+        regime_lines = []
+        for regime, data in metrics.regime_edge.items():
+            regime_lines.append(
+                f"  {regime}: {data['count']} 笔, "
+                f"胜率 {data['win_rate']:.1%}, "
+                f"期望值 {data['expectancy']:+.4f}%"
+            )
+        console.print(Panel("\n".join(regime_lines), title="Regime 分组"))
+
+    # 7d vs 30d 对比
+    rvb = metrics.recent_vs_baseline
+    recent = rvb["recent_7d"]
+    baseline = rvb["baseline_30d"]
+    change = rvb["change"]
+    cmp_lines = [
+        f"  近 7d: {recent['count']} 笔, "
+        f"期望值 {recent['expectancy']:+.4f}%, "
+        f"胜率 {recent['win_rate']:.1%}",
+        f"  基准 {days}d: {baseline['count']} 笔, "
+        f"期望值 {baseline['expectancy']:+.4f}%, "
+        f"胜率 {baseline['win_rate']:.1%}",
+        f"  变化: 期望值 {change['expectancy']:+.1f}%, "
+        f"胜率 {change['win_rate']:+.1f}%",
+    ]
+    console.print(Panel("\n".join(cmp_lines), title="近期 vs 基准"))
+
+    # 衰减检测
+    if decay["decaying"]:
+        console.print(f"[red bold]{decay['warning']}[/red bold]")
+
+
 def _infer_exit_reason(trade: dict) -> str:
     """从 Freqtrade 交易推断退出原因"""
     exit_reason = trade.get("exit_reason", "") or ""

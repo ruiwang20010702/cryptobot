@@ -79,16 +79,20 @@ def calc_metrics(
     equity_curve: list[EquityPoint],
     trades: list,
     initial_capital: float = 10000,
-) -> BacktestMetrics:
+    *,
+    with_ci: bool = False,
+) -> BacktestMetrics | tuple:
     """计算回测统计指标
 
     Args:
         equity_curve: build_equity_curve 输出
         trades: 原始交易列表
         initial_capital: 初始资金
+        with_ci: 是否附加 Bootstrap 置信区间
 
     Returns:
-        BacktestMetrics 指标
+        BacktestMetrics (with_ci=False) 或
+        (BacktestMetrics, dict[str, CI|None]) 元组 (with_ci=True)
     """
     if not trades or not equity_curve:
         return _zero_metrics()
@@ -140,10 +144,14 @@ def calc_metrics(
     # 月度收益
     monthly = _calc_monthly_returns(equity_curve, initial_capital)
 
-    return BacktestMetrics(
+    metrics = BacktestMetrics(
         total_trades=n,
         win_rate=round(win_rate, 4),
-        profit_factor=round(profit_factor, 4) if profit_factor != float("inf") else float("inf"),
+        profit_factor=(
+            round(profit_factor, 4)
+            if profit_factor != float("inf")
+            else float("inf")
+        ),
         sharpe_ratio=round(sharpe_ratio, 4),
         sortino_ratio=round(sortino_ratio, 4),
         max_drawdown_pct=round(max_dd, 4),
@@ -155,6 +163,14 @@ def calc_metrics(
         best_trade_pct=round(best_trade, 4),
         worst_trade_pct=round(worst_trade, 4),
     )
+
+    if not with_ci:
+        return metrics
+
+    from cryptobot.backtest.bootstrap import bootstrap_metric_ci
+
+    ci_results = bootstrap_metric_ci(returns)
+    return metrics, ci_results
 
 
 def _zero_metrics() -> BacktestMetrics:

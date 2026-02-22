@@ -25,8 +25,8 @@ from cryptobot.backtest.historical_replay import (
     _detect_replay_regime,
     _download_full_klines,
     _download_paginated,
+    _progress_file_for,
     run_historical_replay,
-    _PROGRESS_FILE,
     _DOWNLOAD_LIMIT,
     TIMEFRAMES,
     _MIN_BARS,
@@ -350,10 +350,6 @@ class TestProgress:
         monkeypatch.setattr(
             "cryptobot.backtest.historical_replay._PROGRESS_DIR", tmp_path,
         )
-        monkeypatch.setattr(
-            "cryptobot.backtest.historical_replay._PROGRESS_FILE",
-            tmp_path / "replay_progress.json",
-        )
 
         config = ReplayConfig(days=30, symbols=["BTCUSDT"])
         signals = [{"symbol": "BTCUSDT", "action": "long"}]
@@ -369,10 +365,6 @@ class TestProgress:
         monkeypatch.setattr(
             "cryptobot.backtest.historical_replay._PROGRESS_DIR", tmp_path,
         )
-        monkeypatch.setattr(
-            "cryptobot.backtest.historical_replay._PROGRESS_FILE",
-            tmp_path / "replay_progress.json",
-        )
 
         config1 = ReplayConfig(days=30, symbols=["BTCUSDT"])
         _save_progress([{"x": 1}], ["2025-12-01"], config1)
@@ -384,11 +376,18 @@ class TestProgress:
 
     def test_load_no_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "cryptobot.backtest.historical_replay._PROGRESS_FILE",
-            tmp_path / "nonexistent.json",
+            "cryptobot.backtest.historical_replay._PROGRESS_DIR", tmp_path,
         )
         sigs, dates = _load_progress(ReplayConfig())
         assert sigs == []
+
+    def test_progress_file_isolation(self):
+        """不同 config 生成不同进度文件路径"""
+        cfg1 = ReplayConfig(days=90, interval_hours=24)
+        cfg2 = ReplayConfig(days=180, interval_hours=24)
+        cfg3 = ReplayConfig(days=90, interval_hours=12)
+        assert _progress_file_for(cfg1) != _progress_file_for(cfg2)
+        assert _progress_file_for(cfg1) != _progress_file_for(cfg3)
 
 
 # ── TestFormatPrompt ─────────────────────────────────────────────────────

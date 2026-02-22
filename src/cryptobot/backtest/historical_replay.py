@@ -15,6 +15,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import pandas as pd
 
 from cryptobot.config import DATA_OUTPUT_DIR, get_all_symbols
@@ -22,7 +23,12 @@ from cryptobot.config import DATA_OUTPUT_DIR, get_all_symbols
 logger = logging.getLogger(__name__)
 
 _PROGRESS_DIR = DATA_OUTPUT_DIR / "backtest"
-_PROGRESS_FILE = _PROGRESS_DIR / "replay_progress.json"
+
+
+def _progress_file_for(config: "ReplayConfig") -> Path:
+    """根据配置生成唯一进度文件名"""
+    key = f"{config.days}_{config.interval_hours}"
+    return _PROGRESS_DIR / f"replay_progress_{key}.json"
 
 # K 线每根跨度（小时）
 _TF_HOURS = {"1h": 1, "4h": 4, "1d": 24}
@@ -392,6 +398,7 @@ def _save_progress(
 ) -> None:
     """保存进度到 JSON"""
     _PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
+    progress_file = _progress_file_for(config)
     data = {
         "config": {
             "days": config.days,
@@ -402,9 +409,9 @@ def _save_progress(
         "signals": signals,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    tmp = _PROGRESS_FILE.with_suffix(".json.tmp")
+    tmp = progress_file.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-    tmp.rename(_PROGRESS_FILE)
+    tmp.rename(progress_file)
 
 
 def _load_progress(config: ReplayConfig) -> tuple[list[dict], list[str]]:
@@ -412,11 +419,12 @@ def _load_progress(config: ReplayConfig) -> tuple[list[dict], list[str]]:
 
     仅当配置匹配时才复用。
     """
-    if not _PROGRESS_FILE.exists():
+    progress_file = _progress_file_for(config)
+    if not progress_file.exists():
         return [], []
 
     try:
-        data = json.loads(_PROGRESS_FILE.read_text())
+        data = json.loads(progress_file.read_text())
     except (json.JSONDecodeError, OSError):
         return [], []
 
@@ -431,10 +439,11 @@ def _load_progress(config: ReplayConfig) -> tuple[list[dict], list[str]]:
     return data.get("signals", []), data.get("completed_dates", [])
 
 
-def _clear_progress() -> None:
+def _clear_progress(config: ReplayConfig) -> None:
     """清除进度文件"""
-    if _PROGRESS_FILE.exists():
-        _PROGRESS_FILE.unlink()
+    progress_file = _progress_file_for(config)
+    if progress_file.exists():
+        progress_file.unlink()
 
 
 # ── 主入口 ────────────────────────────────────────────────────────────────
@@ -590,6 +599,6 @@ def run_historical_replay(
     )
 
     # 清除进度文件
-    _clear_progress()
+    _clear_progress(config)
 
     return report

@@ -54,6 +54,11 @@ uv run cryptobot backtest baseline --strategy all  # 基线策略对比
 uv run cryptobot backtest compare --days 90   # AI vs 基线统计检验 (p-value)
 uv run cryptobot backtest replay-history --days 90  # 历史回放 (LLM 驱动信号生成+回测)
 uv run cryptobot backtest replay-history --days 30 --symbols "BTCUSDT,ETHUSDT"  # 指定币种
+uv run cryptobot backtest replay-history --preset 180d  # 预设周期回放
+uv run cryptobot backtest replay-compare            # 多周期回放结果对比
+uv run cryptobot backtest overfit-check             # 过拟合检测
+uv run cryptobot backtest features                  # 查看最新特征矩阵
+uv run cryptobot journal edge                       # Edge 仪表盘 (期望值/SQN/R分布)
 uv run cryptobot doctor                       # 环境健康检查 (12项)
 uv run cryptobot doctor --json-output         # JSON 格式健康检查
 uv run cryptobot init                         # 初始化运行环境 (创建目录+.env+doctor)
@@ -109,11 +114,15 @@ execute                         5m 指标确认?
 | `evolution/prompt_optimizer.py` | 绩效驱动 Prompt 自动迭代：检测退化 → 分析失败 → AI 生成改进 → 创建新版本 |
 | `evolution/strategy_advisor.py` | 策略顾问 Agent：绩效模式发现 → 规则生成 → Prompt Addon 注入 → 14天评估 → 续期/淘汰 |
 | `evolution/model_competition.py` | 多模型竞赛：并行调用多模型决策，consensus/best_performer 策略择优 |
-| `risk/` | 仓位计算(Kelly)、爆仓距离计算 |
+| `risk/position_sizer.py` | 仓位计算：Kelly 5级 fallback + 相关性折算 + 波动率自适应杠杆 |
+| `risk/correlation.py` | 跨币种 Pearson 相关性矩阵 + 组合风控（高相关同向限仓） |
+| `risk/execution_optimizer.py` | 执行窗口优化 + 资金费率调度 + 滑点估算 |
+| `risk/liquidation_calc.py` | 爆仓距离计算 + 预警分级 |
 | `notify.py` | Telegram 通知：信号/风控/告警/日报/错误推送（silent fallback） |
 | `journal/` | 交易记录与绩效：SignalRecord 生命周期(含 model_id) + 胜率/盈亏比/置信度校准 + prompt 注入 + 分析师动态权重 + 动态置信度阈值 |
 | `events/` | 价格异动监控：30s 轮询检测 5min/15min 大幅波动 → 紧急复审 + 通知 |
-| `cli/scheduler.py` | APScheduler 调度器：8 个定时任务(含日报 cron + prompt 自动优化) + 可选事件监控线程 |
+| `journal/edge.py` | Edge 仪表盘：期望值/SQN/R分布/Regime分组/7d-vs-30d对比/衰减检测 |
+| `cli/scheduler.py` | APScheduler 调度器：11 个定时任务(含日报 cron + prompt 优化 + 过拟合检查) + 可选事件监控线程 |
 | `cli/prompt.py` | Prompt 版本管理 CLI：list/new-version/activate/show |
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
 | `backtest/cost_model.py` | 交易成本建模：手续费/滑点/资金费率，杠杆敏感 |
@@ -122,7 +131,13 @@ execute                         5m 指标确认?
 | `backtest/baselines.py` | 随机/MA交叉/RSI/布林通道 4 种基线信号生成 |
 | `backtest/stats.py` | Welch's t-test + Permutation test 统计检验 (无 scipy) |
 | `backtest/engine.py` | 完整回测编排：信号加载→模拟→统计→报告持久化 |
-| `backtest/historical_replay.py` | 历史回放引擎：历史K线→技术快照→LLM批次决策→信号生成→交易模拟（断点续跑） |
+| `backtest/historical_replay.py` | 历史回放引擎：历史K线→技术快照→LLM批次决策→信号生成→交易模拟（断点续跑，按配置隔离进度） |
+| `backtest/bootstrap.py` | Percentile bootstrap 置信区间（纯 Python），支持 mean/median/win_rate/sharpe/profit_factor |
+| `backtest/replay_comparator.py` | 多周期回放对比：Sharpe/胜率 CV + 稳定性评级(A/B/C/D) |
+| `evolution/overfit_detector.py` | 过拟合检测：修改频率+绩效趋势+规则稳定性评分(0-100) |
+| `features/extractors.py` | 7 个特征提取器：技术/多TF/链上/情绪/订单簿/宏观/相关性 |
+| `features/pipeline.py` | 特征管道：FeatureVector/FeatureMatrix + z_score/min_max 标准化 |
+| `features/feature_store.py` | 特征持久化：按日期存储/加载/清理(保留90天) |
 | `cli/doctor.py` | 12 项环境健康检查（Python/TA-Lib/API/目录等） |
 | `cli/init_cmd.py` | 环境初始化：创建目录 + .env + 交互 API key + doctor |
 | `archive/` | AI 决策归档：每轮工作流保存完整决策链(筛选评分/分析/风控细节/信号)到 JSON，支持 CLI 查阅 |
@@ -143,6 +158,8 @@ execute                         5m 指标确认?
 - 策略规则: `data/output/evolution/strategy_rules.json`
 - 决策归档: `data/output/archive/{YYYY-MM}/{run_id}.json`
 - 回测报告: `data/output/backtest/bt_{timestamp}.json`
+- 特征矩阵: `data/output/features/{date}.json`
+- 相关性矩阵: `data/output/evolution/correlation.json`
 - 配置: `config/settings.yaml`、`config/pairs.yaml`
 
 ### 交易对配置

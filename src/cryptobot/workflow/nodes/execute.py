@@ -56,6 +56,23 @@ def execute(state: WorkflowState) -> dict:
         capital_tier_info = state.get("capital_tier", {})
         signal["regime_name"] = regime.get("regime")
         signal["capital_tier"] = capital_tier_info.get("tier")
+        # P11.12: 附加执行优化建议
+        try:
+            from cryptobot.risk.execution_optimizer import (
+                calc_optimal_execution_window,
+                calc_funding_schedule,
+            )
+            window = calc_optimal_execution_window(sym, sig_action)
+            funding = calc_funding_schedule(sym)
+            signal["execution_hint"] = {
+                "recommended_hour_utc": window.recommended_hour_utc,
+                "total_cost_estimate": window.total_cost_estimate,
+                "funding_hours_until": funding.hours_until,
+                "funding_rate": funding.current_rate,
+                "funding_suggestion": funding.action_suggestion,
+            }
+        except Exception:
+            pass  # 执行建议是增强功能，失败不阻塞
         try:
             result = writer(signal)
             executed.append(result)

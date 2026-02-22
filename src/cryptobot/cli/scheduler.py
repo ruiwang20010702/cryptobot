@@ -348,6 +348,40 @@ def job_strategy_advisor() -> None:
         logger.error("[调度] 策略顾问失败: %s", e, exc_info=True)
 
 
+def job_overfit_check() -> None:
+    """定时: 每周过拟合检查"""
+    from cryptobot.evolution.overfit_detector import detect_overfit
+
+    try:
+        report = detect_overfit(30)
+        if report.overfit_score >= 50:
+            logger.warning(
+                "[调度] 过拟合检测: score=%.0f -- %s",
+                report.overfit_score,
+                report.recommendation,
+            )
+            from cryptobot.notify import send_message
+
+            signals_text = "\n".join(
+                f"  - {s}" for s in report.signals
+            )
+            send_message(
+                f"\u26a0\ufe0f 过拟合检测"
+                f" (score={report.overfit_score:.0f})\n\n"
+                f"{signals_text}\n\n"
+                f"建议: {report.recommendation}"
+            )
+        else:
+            logger.info(
+                "[调度] 过拟合检测: score=%.0f, 正常",
+                report.overfit_score,
+            )
+    except Exception as e:
+        logger.error(
+            "[调度] 过拟合检测失败: %s", e, exc_info=True,
+        )
+
+
 def job_journal_sync() -> None:
     """定时: 同步 Freqtrade 平仓数据到交易日志"""
     from cryptobot.journal.storage import get_records_by_status, update_record
@@ -531,6 +565,18 @@ def start(run_now: bool, verbose: bool):
         hour=9, minute=0,
         id="strategy_advisor",
         name="策略顾问 (每日9:00)",
+        max_instances=1,
+    )
+
+    # 每周过拟合检查: UTC 每周一 10:00
+    scheduler.add_job(
+        job_overfit_check,
+        "cron",
+        day_of_week="mon",
+        hour=10,
+        minute=0,
+        id="overfit_check",
+        name="过拟合检查 (每周一10:00)",
         max_instances=1,
     )
 

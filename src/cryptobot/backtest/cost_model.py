@@ -3,6 +3,8 @@
 封装永续合约交易的各类成本：手续费、滑点、资金费率。
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
@@ -56,3 +58,56 @@ def calc_trade_costs(
         funding_pct=round(funding, 6),
         total_pct=round(total, 6),
     )
+
+
+# Binance 永续合约结算时间 (UTC)
+_SETTLEMENT_HOURS = frozenset((0, 8, 16))
+
+# 各币种默认滑点 (%)
+_SYMBOL_SLIPPAGE: dict[str, float] = {
+    "BTCUSDT": 0.01,
+    "ETHUSDT": 0.02,
+}
+_DEFAULT_HOURLY_SLIPPAGE = 0.03
+
+
+@dataclass(frozen=True)
+class HourlyCostProfile:
+    """每小时成本概况"""
+
+    hour_utc: int  # 0-23
+    avg_slippage: float  # 该时段平均滑点 %
+    funding_rate_applies: bool  # 该时段是否有资金费率结算
+    total_cost: float  # 总成本 %
+
+
+def calc_hourly_cost_profile(
+    symbol: str,
+    leverage: int = 3,
+    config: CostConfig | None = None,
+) -> list[HourlyCostProfile]:
+    """生成 24 小时成本概况
+
+    结算时段 (0, 8, 16 UTC) funding_rate_applies=True
+    滑点按币种用默认值
+    total_cost = taker_fee * 2 + slippage + (funding_rate if applies else 0)
+    所有成本均乘以杠杆 (名义价值)
+    """
+    cfg = config or CostConfig()
+    slippage = _SYMBOL_SLIPPAGE.get(symbol, _DEFAULT_HOURLY_SLIPPAGE)
+    base_cost = (cfg.taker_fee_pct * 2 + slippage) * leverage
+
+    profiles = []
+    for hour in range(24):
+        is_settlement = hour in _SETTLEMENT_HOURS
+        funding = cfg.funding_rate_per_8h * leverage if is_settlement else 0.0
+        total = base_cost + funding
+        profiles.append(
+            HourlyCostProfile(
+                hour_utc=hour,
+                avg_slippage=round(slippage * leverage, 6),
+                funding_rate_applies=is_settlement,
+                total_cost=round(total, 6),
+            )
+        )
+    return profiles

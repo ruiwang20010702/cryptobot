@@ -436,6 +436,52 @@ def risk_review(state: WorkflowState) -> dict:
                 continue
             hard_checks.append({"rule": "liquidation_distance", "passed": True})
 
+        # ── 相关性检查 ──
+        try:
+            from cryptobot.risk.correlation import (
+                calc_correlation_matrix,
+                check_portfolio_correlation,
+            )
+            corr_positions = [
+                {
+                    "symbol": p.get("pair", "").replace("/", "").replace(":USDT", ""),
+                    "is_short": p.get("is_short", False),
+                }
+                for p in positions
+            ]
+            if corr_positions:
+                corr_symbols = list(
+                    {p["symbol"] for p in corr_positions} | {symbol}
+                )
+                corr_matrix = calc_correlation_matrix(corr_symbols)
+                corr_check = check_portfolio_correlation(
+                    corr_positions, {"symbol": symbol, "action": action},
+                    corr_matrix,
+                )
+                if not corr_check.passed:
+                    for v in corr_check.violations:
+                        reason = f"相关性风控: {v}"
+                        hard_checks.append({
+                            "rule": "correlation",
+                            "passed": False,
+                            "reason": reason,
+                        })
+                    hard_rule_results.append({
+                        "symbol": symbol, "passed": False, "checks": hard_checks,
+                    })
+                    rejected_signals.append({
+                        "symbol": symbol,
+                        "reason": hard_checks[-1]["reason"],
+                    })
+                    logger.info("硬性拒绝 %s: 相关性风控", symbol)
+                    _console.print(
+                        f"    [red]拒绝 {symbol}: 相关性风控[/red]"
+                    )
+                    continue
+                hard_checks.append({"rule": "correlation", "passed": True})
+        except Exception as e:
+            logger.warning("相关性检查跳过: %s", e)
+
         # 硬规则全部通过
         hard_rule_results.append({"symbol": symbol, "passed": True, "checks": hard_checks})
 

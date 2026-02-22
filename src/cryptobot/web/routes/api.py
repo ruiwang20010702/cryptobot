@@ -143,6 +143,32 @@ def get_journal_recent(limit: int = 20):
     }
 
 
+@router.get("/edge")
+def get_edge(days: int = 30):
+    """Edge 仪表盘数据"""
+    from dataclasses import asdict
+
+    from cryptobot.journal.edge import calc_edge, detect_edge_decay
+
+    metrics = calc_edge(days)
+    decay = detect_edge_decay()
+    return {"metrics": asdict(metrics), "decay": decay}
+
+
+@router.get("/correlation")
+def get_correlation():
+    """跨币种相关性矩阵"""
+    from cryptobot.risk.correlation import calc_correlation_matrix
+
+    symbols = get_all_symbols()
+    matrix = calc_correlation_matrix(symbols)
+    return {
+        "matrix": matrix.matrix,
+        "symbols": matrix.symbols,
+        "computed_at": matrix.computed_at,
+    }
+
+
 @router.patch("/signals/{symbol}")
 def update_signal(symbol: str, updates: dict):
     """更新信号字段"""
