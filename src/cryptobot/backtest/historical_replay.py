@@ -242,6 +242,28 @@ REPLAY_TRADER_PROMPT = """\
 """
 
 
+def _detect_replay_regime(snapshot: ReplaySnapshot) -> str:
+    """基于快照技术指标推断 regime (简化版)
+
+    规则:
+    - ATR% > 3 → volatile
+    - ADX > 25 → trending
+    - 其他 → ranging
+    """
+    tech = snapshot.tech_indicators or {}
+    volatility = tech.get("volatility", {})
+    trend = tech.get("trend", {})
+
+    atr_pct = volatility.get("atr_pct", 0)
+    adx = trend.get("adx", 0)
+
+    if atr_pct > 3:
+        return "volatile"
+    if adx > 25:
+        return "trending"
+    return "ranging"
+
+
 def _format_snapshot_prompt(snapshot: ReplaySnapshot, max_leverage: int) -> str:
     """将快照格式化为 LLM prompt"""
     data = {
@@ -265,18 +287,26 @@ def _run_llm_batch(
     snapshots: list[ReplaySnapshot],
     config: ReplayConfig,
 ) -> list[dict | str]:
-    """批量 LLM 调用"""
+    """批量 LLM 调用（每个快照独立 regime addon）"""
     from cryptobot.workflow.llm import call_claude_parallel
     from cryptobot.workflow.prompts import TRADE_SCHEMA
+    from cryptobot.evolution.regime_prompts import get_regime_addon
 
-    system_prompt = REPLAY_TRADER_PROMPT.format(max_leverage=config.max_leverage)
+    base_prompt = REPLAY_TRADER_PROMPT.format(max_leverage=config.max_leverage)
 
     tasks = []
     for snap in snapshots:
         prompt = _format_snapshot_prompt(snap, config.max_leverage)
+
+        # 检测 regime → 注入对应 addon
+        regime = _detect_replay_regime(snap)
+        regime_addon = get_regime_addon(regime, "TRADER")
+        system_prompt = base_prompt + regime_addon
+
         tasks.append({
             "prompt": prompt,
             "model": config.llm_model,
+            "role": "trader",
             "system_prompt": system_prompt,
             "json_schema": TRADE_SCHEMA,
         })

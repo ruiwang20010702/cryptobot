@@ -206,9 +206,16 @@ def risk_review(state: WorkflowState) -> dict:
         tier_balance = capital_tier.get("balance", 0)
         tier_params = capital_tier.get("params", {})
 
-        from cryptobot.capital_strategy import merge_regime_capital_params
+        from cryptobot.capital_strategy import merge_regime_capital_params, calc_drawdown_factor
+        dd_info = calc_drawdown_factor(lookback_days=7)
+        drawdown_factor = dd_info.get("leverage_factor", 1.0)
+        if drawdown_factor < 1.0:
+            logger.info(
+                "风控回撤感知: %.1f%% 回撤, 杠杆因子 %.2f (%s)",
+                dd_info["drawdown_pct"], drawdown_factor, dd_info["tier"],
+            )
         merged_params = merge_regime_capital_params(
-            regime.get("params", {}), tier_params,
+            regime.get("params", {}), tier_params, drawdown_factor=drawdown_factor,
         )
 
         capital_ctx = (

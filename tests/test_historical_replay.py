@@ -22,6 +22,7 @@ from cryptobot.backtest.historical_replay import (
     _load_progress,
     _clear_progress,
     _format_snapshot_prompt,
+    _detect_replay_regime,
     _download_full_klines,
     _download_paginated,
     run_historical_replay,
@@ -584,3 +585,96 @@ class TestRunReplayMocked:
         run_historical_replay(config, on_day_done=on_day)
 
         assert len(callback_calls) > 0
+
+
+# ── TestDetectReplayRegime ─────────────────────────────────────────────
+
+
+class TestDetectReplayRegime:
+    def test_detect_trending(self):
+        """ADX > 25, ATR% < 3 → trending"""
+        snap = ReplaySnapshot(
+            symbol="BTCUSDT",
+            as_of="2026-01-01T00:00:00",
+            current_price=100.0,
+            tech_indicators={
+                "trend": {"adx": 30.0},
+                "volatility": {"atr_pct": 2.0},
+            },
+            multi_timeframe={},
+            support_resistance={},
+        )
+        assert _detect_replay_regime(snap) == "trending"
+
+    def test_detect_volatile(self):
+        """ATR% > 3 → volatile (优先于 ADX 判断)"""
+        snap = ReplaySnapshot(
+            symbol="BTCUSDT",
+            as_of="2026-01-01T00:00:00",
+            current_price=100.0,
+            tech_indicators={
+                "trend": {"adx": 35.0},
+                "volatility": {"atr_pct": 4.5},
+            },
+            multi_timeframe={},
+            support_resistance={},
+        )
+        assert _detect_replay_regime(snap) == "volatile"
+
+    def test_detect_ranging(self):
+        """低 ADX 低 ATR → ranging"""
+        snap = ReplaySnapshot(
+            symbol="BTCUSDT",
+            as_of="2026-01-01T00:00:00",
+            current_price=100.0,
+            tech_indicators={
+                "trend": {"adx": 15.0},
+                "volatility": {"atr_pct": 1.5},
+            },
+            multi_timeframe={},
+            support_resistance={},
+        )
+        assert _detect_replay_regime(snap) == "ranging"
+
+    def test_missing_keys(self):
+        """缺字段 → ranging (安全默认)"""
+        snap = ReplaySnapshot(
+            symbol="BTCUSDT",
+            as_of="2026-01-01T00:00:00",
+            current_price=100.0,
+            tech_indicators={},
+            multi_timeframe={},
+            support_resistance={},
+        )
+        assert _detect_replay_regime(snap) == "ranging"
+
+    @patch("cryptobot.workflow.llm.call_claude_parallel")
+    @patch("cryptobot.evolution.regime_prompts.get_regime_addon")
+    def test_regime_addon_injected(self, mock_addon, mock_parallel):
+        """验证 _run_llm_batch 中 regime addon 被注入到 system_prompt"""
+        from cryptobot.backtest.historical_replay import _run_llm_batch
+
+        mock_addon.return_value = "\n[REGIME:trending]"
+        mock_parallel.return_value = [{"action": "no_trade"}]
+
+        snap = ReplaySnapshot(
+            symbol="BTCUSDT",
+            as_of="2026-01-01T00:00:00",
+            current_price=100.0,
+            tech_indicators={
+                "trend": {"adx": 30.0},
+                "volatility": {"atr_pct": 2.0},
+            },
+            multi_timeframe={},
+            support_resistance={},
+        )
+
+        config = ReplayConfig(max_leverage=5)
+        _run_llm_batch([snap], config)
+
+        # 验证 call_claude_parallel 收到的 system_prompt 包含 regime addon
+        tasks = mock_parallel.call_args[0][0]
+        assert len(tasks) == 1
+        assert "[REGIME:trending]" in tasks[0]["system_prompt"]
+        # 验证 role 字段被设置
+        assert tasks[0].get("role") == "trader"

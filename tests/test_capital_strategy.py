@@ -1,16 +1,18 @@
 """资金感知策略测试
 
-覆盖: 层级检测、参数合并、余额获取、Prompt addon、不可变性
+覆盖: 层级检测、参数合并、余额获取、Prompt addon、不可变性、回撤感知动态杠杆
 """
 
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 
 from cryptobot.capital_strategy import (
     detect_capital_tier,
     merge_regime_capital_params,
     get_balance_from_freqtrade,
+    calc_drawdown_factor,
     _DEFAULT_TIERS,
+    _DRAWDOWN_TIERS,
 )
 from cryptobot.evolution.capital_prompts import get_capital_addon
 
@@ -233,6 +235,117 @@ class TestCapitalPromptAddon:
 
     def test_unknown_role_returns_empty(self):
         assert get_capital_addon("micro", "UNKNOWN") == ""
+
+
+# ─── 回撤感知动态杠杆 ─────────────────────────────────────────────────
+
+def _make_record(pnl_pct, timestamp="2026-02-20T12:00:00+00:00"):
+    """构造 mock SignalRecord"""
+    rec = MagicMock()
+    rec.status = "closed"
+    rec.timestamp = timestamp
+    rec.actual_pnl_pct = pnl_pct
+    return rec
+
+
+class TestCalcDrawdownFactor:
+    @patch("cryptobot.journal.storage.get_all_records", return_value=[])
+    def test_no_records(self, _):
+        """无记录 → factor=1.0"""
+        result = calc_drawdown_factor(lookback_days=7)
+        assert result["leverage_factor"] == 1.0
+        assert result["sample_size"] == 0
+        assert result["drawdown_pct"] == 0.0
+        assert result["tier"] == "normal"
+
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_all_wins(self, mock_records):
+        """全盈利 → factor=1.0, drawdown≈0"""
+        mock_records.return_value = [
+            _make_record(5.0, "2026-02-20T10:00:00+00:00"),
+            _make_record(3.0, "2026-02-20T12:00:00+00:00"),
+            _make_record(8.0, "2026-02-20T14:00:00+00:00"),
+        ]
+        result = calc_drawdown_factor(lookback_days=7)
+        assert result["leverage_factor"] == 1.0
+        assert result["drawdown_pct"] == 0.0
+        assert result["sample_size"] == 3
+
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_moderate_drawdown(self, mock_records):
+        """回撤 ~25% → factor=0.5"""
+        # 净值: 1.0 * 1.1 * 0.75 = 0.825, peak=1.1, dd=(1.1-0.825)/1.1 ≈ 25%
+        mock_records.return_value = [
+            _make_record(10.0, "2026-02-20T10:00:00+00:00"),
+            _make_record(-25.0, "2026-02-20T12:00:00+00:00"),
+        ]
+        result = calc_drawdown_factor(lookback_days=7)
+        assert result["leverage_factor"] == 0.5
+        assert result["tier"] == "moderate"
+        assert result["drawdown_pct"] > 20
+
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_severe_drawdown(self, mock_records):
+        """回撤 >40% → factor=0.25"""
+        # 净值: 1.0 * 0.5 = 0.5, peak=1.0, dd=50%
+        mock_records.return_value = [
+            _make_record(-50.0, "2026-02-20T10:00:00+00:00"),
+        ]
+        result = calc_drawdown_factor(lookback_days=7)
+        assert result["leverage_factor"] == 0.25
+        assert result["tier"] == "severe"
+        assert result["drawdown_pct"] >= 40
+
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_lookback_filter(self, mock_records):
+        """超出回溯期的记录不计入"""
+        mock_records.return_value = [
+            # 30天前的大亏损 — 超出 7 天 lookback
+            _make_record(-50.0, "2026-01-01T10:00:00+00:00"),
+            # 近期小盈利
+            _make_record(2.0, "2026-02-20T10:00:00+00:00"),
+        ]
+        result = calc_drawdown_factor(lookback_days=7)
+        # 旧亏损被过滤，只剩近期盈利
+        assert result["leverage_factor"] == 1.0
+        assert result["sample_size"] == 1
+
+    @patch("cryptobot.journal.storage.get_all_records", side_effect=Exception("DB error"))
+    def test_exception_safe(self, _):
+        """异常 → factor=1.0 (fail-open)"""
+        result = calc_drawdown_factor(lookback_days=7)
+        assert result["leverage_factor"] == 1.0
+        assert result["tier"] == "error"
+
+
+class TestMergeDrawdownFactor:
+    def test_merge_drawdown_half(self):
+        """factor=0.5 → 杠杆减半"""
+        regime = {"min_confidence": 55, "max_leverage": 4, "trailing_stop": True}
+        capital = {"conf_boost": 0, "lev_cap": 4, "max_positions": 3,
+                   "max_coins": 5, "take_profit_style": "standard",
+                   "preferred_symbols": []}
+        merged = merge_regime_capital_params(regime, capital, drawdown_factor=0.5)
+        assert merged["max_leverage"] == 2  # int(4 * 0.5) = 2
+
+    def test_merge_drawdown_quarter(self):
+        """factor=0.25 → 杠杆降至 1"""
+        regime = {"min_confidence": 55, "max_leverage": 3, "trailing_stop": True}
+        capital = {"conf_boost": 0, "lev_cap": 3, "max_positions": 3,
+                   "max_coins": 5, "take_profit_style": "standard",
+                   "preferred_symbols": []}
+        merged = merge_regime_capital_params(regime, capital, drawdown_factor=0.25)
+        # int(3 * 0.25) = 0 → max(1, 0) = 1
+        assert merged["max_leverage"] == 1
+
+    def test_merge_backward_compat(self):
+        """不传 factor → 行为不变（默认 1.0）"""
+        regime = {"min_confidence": 55, "max_leverage": 5, "trailing_stop": True}
+        capital = {"conf_boost": 0, "lev_cap": 5, "max_positions": 5,
+                   "max_coins": 10, "take_profit_style": "standard",
+                   "preferred_symbols": []}
+        merged = merge_regime_capital_params(regime, capital)
+        assert merged["max_leverage"] == 5
 
 
 # ─── 不可变性 ─────────────────────────────────────────────────────────────

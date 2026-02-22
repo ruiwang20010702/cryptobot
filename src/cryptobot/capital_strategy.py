@@ -11,6 +11,7 @@ medium/large 层级不改变现有行为（向后兼容）。
 """
 
 import logging
+from datetime import datetime, timezone
 
 from cryptobot.config import load_settings
 
@@ -113,12 +114,16 @@ def detect_capital_tier(balance: float) -> dict:
     }
 
 
-def merge_regime_capital_params(regime_params: dict, capital_params: dict) -> dict:
+def merge_regime_capital_params(
+    regime_params: dict,
+    capital_params: dict,
+    drawdown_factor: float = 1.0,
+) -> dict:
     """合并 regime 和 capital 参数，取更严格值
 
     规则:
     - min_confidence: 取更高值 (regime_min + capital_boost)
-    - max_leverage: 取更低值
+    - max_leverage: 取更低值，再乘以 drawdown_factor
     - max_positions, max_coins: 取 capital 值（regime 无此概念）
     - trailing_stop: regime 控制
     - take_profit_style: capital 控制
@@ -126,6 +131,7 @@ def merge_regime_capital_params(regime_params: dict, capital_params: dict) -> di
     Args:
         regime_params: {"min_confidence": 55, "max_leverage": 5, "trailing_stop": True}
         capital_params: {"conf_boost": 15, "lev_cap": 3, "max_positions": 1, ...}
+        drawdown_factor: 回撤杠杆缩放因子 (0~1.0)，默认 1.0 不缩放
 
     Returns:
         合并后的参数字典
@@ -133,18 +139,103 @@ def merge_regime_capital_params(regime_params: dict, capital_params: dict) -> di
     regime_min_conf = regime_params.get("min_confidence", 55)
     capital_boost = capital_params.get("conf_boost", 0)
 
+    base_leverage = min(
+        regime_params.get("max_leverage", 5),
+        capital_params.get("lev_cap", 5),
+    )
+    adjusted_leverage = max(1, int(base_leverage * drawdown_factor))
+
     return {
         "min_confidence": regime_min_conf + capital_boost,
-        "max_leverage": min(
-            regime_params.get("max_leverage", 5),
-            capital_params.get("lev_cap", 5),
-        ),
+        "max_leverage": adjusted_leverage,
         "trailing_stop": regime_params.get("trailing_stop", False),
         "max_positions": capital_params.get("max_positions", 5),
         "max_coins": capital_params.get("max_coins", 5),
         "take_profit_style": capital_params.get("take_profit_style", "standard"),
         "preferred_symbols": capital_params.get("preferred_symbols", []),
     }
+
+
+# ─── 回撤感知动态杠杆 ──────────────────────────────────────────────────
+
+_DRAWDOWN_TIERS = [
+    (0.20, 1.0),   # 回撤 0-20%: 不变
+    (0.40, 0.5),   # 回撤 20-40%: 减半
+    (1.00, 0.25),  # 回撤 >40%: 1/4
+]
+
+
+def calc_drawdown_factor(lookback_days: int = 7) -> dict:
+    """从 journal 已平仓交易计算近期回撤 → 杠杆缩放因子
+
+    按时间排序构建净值曲线，计算 max drawdown，映射到杠杆因子。
+
+    Returns:
+        {"drawdown_pct": float, "leverage_factor": float,
+         "sample_size": int, "tier": str}
+    """
+    try:
+        from cryptobot.journal.storage import get_all_records
+        from datetime import timedelta
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        ).isoformat()
+
+        closed = [
+            r for r in get_all_records()
+            if r.status == "closed"
+            and r.timestamp >= cutoff
+            and r.actual_pnl_pct is not None
+        ]
+
+        if not closed:
+            return {
+                "drawdown_pct": 0.0,
+                "leverage_factor": 1.0,
+                "sample_size": 0,
+                "tier": "normal",
+            }
+
+        # 按时间排序，构建净值曲线
+        closed.sort(key=lambda r: r.timestamp)
+        equity = 1.0
+        peak = 1.0
+        max_dd = 0.0
+        for r in closed:
+            equity *= (1 + r.actual_pnl_pct / 100)
+            peak = max(peak, equity)
+            dd = (peak - equity) / peak if peak > 0 else 0
+            max_dd = max(max_dd, dd)
+
+        # 映射到杠杆因子
+        factor = _DRAWDOWN_TIERS[-1][1]
+        tier = "severe"
+        for threshold, f in _DRAWDOWN_TIERS:
+            if max_dd <= threshold:
+                factor = f
+                if threshold <= 0.20:
+                    tier = "normal"
+                elif threshold <= 0.40:
+                    tier = "moderate"
+                else:
+                    tier = "severe"
+                break
+
+        return {
+            "drawdown_pct": round(max_dd * 100, 1),
+            "leverage_factor": factor,
+            "sample_size": len(closed),
+            "tier": tier,
+        }
+    except Exception as e:
+        logger.error("回撤因子计算异常: %s", e)
+        return {
+            "drawdown_pct": 0.0,
+            "leverage_factor": 1.0,
+            "sample_size": 0,
+            "tier": "error",
+        }
 
 
 def _extract_usdt_balance(balance_data: dict | None) -> float:

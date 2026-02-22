@@ -61,7 +61,7 @@ risk:
   # 最大亏损限制
   max_loss:
     per_trade_pct: 2                # 单笔最大亏损
-    daily_pct: 5                    # 日度最大亏损
+    daily_pct: 3                    # 日度最大亏损 (P12.4: 5→3，回放验证收益+337%)
     weekly_pct: 8                   # 周度最大亏损
     monthly_drawdown_pct: 15        # 月度最大回撤 → 暂停 24h
 

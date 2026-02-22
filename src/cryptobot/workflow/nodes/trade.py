@@ -84,10 +84,19 @@ def trade(state: WorkflowState) -> dict:
         tier_balance = capital_tier.get("balance", 0)
         tier_params = capital_tier.get("params", {})
 
+        # 计算回撤杠杆缩放因子
+        from cryptobot.capital_strategy import merge_regime_capital_params, calc_drawdown_factor
+        dd_info = calc_drawdown_factor(lookback_days=7)
+        drawdown_factor = dd_info.get("leverage_factor", 1.0)
+        if drawdown_factor < 1.0:
+            logger.info(
+                "回撤感知: %.1f%% 回撤, 杠杆因子 %.2f (%s)",
+                dd_info["drawdown_pct"], drawdown_factor, dd_info["tier"],
+            )
+
         # 合并 regime + capital 参数
-        from cryptobot.capital_strategy import merge_regime_capital_params
         merged_params = merge_regime_capital_params(
-            regime.get("params", {}), tier_params,
+            regime.get("params", {}), tier_params, drawdown_factor=drawdown_factor,
         )
 
         capital_ctx = (
