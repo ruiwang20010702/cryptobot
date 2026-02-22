@@ -24,3 +24,4 @@ class WorkflowState(TypedDict, total=False):
     errors: list             # 各节点错误收集
     screening_scores: list   # screen: 完整筛选评分列表 [(symbol, score), ...]
     risk_details: dict       # risk_review: 风控审核细节 {hard_rules: [...], ai_reviews: [...]}
+    strategy_routes: dict    # trade: {symbol: StrategyRoute} 策略路由结果

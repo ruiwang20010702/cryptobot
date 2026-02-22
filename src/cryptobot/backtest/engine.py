@@ -237,10 +237,54 @@ def _download_klines_batch(symbols: list[str]) -> dict:
 # ── 模拟执行 ──────────────────────────────────────────────────────────────
 
 
+def _calc_atr_pct(kl, signal: dict) -> float | None:
+    """计算信号时点附近的 ATR% (不依赖 talib)"""
+    try:
+        # 截取信号之前的 K 线用于计算 ATR
+        ts = signal.get("timestamp")
+        if ts:
+            from datetime import datetime
+            sig_ts = datetime.fromisoformat(ts)
+            if kl.index.tz is None and getattr(sig_ts, "tzinfo", None) is not None:
+                sig_ts = sig_ts.replace(tzinfo=None)
+            before = kl[kl.index <= sig_ts]
+            df = before if len(before) >= 14 else kl
+        else:
+            df = kl
+
+        if len(df) < 15:
+            return None
+
+        high = df["high"].values[-15:]
+        low = df["low"].values[-15:]
+        close = df["close"].values[-15:]
+
+        tr_list = []
+        for i in range(1, len(high)):
+            tr = max(
+                float(high[i]) - float(low[i]),
+                abs(float(high[i]) - float(close[i - 1])),
+                abs(float(low[i]) - float(close[i - 1])),
+            )
+            tr_list.append(tr)
+
+        if not tr_list:
+            return None
+
+        atr = sum(tr_list) / len(tr_list)
+        last_close = float(close[-1])
+        if last_close <= 0:
+            return None
+        return atr / last_close * 100
+    except Exception:
+        return None
+
+
 def _simulate_all(
     signals: list[dict],
     klines_cache: dict,
     cost_config: CostConfig,
+    mfe_trailing: bool = True,
 ) -> list[TradeResult]:
     """批量模拟所有信号"""
     trades = []
@@ -250,7 +294,14 @@ def _simulate_all(
         if kl is None or kl.empty:
             continue
 
-        result = simulate_trade(sig, kl, cost_config)
+        atr_pct = None
+        if mfe_trailing:
+            atr_pct = _calc_atr_pct(kl, sig)
+
+        result = simulate_trade(
+            sig, kl, cost_config,
+            mfe_trailing=mfe_trailing, atr_pct=atr_pct,
+        )
         if result is not None:
             trades.append(result)
 
@@ -358,3 +409,69 @@ def save_report(report: BacktestReport) -> Path:
     tmp.rename(path)
     logger.info("回测报告保存到 %s", path)
     return path
+
+
+# ── Walk-forward 滚动验证 ─────────────────────────────────────────────────
+
+
+def run_walk_forward_backtest(
+    days: int = 180,
+    source: str = "archive",
+    cost_config: CostConfig | None = None,
+    train_days: int = 60,
+    test_days: int = 30,
+    step_days: int = 30,
+):
+    """Walk-forward 滚动验证
+
+    加载信号 -> 模拟交易 -> 切分窗口 -> 计算 IS vs OOS
+
+    Args:
+        days: 回溯天数
+        source: 信号来源 ("archive" 或 "journal")
+        cost_config: 成本配置
+        train_days: 训练窗口天数
+        test_days: 测试窗口天数
+        step_days: 步进天数
+
+    Returns:
+        WalkForwardResult
+    """
+    from cryptobot.backtest.walk_forward import (
+        _empty_result,
+        generate_windows,
+        run_walk_forward,
+    )
+
+    if cost_config is None:
+        cost_config = CostConfig()
+
+    # 1. 加载信号
+    if source == "journal":
+        signals = _load_signals_from_journal(days)
+    else:
+        signals = _load_signals_from_archive(days)
+
+    logger.info("Walk-forward: 加载 %d 个信号 (%d天)", len(signals), days)
+
+    if not signals:
+        return _empty_result("无信号数据")
+
+    # 2. 下载 K 线并模拟
+    klines_cache = _load_klines_for_signals(signals)
+    trades = _simulate_all(signals, klines_cache, cost_config)
+
+    logger.info("Walk-forward: %d 笔有效交易", len(trades))
+
+    if not trades:
+        return _empty_result("无有效交易")
+
+    # 3. 生成窗口并运行
+    windows = generate_windows(
+        total_days=days,
+        train_days=train_days,
+        test_days=test_days,
+        step_days=step_days,
+    )
+
+    return run_walk_forward(trades, windows)

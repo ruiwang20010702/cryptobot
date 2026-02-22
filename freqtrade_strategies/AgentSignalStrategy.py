@@ -245,6 +245,36 @@ class AgentSignalStrategy(IStrategy):
             trail_pct = signal["trailing_stop_pct"] / 100
             return -(current_profit - trail_pct)
 
+        # 优先级 1.5: MFE 自适应尾随 (ATR-based)
+        # 浮盈 >= 2×ATR 后保本，之后每 1×ATR 收紧止损
+        if signal and current_profit > 0 and trade:
+            atr_val = None
+            atr_pct = signal.get("atr_pct")
+            if atr_pct:
+                atr_val = atr_pct / 100
+            elif hasattr(trade, "pair"):
+                # 从 dataframe 中获取 ATR (如有)
+                try:
+                    dp = self.dp
+                    if dp:
+                        df = dp.get_pair_dataframe(trade.pair, self.timeframe)
+                        if df is not None and "atr" in df.columns and len(df) > 0:
+                            last_atr = df["atr"].iloc[-1]
+                            last_close = df["close"].iloc[-1]
+                            if last_close > 0 and last_atr > 0:
+                                atr_val = last_atr / last_close
+                except Exception:
+                    pass
+
+            if atr_val and atr_val > 0:
+                trigger = atr_val * 2
+                if current_profit >= trigger:
+                    trail_steps = int((current_profit - trigger) / atr_val)
+                    # 保本 + 阶梯收紧 (每步收紧 0.5×ATR)
+                    tightened = trail_steps * atr_val * 0.5
+                    new_sl = -(current_profit - 0.001 - tightened)
+                    return min(new_sl, self.stoploss)
+
         # 优先级 2: Agent 固定止损价
         if signal and signal.get("stop_loss") and trade:
             sl_price = signal["stop_loss"]

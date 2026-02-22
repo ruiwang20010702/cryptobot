@@ -9,10 +9,12 @@ import numpy as np
 import talib
 
 from cryptobot.indicators.calculator import load_klines
+from cryptobot.indicators.hurst import calc_hurst_exponent, classify_hurst
 
 logger = logging.getLogger(__name__)
 
 _TIMEFRAMES = ("1h", "4h", "1d")
+_HURST_TIMEFRAME = "4h"  # 用 4h 收盘价计算 Hurst
 
 _DEFAULT_RESULT = {
     "regime": "ranging",
@@ -21,6 +23,8 @@ _DEFAULT_RESULT = {
     "volatility_state": "normal",
     "timeframe_details": {},
     "description": "数据不足，默认震荡市",
+    "hurst_exponent": 0.5,
+    "regime_confidence": 0.0,
 }
 
 
@@ -44,7 +48,7 @@ def _analyze_timeframe(symbol: str, timeframe: str) -> dict:
 
     Returns:
         {"trend": "bullish"|"bearish", "strength": "strong"|"weak",
-         "adx": float, "atr_pct": float}
+         "adx": float, "atr_pct": float, "closes": list[float]}
     """
     df = load_klines(symbol, timeframe)
 
@@ -66,6 +70,7 @@ def _analyze_timeframe(symbol: str, timeframe: str) -> dict:
         "strength": strength,
         "adx": round(float(adx[-1]), 1),
         "atr_pct": round(atr_pct, 2),
+        "closes": close.tolist(),
     }
 
 
@@ -127,28 +132,66 @@ def detect_regime(symbol: str = "BTCUSDT") -> dict:
     # --- 波动率 ---
     volatility_state = _classify_volatility(atr_pcts)
 
-    # --- Regime 判定 ---
-    has_strong_adx = any(d["adx"] > 25 for d in details.values())
+    # --- Hurst 指数 (优先用 4h close) ---
+    hurst_closes = details.get(_HURST_TIMEFRAME, {}).get("closes", [])
+    if not hurst_closes:
+        # fallback: 用任意可用 TF
+        for d in details.values():
+            if d.get("closes"):
+                hurst_closes = d["closes"]
+                break
+    hurst_val = calc_hurst_exponent(hurst_closes)
+    hurst_hint, hurst_conf = classify_hurst(hurst_val)
 
-    if has_strong_adx and trend_direction != "neutral":
-        regime = "trending"
-    elif volatility_state == "high_vol":
+    # --- Regime 判定: ADX(0.7) + Hurst(0.3) 加权评分 ---
+    max_adx = max(d["adx"] for d in details.values())
+    adx_score = min(max_adx / 50.0, 1.0)  # 归一化到 0-1
+
+    # Hurst 投票: trending/ranging 给对应分数, random 时两边各半 (中性)
+    if hurst_hint == "trending":
+        hurst_trending = hurst_conf
+        hurst_ranging = 0.0
+    elif hurst_hint == "ranging":
+        hurst_trending = 0.0
+        hurst_ranging = hurst_conf
+    else:  # random — 不干预 ADX 判断
+        hurst_trending = 0.5
+        hurst_ranging = 0.5
+
+    trending_score = adx_score * 0.7 + hurst_trending * 0.3
+    ranging_score = (1 - adx_score) * 0.7 + hurst_ranging * 0.3
+
+    # volatile 优先保持不变
+    if volatility_state == "high_vol":
         regime = "volatile"
+    elif trending_score > 0.5 and trend_direction != "neutral":
+        regime = "trending"
     else:
         regime = "ranging"
+
+    regime_confidence = round(max(trending_score, ranging_score), 3)
 
     # --- 描述 ---
     agreement = (
         f"{max(bullish_count, bearish_count)}/{total} 时间框架确认"
         f"{'上涨' if trend_direction == 'bullish' else '下跌' if trend_direction == 'bearish' else '无明确'}趋势"
+        f" (H={hurst_val:.2f})"
     )
     description = _build_description(regime, trend_direction, agreement)
+
+    # timeframe_details 去掉 closes (太大，不序列化)
+    clean_details = {
+        tf: {k: v for k, v in d.items() if k != "closes"}
+        for tf, d in details.items()
+    }
 
     return {
         "regime": regime,
         "trend_direction": trend_direction,
         "trend_strength": trend_strength,
         "volatility_state": volatility_state,
-        "timeframe_details": details,
+        "timeframe_details": clean_details,
         "description": description,
+        "hurst_exponent": round(hurst_val, 3),
+        "regime_confidence": regime_confidence,
     }

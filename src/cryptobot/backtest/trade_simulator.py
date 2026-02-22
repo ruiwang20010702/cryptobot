@@ -37,6 +37,7 @@ class TradeResult:
     entry_time: str  # ISO format
     exit_time: str  # ISO format
     signal_source: str  # ai / random / ma_cross / rsi / bollinger
+    exit_strategy: str = "fixed"  # fixed / mfe_trailing
 
 
 _MAX_BARS = 168  # 7 天 × 24h
@@ -48,6 +49,8 @@ def simulate_trade(
     cost_config: CostConfig | None = None,
     position_usdt: float = 1000.0,
     max_bars: int = _MAX_BARS,
+    mfe_trailing: bool = False,
+    atr_pct: float | None = None,
 ) -> TradeResult | None:
     """模拟单笔交易
 
@@ -105,7 +108,12 @@ def simulate_trade(
     mfe = 0.0
     mae = 0.0
     exit_reason = "timeout"
+    exit_strategy = "fixed"
     exit_bar_idx = len(df) - 1
+
+    # MFE 尾随参数预计算
+    _mfe_enabled = mfe_trailing and atr_pct is not None and atr_pct > 0
+    _mfe_trigger = atr_pct * 2 if _mfe_enabled else 0.0
 
     for i, (ts, bar) in enumerate(df.iterrows()):
         high = float(bar["high"])
@@ -121,11 +129,25 @@ def simulate_trade(
         mfe = max(mfe, favorable)
         mae = max(mae, adverse)
 
+        # ── MFE 自适应尾随止损 ──
+        effective_sl = stop_loss
+        if _mfe_enabled and mfe >= _mfe_trigger and stop_loss is not None:
+            exit_strategy = "mfe_trailing"
+            trail_steps = int((mfe - _mfe_trigger) / atr_pct)
+            if is_long:
+                breakeven_sl = entry_price
+                tightened_sl = entry_price * (1 + trail_steps * atr_pct / 100)
+                effective_sl = max(breakeven_sl, tightened_sl, stop_loss)
+            else:
+                breakeven_sl = entry_price
+                tightened_sl = entry_price * (1 - trail_steps * atr_pct / 100)
+                effective_sl = min(breakeven_sl, tightened_sl, stop_loss)
+
         # ── 止损检查 (优先) ──
-        if stop_loss is not None and remaining_ratio > 0:
-            sl_hit = (low <= stop_loss) if is_long else (high >= stop_loss)
+        if effective_sl is not None and remaining_ratio > 0:
+            sl_hit = (low <= effective_sl) if is_long else (high >= effective_sl)
             if sl_hit:
-                weighted_exit_sum += stop_loss * remaining_ratio
+                weighted_exit_sum += effective_sl * remaining_ratio
                 remaining_ratio = 0.0
                 exit_reason = "sl_hit"
                 exit_bar_idx = i
@@ -198,6 +220,7 @@ def simulate_trade(
         entry_time=entry_time,
         exit_time=exit_time,
         signal_source=signal_source,
+        exit_strategy=exit_strategy,
     )
 
 

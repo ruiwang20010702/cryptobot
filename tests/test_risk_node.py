@@ -6,6 +6,8 @@
 - C3: 余额为 0 拒绝开仓
 - 资金层级硬性规则
 - 爆仓距离计算集成
+- P13.2: 置信度绝对下限过滤
+- P13.3: 做多加严（震荡市禁多 + 做多置信度门槛）
 """
 
 from unittest.mock import patch, MagicMock
@@ -275,3 +277,317 @@ class TestRRThresholdByRegime:
                     result_ranging = risk_review(state_ranging)
 
         assert len(result_ranging["approved_signals"]) == 0
+
+
+# ─── P13.2: 置信度绝对下限 ───────────────────────────────────────────────
+
+def _ft_side_effect_normal(endpoint):
+    """通用 Freqtrade mock: 余额 10000, 无持仓"""
+    if endpoint == "/balance":
+        return {"currencies": [{"currency": "USDT", "balance": 10000}]}
+    if endpoint == "/status":
+        return []
+    return None
+
+
+def _run_risk_review(state):
+    """执行 risk_review，mock 掉常见依赖"""
+    with patch("cryptobot.journal.analytics.build_performance_summary", return_value=""):
+        with patch(
+            "cryptobot.journal.confidence_tuner.calc_dynamic_threshold",
+            side_effect=Exception("skip"),
+        ):
+            return risk_review(state)
+
+
+class TestConfidenceFloor:
+    """P13.2 置信度绝对下限过滤"""
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_reject_below_floor_60(self, _sig, _ft, _notify):
+        """置信度 55 < 60 绝对下限 → 拒绝"""
+        state = _base_state(
+            decisions=[_make_decision(confidence=55)],
+            market_regime={"regime": "trending"},
+        )
+        result = _run_risk_review(state)
+        assert result["approved_signals"] == []
+        rejected = result["risk_details"]["rejected_signals"]
+        assert any("绝对下限" in r["reason"] for r in rejected)
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_reject_below_floor_65_ranging(self, _sig, _ft, _notify):
+        """ranging 时置信度 62 < 65 → 拒绝"""
+        state = _base_state(
+            decisions=[_make_decision(confidence=62)],
+            market_regime={"regime": "ranging"},
+        )
+        result = _run_risk_review(state)
+        assert result["approved_signals"] == []
+        rejected = result["risk_details"]["rejected_signals"]
+        assert any("绝对下限" in r["reason"] for r in rejected)
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.workflow.nodes.risk.call_claude_parallel")
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_pass_above_floor(self, _sig, _ft, mock_parallel, _notify):
+        """置信度 70 > 60 → 通过此检查（进入后续流程）"""
+        mock_parallel.return_value = [
+            {"decision": "approved", "risk_score": 3},
+        ]
+        state = _base_state(
+            decisions=[_make_decision(confidence=70)],
+            market_regime={"regime": "trending"},
+        )
+        result = _run_risk_review(state)
+        assert len(result["approved_signals"]) == 1
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_floor_60_exact_passes(self, _sig, _ft, _notify):
+        """置信度恰好 60 = 下限 → 不被绝对下限拦截（>=60 通过）"""
+        # confidence=60 通过 P13.2，但 action=long + confidence=60 < 65 被 P13.3 拦截
+        # 所以用 short 来测试 P13.2 的边界
+        state = _base_state(
+            decisions=[_make_decision(action="short", confidence=60)],
+            market_regime={"regime": "trending"},
+        )
+        result = _run_risk_review(state)
+        # 不应被 "绝对下限" 拒绝
+        rejected = result["risk_details"]["rejected_signals"]
+        assert not any("绝对下限" in r.get("reason", "") for r in rejected)
+
+
+# ─── P13.3: 做多加严 ─────────────────────────────────────────────────────
+
+class TestLongRestrictions:
+    """P13.3 做多加严: 震荡市禁多 + 做多置信度门槛 65"""
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_ranging_block_long(self, _sig, _ft, _notify):
+        """震荡市做多 → 拒绝"""
+        state = _base_state(
+            decisions=[_make_decision(action="long", confidence=80)],
+            market_regime={"regime": "ranging"},
+        )
+        result = _run_risk_review(state)
+        assert result["approved_signals"] == []
+        rejected = result["risk_details"]["rejected_signals"]
+        assert any("震荡市禁止做多" in r["reason"] for r in rejected)
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_long_below_65_rejected(self, _sig, _ft, _notify):
+        """做多置信度 62 < 65 → 拒绝（非 ranging，不触发禁多）"""
+        state = _base_state(
+            decisions=[_make_decision(action="long", confidence=62)],
+            market_regime={"regime": "trending"},
+        )
+        result = _run_risk_review(state)
+        assert result["approved_signals"] == []
+        rejected = result["risk_details"]["rejected_signals"]
+        assert any("做多置信度" in r["reason"] for r in rejected)
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.workflow.nodes.risk.call_claude_parallel")
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_long_65_passes(self, _sig, _ft, mock_parallel, _notify):
+        """做多置信度恰好 65 → 通过做多检查"""
+        mock_parallel.return_value = [
+            {"decision": "approved", "risk_score": 3},
+        ]
+        state = _base_state(
+            decisions=[_make_decision(action="long", confidence=65)],
+            market_regime={"regime": "trending"},
+        )
+        result = _run_risk_review(state)
+        assert len(result["approved_signals"]) == 1
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.workflow.nodes.risk.call_claude_parallel")
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_short_not_affected_by_long_rules(self, _sig, _ft, mock_parallel, _notify):
+        """做空不受 P13.3 做多规则影响"""
+        mock_parallel.return_value = [
+            {"decision": "approved", "risk_score": 3},
+        ]
+        # confidence=62 > 60(floor) 但 < 65(long_min)，做空不受影响
+        state = _base_state(
+            decisions=[_make_decision(action="short", confidence=62)],
+            market_regime={"regime": "trending"},
+        )
+        result = _run_risk_review(state)
+        assert len(result["approved_signals"]) == 1
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.workflow.nodes.risk.call_claude_parallel")
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    def test_ranging_short_allowed(self, _sig, _ft, mock_parallel, _notify):
+        """震荡市做空 → 不受禁多规则影响（置信度需 >= 65 ranging floor）"""
+        mock_parallel.return_value = [
+            {"decision": "approved", "risk_score": 3},
+        ]
+        # RR 需 >= 2.0 (ranging): entry_mid=60500, sl=61500 → dist=1000
+        # tp=58500 → dist=2000, RR=2.0
+        decision = {
+            "symbol": "BTCUSDT", "action": "short", "confidence": 70, "leverage": 3,
+            "entry_price_range": [60000, 61000], "stop_loss": 61500,
+            "take_profit": [58500],
+            "position_size_pct": 20, "current_price": 60500, "reasoning": "test",
+        }
+        state = _base_state(
+            decisions=[decision],
+            market_regime={"regime": "ranging"},
+        )
+        result = _run_risk_review(state)
+        assert len(result["approved_signals"]) == 1
+
+
+# ─── P13.7: 震荡市参数优化 ────────────────────────────────────────────────
+
+class TestRangingLimits:
+    """P13.7 震荡市日交易数限制"""
+
+    def _make_record(self, status="active"):
+        """创建模拟交易记录（24h 内）"""
+        from datetime import datetime, timezone
+
+        rec = MagicMock()
+        rec.status = status
+        rec.timestamp = datetime.now(timezone.utc).isoformat()
+        return rec
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_ranging_daily_trade_limit_exceeded(
+        self, mock_records, _sig, _ft, _notify
+    ):
+        """震荡市日交易数 >= 2 -> 拒绝"""
+        # 2 笔活跃交易 (>= max_daily_trades=2)
+        mock_records.return_value = [self._make_record() for _ in range(2)]
+
+        # 做空 + 高置信度 + 高 RR，确保不被其他规则拦截
+        decision = {
+            "symbol": "BTCUSDT",
+            "action": "short",
+            "confidence": 80,
+            "leverage": 2,
+            "entry_price_range": [60000, 61000],
+            "stop_loss": 61500,
+            "take_profit": [58500],
+            "position_size_pct": 10,
+            "current_price": 60500,
+            "reasoning": "test",
+        }
+        state = _base_state(
+            decisions=[decision],
+            market_regime={"regime": "ranging"},
+        )
+        result = _run_risk_review(state)
+        assert result["approved_signals"] == []
+        rejected = result["risk_details"]["rejected_signals"]
+        assert any("震荡市日交易数" in r["reason"] for r in rejected)
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.workflow.nodes.risk.call_claude_parallel")
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_ranging_daily_trade_limit_within(
+        self, mock_records, _sig, _ft, mock_parallel, _notify
+    ):
+        """震荡市日交易数 < 2 -> 通过此检查"""
+        mock_records.return_value = [self._make_record()]  # 仅 1 笔
+        mock_parallel.return_value = [
+            {"decision": "approved", "risk_score": 3},
+        ]
+
+        decision = {
+            "symbol": "BTCUSDT",
+            "action": "short",
+            "confidence": 80,
+            "leverage": 2,
+            "entry_price_range": [60000, 61000],
+            "stop_loss": 61500,
+            "take_profit": [58500],
+            "position_size_pct": 10,
+            "current_price": 60500,
+            "reasoning": "test",
+        }
+        state = _base_state(
+            decisions=[decision],
+            market_regime={"regime": "ranging"},
+        )
+        result = _run_risk_review(state)
+        assert len(result["approved_signals"]) == 1
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.workflow.nodes.risk.call_claude_parallel")
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_non_ranging_no_daily_limit(
+        self, mock_records, _sig, _ft, mock_parallel, _notify
+    ):
+        """非震荡市不受日交易数限制"""
+        mock_records.return_value = [self._make_record() for _ in range(5)]
+        mock_parallel.return_value = [
+            {"decision": "approved", "risk_score": 3},
+        ]
+
+        state = _base_state(
+            decisions=[_make_decision(action="long", confidence=70)],
+            market_regime={"regime": "trending"},
+        )
+        result = _run_risk_review(state)
+        assert len(result["approved_signals"]) == 1
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    @patch("cryptobot.freqtrade_api.ft_api_get", side_effect=_ft_side_effect_normal)
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
+    @patch("cryptobot.journal.storage.get_all_records")
+    def test_expired_trades_not_counted(self, mock_records, _sig, _ft, _notify):
+        """expired 状态的交易不计入日交易数"""
+        mock_records.return_value = [
+            self._make_record("expired"),
+            self._make_record("expired"),
+            self._make_record("expired"),
+        ]
+
+        decision = {
+            "symbol": "BTCUSDT",
+            "action": "short",
+            "confidence": 80,
+            "leverage": 2,
+            "entry_price_range": [60000, 61000],
+            "stop_loss": 61500,
+            "take_profit": [58500],
+            "position_size_pct": 10,
+            "current_price": 60500,
+            "reasoning": "test",
+        }
+        state = _base_state(
+            decisions=[decision],
+            market_regime={"regime": "ranging"},
+        )
+        # expired 交易被排除后 count=0 < 2, 不会触发限制
+        # 但后续其他硬性规则可能拦截 -- 只检查不被 "震荡市日交易数" 拒绝
+        result = _run_risk_review(state)
+        rejected = result["risk_details"]["rejected_signals"]
+        assert not any(
+            "震荡市日交易数" in r.get("reason", "") for r in rejected
+        )

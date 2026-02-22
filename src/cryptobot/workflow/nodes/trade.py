@@ -9,6 +9,7 @@ from rich.console import Console
 from cryptobot.workflow.llm import call_claude_parallel
 from cryptobot.workflow.prompts import TRADER, TRADE_SCHEMA
 from cryptobot.workflow.state import WorkflowState
+from cryptobot.workflow.strategy_router import route_strategy, StrategyRoute
 from cryptobot.workflow.utils import _stage, _build_portfolio_context
 
 logger = logging.getLogger(__name__)
@@ -119,15 +120,96 @@ def trade(state: WorkflowState) -> dict:
 
     all_tasks = []
     task_meta = []  # (symbol, current_price)
+    decisions = []  # 提前初始化，observe/mean_reversion 直接写入
+    strategy_routes = {}
 
     for symbol in research_data:
+        # -- P13.6: 策略路由 --
+        regime_info = regime if regime else {}
+        route = route_strategy(
+            regime=regime_info.get("regime", ""),
+            regime_confidence=regime_info.get("regime_confidence", 0.5),
+            hurst=regime_info.get("hurst_exponent", 0.5),
+            volatility_state=regime_info.get("volatility_state", "normal"),
+        )
+        strategy_routes[symbol] = route
+
+        data = market_data.get(symbol, {})
+        current_price = (data.get("tech") or {}).get("latest_close", 0)
+
+        # observe -> 直接 no_trade
+        if route.strategy == "observe":
+            decisions.append({
+                "symbol": symbol,
+                "action": "no_trade",
+                "confidence": 0,
+                "reasoning": route.reason,
+                "current_price": current_price,
+            })
+            _console.print(f"    {symbol}: 观望 ({route.reason})")
+            continue
+
+        # mean_reversion -> 规则化信号，不走 LLM
+        if route.strategy == "mean_reversion":
+            try:
+                from cryptobot.strategy.mean_reversion import (
+                    check_bb_entry,
+                    signal_to_dict,
+                )
+
+                tech = data.get("tech", {})
+                latest = {}
+                if tech:
+                    latest["close"] = tech.get("latest_close", 0)
+                    bb = tech.get("bollinger", {})
+                    latest["bb_upper"] = bb.get("upper", 0)
+                    latest["bb_lower"] = bb.get("lower", 0)
+                    latest["bb_mid"] = bb.get("middle", 0)
+                    latest["rsi_14"] = tech.get("rsi", 50)
+                    latest["atr_14"] = tech.get("atr", 0)
+                    latest["volume_ratio"] = tech.get("volume_ratio", 1.0)
+
+                mr_sig = check_bb_entry(symbol, {"latest": latest})
+                if mr_sig:
+                    sig_dict = signal_to_dict(mr_sig)
+                    sig_dict["current_price"] = current_price
+                    decisions.append(sig_dict)
+                    _console.print(
+                        f"    {symbol}: 均值回归 {mr_sig.action}"
+                        f" conf={mr_sig.confidence}"
+                    )
+                else:
+                    decisions.append({
+                        "symbol": symbol,
+                        "action": "no_trade",
+                        "confidence": 0,
+                        "reasoning": "均值回归无入场信号",
+                        "current_price": current_price,
+                    })
+                    _console.print(f"    {symbol}: 均值回归无信号")
+            except ImportError:
+                logger.warning("mean_reversion 模块未就绪，fallback 到 ai_trend")
+                route = StrategyRoute(
+                    strategy="ai_trend", weight=0.5,
+                    reason="均值回归模块未就绪，fallback", params={},
+                )
+                strategy_routes[symbol] = route
+            except Exception as e:
+                logger.warning("均值回归策略失败 %s: %s", symbol, e)
+                route = StrategyRoute(
+                    strategy="ai_trend", weight=0.5,
+                    reason="均值回归失败，fallback", params={},
+                )
+                strategy_routes[symbol] = route
+            else:
+                continue  # 均值回归已处理，跳过 LLM
+
+        # ai_trend -> 继续现有 LLM 决策流
         bull = research_data[symbol].get("bull", {})
         bear = research_data[symbol].get("bear", {})
         analysis = analyses.get(symbol, {})
-        data = market_data.get(symbol, {})
         pair_cfg = get_pair_config(symbol) or {}
 
-        current_price = (data.get("tech") or {}).get("latest_close", 0)
         pair_max_lev = pair_cfg.get("leverage_range", [1, 3])[1]
         # 资金层级限制杠杆: 取 pair_cfg 和 merged_params 中更低值
         capital_lev_cap = merged_params.get("max_leverage", 5) if merged_params else 5
@@ -244,7 +326,6 @@ def trade(state: WorkflowState) -> dict:
     else:
         results = call_claude_parallel(all_tasks)
 
-    decisions = []
     for i, result in enumerate(results):
         symbol, current_price = task_meta[i]
         if isinstance(result, dict) and "error" not in result:
@@ -301,4 +382,9 @@ def trade(state: WorkflowState) -> dict:
 
     actions = [f"{d['symbol']}={d.get('action', '?')}" for d in decisions]
     _console.print(f"    完成: {', '.join(actions) or '无交易'}, 耗时 {time.time() - t0:.0f}s")
-    return {"decisions": decisions, "portfolio_context": portfolio_ctx, "errors": errors}
+    return {
+        "decisions": decisions,
+        "portfolio_context": portfolio_ctx,
+        "errors": errors,
+        "strategy_routes": strategy_routes,
+    }

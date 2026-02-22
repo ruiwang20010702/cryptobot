@@ -537,7 +537,7 @@ class TestDetectMarketRegime:
         mock_detect.return_value = self._mock_regime("ranging", "neutral", "weak")
         result = _detect_market_regime({}, {"current_value": 50})
         assert result["regime"] == "ranging"
-        assert result["params"]["max_leverage"] == 3
+        assert result["params"]["max_leverage"] == 2  # P13.7: 震荡市杠杆 3→2
 
     @patch("cryptobot.indicators.regime.detect_regime")
     def test_volatile_from_fear_greed(self, mock_detect, _mock_smoother):

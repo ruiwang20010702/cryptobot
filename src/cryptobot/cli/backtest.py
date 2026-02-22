@@ -780,6 +780,78 @@ def replay_history(
     console.print(f"\n报告已保存: {path}")
 
 
+@backtest.command("walk-forward")
+@click.option("--days", default=180, help="回溯天数")
+@click.option(
+    "--source", default="archive",
+    type=click.Choice(["archive", "journal"]),
+)
+@click.option("--train-days", default=60, help="训练窗口天数")
+@click.option("--test-days", default=30, help="测试窗口天数")
+@click.option("--step-days", default=30, help="步进天数")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def walk_forward(days, source, train_days, test_days, step_days, json_output):
+    """Walk-forward 滚动验证 (防止过拟合)"""
+    from dataclasses import asdict
+
+    from cryptobot.backtest.engine import run_walk_forward_backtest
+
+    console.print(
+        f"\n[bold]Walk-forward 验证 "
+        f"({days}天, {train_days}d/{test_days}d/{step_days}d)[/bold]\n"
+    )
+
+    result = run_walk_forward_backtest(
+        days=days,
+        source=source,
+        train_days=train_days,
+        test_days=test_days,
+        step_days=step_days,
+    )
+
+    if json_output:
+        click.echo(json.dumps(asdict(result), indent=2, ensure_ascii=False))
+        return
+
+    if not result.windows:
+        console.print("[yellow]无足够数据运行 walk-forward[/yellow]")
+        return
+
+    # 窗口明细表
+    table = Table(title="滚动窗口明细")
+    table.add_column("#", justify="right")
+    table.add_column("训练期")
+    table.add_column("测试期")
+    table.add_column("IS 笔数", justify="right")
+    table.add_column("OOS 笔数", justify="right")
+    table.add_column("IS 胜率", justify="right")
+    table.add_column("OOS 胜率", justify="right")
+    table.add_column("IS Sharpe", justify="right")
+    table.add_column("OOS Sharpe", justify="right")
+
+    for i, w in enumerate(result.windows, 1):
+        table.add_row(
+            str(i),
+            f"{w.window.train_start[:10]}~{w.window.train_end[:10]}",
+            f"{w.window.test_start[:10]}~{w.window.test_end[:10]}",
+            str(w.train_trades),
+            str(w.test_trades),
+            f"{w.train_win_rate * 100:.1f}%",
+            f"{w.test_win_rate * 100:.1f}%",
+            f"{w.train_sharpe:.2f}",
+            f"{w.test_sharpe:.2f}",
+        )
+    console.print(table)
+
+    # 总结
+    color = "green" if result.passed else "red"
+    console.print(f"\n  IS 平均 Sharpe: {result.is_sharpe:.2f}")
+    console.print(f"  OOS 平均 Sharpe: {result.oos_sharpe:.2f}")
+    console.print(f"  IS/OOS 比率: {result.is_vs_oos_ratio:.2f}")
+    console.print(f"  退化: {result.degradation_pct:.1f}%")
+    console.print(f"  [{color}]{result.summary}[/{color}]")
+
+
 @backtest.command("replay-compare")
 @click.option("--json-output", is_flag=True, help="JSON 输出")
 def replay_compare(json_output: bool):

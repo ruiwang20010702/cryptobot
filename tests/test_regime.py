@@ -102,7 +102,7 @@ class TestAnalyzeTimeframe:
         mock_load.return_value = _make_df(prices)
         result = _analyze_timeframe("BTCUSDT", "1h")
 
-        assert set(result.keys()) == {"trend", "strength", "adx", "atr_pct"}
+        assert set(result.keys()) == {"trend", "strength", "adx", "atr_pct", "closes"}
 
 
 # ─── detect_regime ───────────────────────────────────────────────────────
@@ -174,8 +174,8 @@ class TestDetectRegime:
         assert result["volatility_state"] == "high_vol"
 
     @patch("cryptobot.indicators.regime._analyze_timeframe")
-    def test_trending_beats_volatile(self, mock_analyze):
-        """strong ADX + 方向共识 → trending，即使 high_vol"""
+    def test_volatile_beats_trending(self, mock_analyze):
+        """high_vol 优先于 trending (即使 strong ADX + 方向共识)"""
         mock_analyze.return_value = {
             "trend": "bearish",
             "strength": "strong",
@@ -184,8 +184,8 @@ class TestDetectRegime:
         }
         result = detect_regime("BTCUSDT")
 
-        # trending 判定优先于 volatile
-        assert result["regime"] == "trending"
+        # volatile 优先判定
+        assert result["regime"] == "volatile"
         assert result["trend_direction"] == "bearish"
 
     @patch("cryptobot.indicators.regime._analyze_timeframe")
@@ -248,6 +248,8 @@ class TestDetectRegime:
             "volatility_state",
             "timeframe_details",
             "description",
+            "hurst_exponent",
+            "regime_confidence",
         }
         assert set(result.keys()) == expected_keys
         assert result["regime"] in ("trending", "ranging", "volatile")

@@ -291,6 +291,107 @@ def risk_review(state: WorkflowState) -> dict:
         # ── 硬性规则检查（不依赖 AI 判断）──
         hard_checks: list[dict] = []
 
+        # ── P13.2: 置信度绝对下限 ──
+        decision_conf = decision.get("confidence", 0)
+        regime_name = regime.get("regime", "")
+        conf_floor = risk_cfg.get("confidence_floor", 60)
+        conf_floor_ranging = risk_cfg.get("confidence_floor_ranging", 65)
+        min_floor = conf_floor_ranging if regime_name == "ranging" else conf_floor
+        if decision_conf < min_floor:
+            reason = (
+                f"置信度 {decision_conf} < 绝对下限 {min_floor}"
+                f" ({regime_name or 'default'})"
+            )
+            hard_checks.append({
+                "rule": "confidence_floor", "passed": False, "reason": reason,
+            })
+            hard_rule_results.append({
+                "symbol": symbol, "passed": False, "checks": hard_checks,
+            })
+            rejected_signals.append({"symbol": symbol, "reason": reason})
+            logger.info("硬性拒绝 %s: %s", symbol, reason)
+            _console.print(f"    [red]拒绝 {symbol}: {reason}[/red]")
+            continue
+        hard_checks.append({"rule": "confidence_floor", "passed": True})
+
+        # ── P13.3: 做多加严 ──
+        long_min_conf = risk_cfg.get("long_min_confidence", 65)
+        ranging_block = risk_cfg.get("ranging_block_long", True)
+        if action == "long":
+            if ranging_block and regime_name == "ranging":
+                reason = "震荡市禁止做多"
+                hard_checks.append({
+                    "rule": "ranging_block_long", "passed": False,
+                    "reason": reason,
+                })
+                hard_rule_results.append({
+                    "symbol": symbol, "passed": False, "checks": hard_checks,
+                })
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
+                _console.print(f"    [red]拒绝 {symbol}: {reason}[/red]")
+                continue
+            if decision_conf < long_min_conf:
+                reason = f"做多置信度 {decision_conf} < {long_min_conf}"
+                hard_checks.append({
+                    "rule": "long_min_confidence", "passed": False,
+                    "reason": reason,
+                })
+                hard_rule_results.append({
+                    "symbol": symbol, "passed": False, "checks": hard_checks,
+                })
+                rejected_signals.append({"symbol": symbol, "reason": reason})
+                logger.info("硬性拒绝 %s: %s", symbol, reason)
+                _console.print(f"    [red]拒绝 {symbol}: {reason}[/red]")
+                continue
+            hard_checks.append({"rule": "long_min_confidence", "passed": True})
+
+        # ── P13.7: 震荡市日交易数限制 ──
+        if regime_name == "ranging":
+            ranging_cfg = settings.get("market_regime", {}).get("ranging", {})
+            max_daily = ranging_cfg.get("max_daily_trades", 2)
+            if max_daily:
+                try:
+                    from cryptobot.journal.storage import get_all_records
+                    from datetime import timedelta
+
+                    today_cutoff = (
+                        datetime.now(timezone.utc) - timedelta(days=1)
+                    ).isoformat()
+                    today_trades = [
+                        r
+                        for r in get_all_records()
+                        if r.timestamp >= today_cutoff and r.status != "expired"
+                    ]
+                    if len(today_trades) >= max_daily:
+                        reason = (
+                            f"震荡市日交易数 {len(today_trades)}"
+                            f" >= 限制 {max_daily}"
+                        )
+                        hard_checks.append({
+                            "rule": "ranging_daily_limit",
+                            "passed": False,
+                            "reason": reason,
+                        })
+                        hard_rule_results.append({
+                            "symbol": symbol,
+                            "passed": False,
+                            "checks": hard_checks,
+                        })
+                        rejected_signals.append({
+                            "symbol": symbol, "reason": reason,
+                        })
+                        logger.info("硬性拒绝 %s: %s", symbol, reason)
+                        _console.print(
+                            f"    [red]拒绝 {symbol}: {reason}[/red]"
+                        )
+                        continue
+                except Exception as e:
+                    logger.warning("震荡市日度交易数检查失败: %s", e)
+                hard_checks.append({
+                    "rule": "ranging_daily_limit", "passed": True,
+                })
+
         if account_balance > 0:
             max_total_pct = risk_cfg.get("max_total_position_pct", 80)
             total_pct = total_used / account_balance * 100

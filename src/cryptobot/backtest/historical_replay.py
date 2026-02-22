@@ -211,6 +211,11 @@ def _build_snapshot(
     if not current_price:
         return None
 
+    # 提取 4h close 用于 Hurst 指数计算
+    key_4h = (symbol, "4h")
+    if key_4h in sliced and "close" in sliced[key_4h].columns:
+        tech = {**tech, "_closes_4h": sliced[key_4h]["close"].tolist()}
+
     return ReplaySnapshot(
         symbol=symbol,
         as_of=as_of.isoformat(),
@@ -249,13 +254,15 @@ REPLAY_TRADER_PROMPT = """\
 
 
 def _detect_replay_regime(snapshot: ReplaySnapshot) -> str:
-    """基于快照技术指标推断 regime (简化版)
+    """基于快照技术指标 + Hurst 指数推断 regime
 
     规则:
-    - ATR% > 3 → volatile
-    - ADX > 25 → trending
+    - ATR% > 3 → volatile (优先)
+    - ADX(0.7) + Hurst(0.3) 加权评分 > 0.5 → trending
     - 其他 → ranging
     """
+    from cryptobot.indicators.hurst import calc_hurst_exponent, classify_hurst
+
     tech = snapshot.tech_indicators or {}
     volatility = tech.get("volatility", {})
     trend = tech.get("trend", {})
@@ -265,7 +272,23 @@ def _detect_replay_regime(snapshot: ReplaySnapshot) -> str:
 
     if atr_pct > 3:
         return "volatile"
-    if adx > 25:
+
+    # Hurst 计算: 从 _closes_4h 提取 (如有)
+    closes = tech.get("_closes_4h", [])
+    hurst_val = calc_hurst_exponent(closes) if closes else 0.5
+    hurst_hint, hurst_conf = classify_hurst(hurst_val)
+
+    # 加权评分: Hurst random 时中性 (不干预 ADX)
+    adx_score = min(adx / 50.0, 1.0)
+    if hurst_hint == "trending":
+        hurst_trending = hurst_conf
+    elif hurst_hint == "random":
+        hurst_trending = 0.5
+    else:
+        hurst_trending = 0.0
+    trending_score = adx_score * 0.7 + hurst_trending * 0.3
+
+    if trending_score > 0.5:
         return "trending"
     return "ranging"
 

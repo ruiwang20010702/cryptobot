@@ -52,6 +52,14 @@ risk:
   max_same_direction_pct: 50        # 同方向总仓位上限 %
   max_correlated_same_direction: 3  # 高相关组内同向持仓上限
 
+  # P13.2: 置信度绝对下限（在所有其他检查之前）
+  confidence_floor: 60                # 绝对下限
+  confidence_floor_ranging: 65        # 震荡市绝对下限
+
+  # P13.3: 做多加严
+  long_min_confidence: 65             # 做多最低置信度
+  ranging_block_long: true            # 震荡市禁止做多
+
   # 止损规则
   stoploss:
     low_volatility_pct: 3           # ATR/价格 < 1.5%
@@ -125,8 +133,11 @@ market_regime:
     trailing_stop: true       # 启用尾随止损
   ranging:
     min_confidence: 63        # 震荡市最低置信度 (O16: 58→63)
-    max_leverage: 3           # 震荡市最大杠杆
+    max_leverage: 2           # 震荡市最大杠杆 (P13.7: 3→2)
     trailing_stop: false      # 不启用尾随
+    max_daily_trades: 2       # P13.7: 震荡市日度交易数上限
+    max_hold_hours: 24        # P13.7: 震荡市最大持仓时长
+    stoploss_pct: 2           # P13.7: 震荡市固定止损 2%
   volatile:
     min_confidence: 68        # 高波动最低置信度 (O16: 63→68)
     max_leverage: 2           # 高波动最大杠杆
@@ -143,7 +154,7 @@ llm:
       haiku: "deepseek-chat"          # 轻量分析用
       sonnet: "deepseek-chat"         # 深度推理用
     max_concurrent: 10                # API 并发数
-    timeout: 60                       # 单次请求超时 (秒)
+    timeout: 120                      # 单次请求超时 (秒) reasoner 模型需要更长思考时间
     role_models:                      # 按角色指定模型 (覆盖 models 映射)
       trader: "deepseek-reasoner"
       risk_manager: "deepseek-reasoner"
