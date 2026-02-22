@@ -57,6 +57,7 @@ uv run cryptobot backtest replay-history --days 30 --symbols "BTCUSDT,ETHUSDT"  
 uv run cryptobot backtest replay-history --preset 180d  # 预设周期回放
 uv run cryptobot backtest replay-compare            # 多周期回放结果对比
 uv run cryptobot backtest overfit-check             # 过拟合检测
+uv run cryptobot backtest walk-forward --days 180   # Walk-forward 滚动验证
 uv run cryptobot backtest features                  # 查看最新特征矩阵
 uv run cryptobot journal edge                       # Edge 仪表盘 (期望值/SQN/R分布)
 uv run cryptobot doctor                       # 环境健康检查 (12项)
@@ -105,8 +106,11 @@ execute                         5m 指标确认?
 | `realtime/monitor.py` | 轮询 Binance 价格，等待入场区间 + 5m 指标确认后 promote 信号 |
 | `indicators/calculator.py` | 技术指标计算（TA-Lib），K 线数据加载（feather 优先 + Binance API fallback） |
 | `indicators/multi_timeframe.py` | 多时间框架共振、量价分析、支撑阻力 |
+| `indicators/hurst.py` | Hurst 指数 (R/S 分析): H>0.55 趋势/H<0.45 均值回归，加权投票增强 regime 检测 |
 | `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API)、稳定币流(DefiLlama)、订单簿(Binance)、交易所储备(CoinGlass)、宏观日历(FinnHub)、期权(Deribit)、代币稀释(CoinGecko)、DXY美元指数(Yahoo Finance)、DeFi TVL(DefiLlama)、巨鲸追踪(Whale Alert) |
 | `regime_smoother.py` | 市场状态转换平滑：连续 N 周期确认才切换 regime，防止边界反复跳动 |
+| `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→观望 |
+| `strategy/mean_reversion.py` | BB 均值回归策略: 下轨+RSI<35 做多 / 上轨+RSI>65 做空，仅 ranging 时启用 |
 | `capital_strategy.py` | 资金感知策略：根据余额自动调整层级(micro/small/medium/large)，与 regime 正交叠加取更严格值 |
 | `evolution/prompt_manager.py` | Prompt 版本管理：版本化存储/切换/对比 addon，持久化 `prompt_versions.json` |
 | `evolution/regime_prompts.py` | Regime 级 Prompt Addon：趋势市/震荡市/高波动市分别注入不同偏好到 trader/analyst |
@@ -126,13 +130,14 @@ execute                         5m 指标确认?
 | `cli/prompt.py` | Prompt 版本管理 CLI：list/new-version/activate/show |
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
 | `backtest/cost_model.py` | 交易成本建模：手续费/滑点/资金费率，杠杆敏感 |
-| `backtest/trade_simulator.py` | 逐根 1h K 线扫描，分批止盈，MFE/MAE，净 PnL |
+| `backtest/trade_simulator.py` | 逐根 1h K 线扫描，分批止盈，MFE/MAE，MFE 自适应尾随止损(2×ATR 保本)，净 PnL |
 | `backtest/equity_tracker.py` | 净值曲线 + Sharpe/Sortino/MaxDD/Calmar/月度收益 |
 | `backtest/baselines.py` | 随机/MA交叉/RSI/布林通道 4 种基线信号生成 |
 | `backtest/stats.py` | Welch's t-test + Permutation test 统计检验 (无 scipy) |
 | `backtest/engine.py` | 完整回测编排：信号加载→模拟→统计→报告持久化 |
 | `backtest/historical_replay.py` | 历史回放引擎：历史K线→技术快照→LLM批次决策→信号生成→交易模拟（断点续跑，按配置隔离进度） |
 | `backtest/bootstrap.py` | Percentile bootstrap 置信区间（纯 Python），支持 mean/median/win_rate/sharpe/profit_factor |
+| `backtest/walk_forward.py` | Walk-forward 滚动验证: 60d 训练/30d 测试/30d 步进，IS/OOS Sharpe 对比防过拟合 |
 | `backtest/replay_comparator.py` | 多周期回放对比：Sharpe/胜率 CV + 稳定性评级(A/B/C/D) |
 | `evolution/overfit_detector.py` | 过拟合检测：修改频率+绩效趋势+规则稳定性评分(0-100) |
 | `features/extractors.py` | 7 个特征提取器：技术/多TF/链上/情绪/订单簿/宏观/相关性 |
@@ -143,7 +148,7 @@ execute                         5m 指标确认?
 | `archive/` | AI 决策归档：每轮工作流保存完整决策链(筛选评分/分析/风控细节/信号)到 JSON，支持 CLI 查阅 |
 | `cli/` | Click 命令组，17 个子命令 |
 | `web/routes/api.py` | Dashboard API：仪表盘/信号/持仓/告警/绩效 + K 线数据 + 交易历史 |
-| `freqtrade_strategies/AgentSignalStrategy.py` | Freqtrade 策略：动态止损(含 Agent 尾随)、分批止盈(adjust_trade_position)、仓位控制 |
+| `freqtrade_strategies/AgentSignalStrategy.py` | Freqtrade 策略：动态止损(含 Agent 尾随 + MFE 2×ATR 保本)、分批止盈(adjust_trade_position)、仓位控制 |
 
 ### 数据文件路径约定
 
