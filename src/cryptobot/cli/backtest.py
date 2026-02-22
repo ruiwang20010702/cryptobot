@@ -433,6 +433,134 @@ def replay(signal_id: str):
     console.print(f"  分析 K 线: {result['bars_analyzed']} 根 (1h)")
 
 
+@backtest.command("analyze-replay")
+@click.option("--report", default="", help="指定报告文件名(如 bt_20260222_xxx.json)")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def analyze_replay(report: str, json_output: bool):
+    """分析回放报告: 置信度分层 + 方向偏差 + 回撤控制"""
+    from dataclasses import asdict
+    from cryptobot.backtest.replay_analyzer import analyze_replay as do_analyze
+    from cryptobot.backtest.trade_simulator import TradeResult
+    from cryptobot.config import DATA_OUTPUT_DIR
+
+    bt_dir = DATA_OUTPUT_DIR / "backtest"
+
+    # 加载报告
+    if report:
+        path = bt_dir / report
+    else:
+        files = sorted(bt_dir.glob("bt_*.json"), reverse=True) if bt_dir.exists() else []
+        if not files:
+            console.print("[yellow]无回测报告文件[/yellow]")
+            return
+        path = files[0]
+
+    if not path.exists():
+        console.print(f"[red]报告不存在: {path}[/red]")
+        return
+
+    console.print(f"加载报告: {path.name}")
+    data = json.loads(path.read_text())
+    trades_raw = data.get("trades_summary", [])
+
+    if not trades_raw:
+        console.print("[yellow]报告中无交易明细 (trades_summary 为空)[/yellow]")
+        return
+
+    # 构造 TradeResult 列表
+    trades = []
+    for t in trades_raw:
+        try:
+            trades.append(TradeResult(**t))
+        except (TypeError, KeyError):
+            continue
+
+    if not trades:
+        console.print("[yellow]无法解析交易数据，可能报告格式旧 (缺少字段)[/yellow]")
+        return
+
+    console.print(f"解析 {len(trades)} 笔交易\n")
+
+    result = do_analyze(trades)
+
+    if json_output:
+        click.echo(json.dumps(asdict(result), indent=2, ensure_ascii=False, default=str))
+        return
+
+    # 1. 置信度分层表
+    conf_table = Table(title="置信度分层")
+    conf_table.add_column("区间")
+    conf_table.add_column("笔数", justify="right")
+    conf_table.add_column("胜率", justify="right")
+    conf_table.add_column("平均盈亏", justify="right")
+    conf_table.add_column("盈亏比", justify="right")
+    conf_table.add_column("平均杠杆", justify="right")
+    for bucket, stats in result.confidence_buckets.items():
+        if stats["count"] == 0:
+            continue
+        pf = f"{stats['profit_factor']:.2f}" if stats["profit_factor"] != float("inf") else "∞"
+        conf_table.add_row(
+            bucket, str(stats["count"]),
+            f"{stats['win_rate'] * 100:.1f}%",
+            f"{stats['avg_pnl_pct']:+.2f}%",
+            pf, str(stats["avg_leverage"]),
+        )
+    console.print(conf_table)
+
+    # 2. 方向分析表
+    dir_summary = result.direction_analysis.get("summary", {})
+    if dir_summary:
+        dir_table = Table(title="方向分析")
+        dir_table.add_column("方向")
+        dir_table.add_column("笔数", justify="right")
+        dir_table.add_column("占比", justify="right")
+        dir_table.add_column("胜率", justify="right")
+        dir_table.add_column("平均盈亏", justify="right")
+        dir_table.add_column("总PnL USDT", justify="right")
+        for action, stats in dir_summary.items():
+            dir_table.add_row(
+                action, str(stats["count"]),
+                f"{stats['ratio'] * 100:.1f}%",
+                f"{stats['win_rate'] * 100:.1f}%",
+                f"{stats['avg_pnl_pct']:+.2f}%",
+                f"{stats['total_pnl_usdt']:+.0f}",
+            )
+        console.print(dir_table)
+
+        bias = result.direction_analysis.get("direction_bias", 0)
+        dominant = result.direction_analysis.get("dominant_direction", "")
+        if dominant:
+            console.print(f"  主导方向: {dominant} | 偏差度: {bias:.2f}")
+
+    # 3. 回撤控制模拟表
+    if result.drawdown_simulation:
+        dd_table = Table(title="回撤控制模拟")
+        dd_table.add_column("策略")
+        dd_table.add_column("总收益", justify="right")
+        dd_table.add_column("最大回撤", justify="right")
+        dd_table.add_column("Sharpe", justify="right")
+        dd_table.add_column("Calmar", justify="right")
+        dd_table.add_column("执行/跳过", justify="right")
+        for name, sim in result.drawdown_simulation.items():
+            dd_table.add_row(
+                name,
+                f"{sim['total_return_pct']:+.1f}%",
+                f"{sim['max_drawdown_pct']:.1f}%",
+                f"{sim['sharpe']:.2f}",
+                f"{sim['calmar']:.2f}",
+                f"{sim['trades_taken']}/{sim['trades_skipped']}",
+            )
+        console.print(dd_table)
+
+    # 4. 优化建议
+    if result.recommendations:
+        console.print("\n[bold]优化建议[/bold]")
+        for i, rec in enumerate(result.recommendations, 1):
+            console.print(f"  {i}. {rec}")
+    else:
+        console.print("\n[green]未发现显著问题[/green]")
+
+
 @backtest.command("replay-history")
 @click.option("--days", default=90, help="回溯天数")
 @click.option("--symbols", default="", help="币种列表(逗号分隔)，空=前5")

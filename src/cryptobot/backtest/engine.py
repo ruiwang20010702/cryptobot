@@ -350,16 +350,7 @@ def save_report(report: BacktestReport) -> Path:
         "by_symbol": report.by_symbol,
         "by_direction": report.by_direction,
         "trades_count": len(report.trades),
-        "trades_summary": [
-            {
-                "symbol": t.symbol,
-                "action": t.action,
-                "net_pnl_pct": t.net_pnl_pct,
-                "exit_reason": t.exit_reason,
-                "duration_hours": t.duration_hours,
-            }
-            for t in report.trades[:100]  # 最多保存 100 条明细
-        ],
+        "trades_summary": [asdict(t) for t in report.trades],
     }
 
     tmp = path.with_suffix(".json.tmp")

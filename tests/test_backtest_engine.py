@@ -191,6 +191,35 @@ class TestSaveReport:
         assert "metrics" in data
         assert data["trades_count"] == 1
 
+    def test_saves_all_fields_without_truncation(self, tmp_path):
+        """trades_summary 包含全量字段且不截断"""
+        trades = [_make_trade_result(symbol=f"SYM{i}") for i in range(150)]
+        report = _build_report(
+            trades=trades, days=90, source="archive",
+            signal_source="ai", initial_capital=10000, total_signals=150,
+        )
+
+        with patch("cryptobot.backtest.engine._BACKTEST_DIR", tmp_path):
+            path = save_report(report)
+
+        import json
+        data = json.loads(path.read_text())
+        summary = data["trades_summary"]
+
+        # 不截断：150 笔全部保存
+        assert len(summary) == 150
+
+        # 全字段验证
+        t = summary[0]
+        expected_keys = {
+            "symbol", "action", "entry_price", "exit_price",
+            "leverage", "confidence", "gross_pnl_pct", "costs_pct",
+            "net_pnl_pct", "net_pnl_usdt", "exit_reason",
+            "mfe_pct", "mae_pct", "duration_hours",
+            "entry_time", "exit_time", "signal_source",
+        }
+        assert expected_keys.issubset(set(t.keys()))
+
 
 # ── 完整流程 mock ─────────────────────────────────────────────────────────
 
