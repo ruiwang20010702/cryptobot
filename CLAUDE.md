@@ -118,22 +118,22 @@ execute                         5m 指标确认?
 | `workflow/llm.py` | Claude CLI 子进程封装，内置速率限制和重试，支持 `role` 参数路由模型 |
 | `workflow/api_llm.py` | OpenAI 兼容 API 后端（DeepSeek/OpenAI/Groq 等），支持角色级模型选择 + token 用量追踪 |
 | `workflow/prompts.py` | 7 个 AI 角色的 system prompt + JSON schema（含 RE_REVIEWER） |
-| `signal/bridge.py` | signal.json / pending_signals.json 读写校验 + `update_signal_field` 动态更新 |
+| `signal/bridge.py` | signal.json / pending_signals.json 读写校验 + `update_signal_field` 动态更新 + fcntl 文件锁(跨进程安全) + 强制止损校验 |
 | `realtime/monitor.py` | 轮询 Binance 价格，等待入场区间 + 5m 指标确认后 promote 信号 |
 | `indicators/calculator.py` | 技术指标计算（TA-Lib），K 线数据加载（feather 优先 + Binance API fallback） |
 | `indicators/multi_timeframe.py` | 多时间框架共振、量价分析、支撑阻力 |
 | `indicators/hurst.py` | Hurst 指数 (R/S 分析): H>0.55 趋势/H<0.45 均值回归，加权投票增强 regime 检测 |
 | `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API)、稳定币流(DefiLlama)、订单簿(Binance)、交易所储备(CoinGlass)、宏观日历(FinnHub)、期权(Deribit)、代币稀释(CoinGecko)、DXY美元指数(Yahoo Finance)、DeFi TVL(DefiLlama)、巨鲸追踪(Whale Alert) |
 | `regime_smoother.py` | 市场状态转换平滑：连续 N 周期确认才切换 regime，防止边界反复跳动 |
-| `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→观望 + 多策略权重分配 route_strategies() |
+| `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→三子状态(normal→保守AI趋势, fear→仅套利+网格, greed→仅做空) + 多策略权重分配 route_strategies() |
 | `workflow/nodes/ml_filter.py` | ML 信号过滤节点: trade→ml_filter→risk_review，方向一致性+概率阈值过滤 |
 | `ml/feature_feedback.py` | ML 特征重要性反馈: top-5 特征按角色注入分析师 prompt |
 | `ml/retrainer.py` | 模型自动重训: 每周日重训 + AUC 对比回滚 + 版本管理 |
 | `ml/registry.py` | 模型版本注册表: ModelRecord + 原子写入持久化 |
-| `strategy/weight_tracker.py` | 策略权重管理: 按 regime 动态分配多策略权重(trending 80/20, ranging 50/30/20) |
+| `strategy/weight_tracker.py` | 策略权重管理: 按 regime 动态分配多策略权重(trending 80/20, ranging 50/30/20, volatile_normal/fear/greed 三组) |
 | `strategy/mean_reversion.py` | BB 均值回归策略: 下轨+RSI<35 做多 / 上轨+RSI>65 做空，仅 ranging 时启用 |
 | `strategy/virtual_portfolio.py` | 虚拟盘基础设施：不可变 VirtualPortfolio/VirtualPosition + 原子写入持久化 |
-| `strategy/funding_arb.py` | 资金费率套利：扫描正费率 → delta 中性开仓 → 费率转负平仓 (虚拟盘) |
+| `strategy/funding_arb.py` | 资金费率套利：扫描正费率 → delta 中性开仓 → 费率转负平仓 + 费率反转保护 (虚拟盘) |
 | `strategy/grid_trading.py` | 网格交易：支撑阻力间等距网格 + 价格触发自动买卖 (虚拟盘) |
 | `capital_strategy.py` | 资金感知策略：根据余额自动调整层级(micro/small/medium/large)，与 regime 正交叠加取更严格值 |
 | `evolution/prompt_manager.py` | Prompt 版本管理：版本化存储/切换/对比 addon，持久化 `prompt_versions.json` |
@@ -141,7 +141,8 @@ execute                         5m 指标确认?
 | `evolution/capital_prompts.py` | 资金层级 Prompt Addon：micro/small 层级注入保守偏好到 trader/analyst/risk_manager |
 | `evolution/prompt_optimizer.py` | 绩效驱动 Prompt 自动迭代：检测退化 → 分析失败 → AI 生成改进 → 创建新版本 |
 | `evolution/strategy_advisor.py` | 策略顾问 Agent：绩效模式发现 → 规则生成 → Prompt Addon 注入 → 14天评估 → 续期/淘汰 |
-| `evolution/model_competition.py` | 多模型竞赛：并行调用多模型决策，consensus/best_performer 策略择优 |
+| `evolution/model_competition.py` | 多模型竞赛：并行调用多模型决策，consensus/best_performer 策略择优（2 模型分歧时选 no_trade 保守策略） |
+| `volatile_toggle.py` | Volatile 策略自适应开关：根据虚拟盘绩效自动启停 volatile 子策略 |
 | `journal/regime_evaluator.py` | Regime 感知评估：按市场状态分组 Welch t-test 对比前后绩效 |
 | `risk/position_sizer.py` | 仓位计算：Kelly 5级 fallback + 相关性折算 + 波动率自适应杠杆 + 币种分级杠杆限制 |
 | `risk/monthly_circuit_breaker.py` | 月度亏损熔断：连续 2 月亏损降仓 50%+暂停做多; 连续 3 月暂停 7 天 |
@@ -156,7 +157,7 @@ execute                         5m 指标确认?
 | `cli/scheduler.py` | APScheduler 调度器：12 个定时任务(含日报 cron + prompt 优化 + 过拟合检查 + ML 周重训) + 可选事件监控线程 |
 | `cli/prompt.py` | Prompt 版本管理 CLI：list/new-version/activate/show |
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
-| `backtest/cost_model.py` | 交易成本建模：手续费/滑点/资金费率，杠杆敏感 |
+| `backtest/cost_model.py` | 交易成本建模：手续费/滑点/资金费率，杠杆敏感 + volatile 滑点 3x 乘数 |
 | `backtest/trade_simulator.py` | 逐根 1h K 线扫描，分批止盈，MFE/MAE，MFE 自适应尾随止损(2×ATR 保本)，净 PnL |
 | `backtest/equity_tracker.py` | 净值曲线 + Sharpe/Sortino/MaxDD/Calmar/月度收益 |
 | `backtest/baselines.py` | 随机/MA交叉/RSI/布林通道 4 种基线信号生成 |
@@ -165,13 +166,14 @@ execute                         5m 指标确认?
 | `backtest/historical_replay.py` | 历史回放引擎：历史K线→技术快照→LLM批次决策→信号生成→交易模拟（断点续跑，按配置隔离进度） |
 | `backtest/bootstrap.py` | Percentile bootstrap 置信区间（纯 Python），支持 mean/median/win_rate/sharpe/profit_factor |
 | `backtest/walk_forward.py` | Walk-forward 滚动验证: 60d 训练/30d 测试/30d 步进，IS/OOS Sharpe 对比防过拟合 |
+| `backtest/_sharpe_utils.py` | 统一 Sharpe 年化工具: `annualize_sharpe(returns, trades_per_year)` 全局复用 |
 | `backtest/replay_comparator.py` | 多周期回放对比：Sharpe/胜率 CV + 稳定性评级(A/B/C/D) |
-| `evolution/overfit_detector.py` | 过拟合检测：修改频率+绩效趋势+规则稳定性评分(0-100) |
+| `evolution/overfit_detector.py` | 过拟合检测：修改频率+绩效趋势+规则稳定性+IS/OOS Sharpe 退化检测 评分(0-100) |
 | `features/extractors.py` | 7 个特征提取器：技术/多TF/链上/情绪/订单簿/宏观/相关性 |
 | `features/pipeline.py` | 特征管道：FeatureVector/FeatureMatrix + z_score/min_max 标准化 |
 | `features/feature_store.py` | 特征持久化：按日期存储/加载/清理(保留90天) |
 | `features/factor_analysis.py` | 多因子分析：因子×多 lag lead-lag Pearson 相关性 + p-value 显著性筛选 |
-| `ml/lgb_scorer.py` | LightGBM 信号评分：特征→涨跌概率分类器，5-fold CV 训练/评估/模型持久化 |
+| `ml/lgb_scorer.py` | LightGBM 信号评分：特征→涨跌概率分类器，TimeSeriesSplit CV 训练/评估/模型持久化 + hold-out AUC 报告 |
 | `cli/doctor.py` | 12 项环境健康检查（Python/TA-Lib/API/目录等） |
 | `cli/init_cmd.py` | 环境初始化：创建目录 + .env + 交互 API key + doctor |
 | `archive/` | AI 决策归档：每轮工作流保存完整决策链(筛选评分/分析/风控细节/信号)到 JSON，支持 CLI 查阅 |
