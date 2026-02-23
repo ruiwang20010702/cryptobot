@@ -258,14 +258,23 @@ def _extract_usdt_balance(balance_data: dict | None) -> float:
 def get_balance_from_freqtrade() -> float:
     """从 Freqtrade API 获取 USDT 余额
 
+    Freqtrade 离线时回退到 settings.yaml 中 capital_strategy.mock_balance。
+
     Returns:
-        余额 (USDT)，离线时默认返回 1000.0
+        余额 (USDT)
     """
     from cryptobot.freqtrade_api import ft_api_get
 
     balance = _extract_usdt_balance(ft_api_get("/balance"))
     if balance > 0:
         return balance
+
+    # Freqtrade 离线 → 尝试 mock_balance
+    settings = load_settings()
+    mock = settings.get("capital_strategy", {}).get("mock_balance", 0.0)
+    if mock > 0:
+        logger.info("Freqtrade 离线，使用 mock_balance: $%.0f", mock)
+        return float(mock)
 
     logger.warning("Freqtrade 离线或余额为 0，返回 0")
     return 0.0
