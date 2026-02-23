@@ -1,6 +1,6 @@
 # CryptoBot — 加密货币永续合约 AI 量化交易系统
 
-> 版本: 2026-02-23 | 1343 tests passed | 24,500+ LOC | Lint clean
+> 版本: 2026-02-23 | 1384 tests passed | 25,500+ LOC | Lint clean
 
 AI 多角色工作流分析市场 → 生成交易信号 → Freqtrade 自动执行。
 
@@ -49,12 +49,14 @@ Web Dashboard (FastAPI + HTMX + lightweight-charts)
 │                        AI 分析工作流 (LangGraph 7 节点)                   │
 │                                                                         │
 │  collect_data ──→ screen ──→ analyze (4分析师×5币=20 haiku)              │
-│      │               │           │  + regime addon 注入                  │
+│      │               │           │  + regime addon + ML 特征反馈          │
 │  10币种数据采集   regime 检测  research (2研究员×5币=10 sonnet)              │
 │  技术+链上+情绪   + 平滑器      │                                        │
 │  +订单簿+期权               trade (5 sonnet) ← 持仓上下文+绩效反馈        │
 │  +宏观+DXY+TVL                 │  + prompt addon + regime 偏好           │
-│  +巨鲸+稀释                    │  + 多模型竞赛 (可选)                     │
+│  +巨鲸+稀释                    │  + 多策略路由 (权重分配)                  │
+│                            ml_filter ← ML 方向一致性过滤                 │
+│                                  │                                      │
 │                            risk_review (5 sonnet) ← 硬性风控规则         │
 │                                  │                                      │
 │                              execute ──→ signal.json / pending          │
@@ -126,7 +128,10 @@ Web Dashboard (FastAPI + HTMX + lightweight-charts)
 | **Hurst 指数** | `indicators/hurst.py` | R/S 分析 Hurst 指数: H>0.55 趋势/H<0.45 均值回归，加权投票增强 regime 检测 |
 | **市场结构** | `indicators/market_structure.py` | 结构分析 |
 | **Regime 平滑** | `regime_smoother.py` | 市场状态转换平滑：连续 N 周期确认才切换，防止边界跳动 |
-| **策略路由器** | `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→观望 |
+| **策略路由器** | `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→观望 + 多策略权重分配 |
+| **策略权重管理** | `strategy/weight_tracker.py` | 按 regime 动态分配策略权重，不可变 dataclass + 原子写入持久化 |
+| **ML 信号过滤** | `workflow/nodes/ml_filter.py` | trade→risk_review 间 ML 过滤: 方向一致+概率>0.6 放行，不一致+概率>0.65 拒绝 |
+| **特征重要性反馈** | `ml/feature_feedback.py` | ML feature importance top-5 按角色注入分析师 prompt |
 | **均值回归策略** | `strategy/mean_reversion.py` | BB 均值回归: 下轨+RSI<35 做多 / 上轨+RSI>65 做空，目标回归中轨 |
 | **虚拟盘基础设施** | `strategy/virtual_portfolio.py` | 不可变 VirtualPortfolio + VirtualPosition，原子写入持久化 |
 | **资金费率套利** | `strategy/funding_arb.py` | 现货做多+永续做空 delta 中性，赚取正资金费率(年化~19%) |
@@ -201,9 +206,10 @@ Web Dashboard (FastAPI + HTMX + lightweight-charts)
 | **特征存储** | `features/feature_store.py` | 按日期持久化特征矩阵，保留 90 天 |
 | **多因子分析** | `features/factor_analysis.py` | 因子×Lag lead-lag Pearson 相关性 + p-value 显著性筛选 |
 | **LightGBM 评分** | `ml/lgb_scorer.py` | LightGBM 二分类器：特征→涨跌概率，5-fold CV 训练/评估/模型持久化 |
+| **模型重训** | `ml/retrainer.py` | 每周自动重训 + AUC 对比 + 自动回滚，版本注册表 (`ml/registry.py`) |
 | **A/B 测试** | `backtest/ab_test.py` | 按 prompt_version 分组对比绩效 |
 | **通知系统** | `notify.py` | Telegram 推送：信号/风控/告警/错误/优化通知（silent fallback） |
-| **调度器** | `cli/scheduler.py` | APScheduler: 11 个定时任务 + 配置热更新 + WS/监控线程 |
+| **调度器** | `cli/scheduler.py` | APScheduler: 12 个定时任务(含 ML 周重训) + 配置热更新 + WS/监控线程 |
 | **Web Dashboard** | `web/app.py` + `routes/*.py` | FastAPI + HTMX + K 线图 + 交易历史 + Edge 页面，10 个 API 端点 |
 | **缓存** | `cache.py` | 文件级缓存，TTL 控制 |
 
@@ -234,9 +240,12 @@ cryptobot prompt list/show/activate        # Prompt 版本管理
 cryptobot risk symbol-profile              # 币种 A/B/C/D 分级管理
 cryptobot features factor-analysis         # 多因子 lead-lag 相关性分析
 cryptobot ml train/score/evaluate          # LightGBM 模型训练/评分/评估
+cryptobot ml retrain --days 180            # 手动触发模型重训
+cryptobot ml history                       # 查看模型版本历史
 cryptobot strategy funding-scan/run/status # 资金费率套利 (虚拟盘)
 cryptobot strategy grid-create/status/check # 网格交易 (虚拟盘)
 cryptobot strategy portfolio               # 虚拟盘总览
+cryptobot strategy weights                 # 查看当前策略权重分配
 cryptobot web start [--port 8000]          # Web Dashboard
 cryptobot doctor                           # 环境健康检查
 cryptobot init                             # 环境初始化
@@ -263,6 +272,8 @@ cryptobot init                             # 环境初始化
 | 币种分级 | `data/output/evolution/symbol_profiles.json` | 币种 A/B/C/D 分级结果 |
 | 因子分析 | `data/output/evolution/factor_analysis.json` | 多因子 lead-lag 分析结果 |
 | ML 模型 | `data/output/ml/models/` | LightGBM 模型文件 |
+| ML 模型注册表 | `data/output/ml/registry.json` | 模型版本历史 (active/superseded/rolled_back) |
+| 策略权重 | `data/output/evolution/strategy_weights.json` | 多策略动态权重分配 |
 | 虚拟盘 | `data/output/virtual/{strategy}_portfolio.json` | 虚拟盘持仓状态 |
 | 网格状态 | `data/output/virtual/grid_{symbol}_state.json` | 网格交易状态 |
 | 缓存目录 | `data/output/.cache/` | API 响应缓存 (各数据源子目录) |
@@ -399,10 +410,13 @@ TELEGRAM_CHAT_ID=xxx
 - [x] **8.4 简单策略基线** — MA 交叉(EMA 7/25)、RSI(30/70)、布林通道(20,2σ) + Welch's t-test 统计检验
 - [x] **8.6 历史回放引擎** — 纯技术面 + 单次 LLM 调用，90天×5币种批量生成 197 信号，分页 K 线下载 + 断点续跑
 
-### P9 — ML 模型引入 (部分完成)
+### P9 — ML 模型引入 ✅ 全部完成
 
 - [x] **9.1 特征工程管道** — 7 个提取器 + z_score/min_max 标准化 + 特征存储(90天)
 - [x] **9.2 信号评分模型** — LightGBM 二分类器: 特征→涨跌概率, 5-fold CV + 模型持久化 + CLI
+- [x] **9.3 ML 信号过滤层** — trade→ml_filter→risk_review，方向一致+概率>0.6 放行，不一致+概率>0.65 拒绝
+- [x] **9.4 特征重要性反馈** — ML feature importance top-5 按角色(技术/链上/情绪/基本面)注入分析师 prompt
+- [x] **9.5 模型定期重训** — 每周日自动重训 + AUC 对比回滚 + 版本注册表 + CLI retrain/history
 
 ### P10 — 统计严谨性 (部分完成)
 
@@ -424,7 +438,7 @@ TELEGRAM_CHAT_ID=xxx
 - [x] **12.7 按币种差异化策略** — A/B/C/D 四档分级 + 差异化杠杆/置信度/过滤 + CLI
 - [ ] **12.5 VPS daemon 积累实盘信号** — 已于 2026-02-22 启动，持续积累中
 
-### P13 — 多策略适应 (Phase 1+2+3 已完成)
+### P13 — 多策略适应 ✅ 全部完成
 
 - [x] **13.1 Hurst 指数增强 Regime** — R/S 分析 Hurst 指数 + ADX 加权投票(0.7/0.3)，输出概率和 regime_confidence
 - [x] **13.2 低置信度信号过滤** — 硬性过滤置信度 <60（ranging 时 <65），不走 AI 审核直接拒绝
@@ -435,6 +449,7 @@ TELEGRAM_CHAT_ID=xxx
 - [x] **13.7 震荡市参数优化** — ranging: 杠杆 2x/日限 2 笔/止损 2%/24h 持仓上限
 - [x] **13.8 资金费率套利** — 虚拟盘: 扫描正费率 → delta 中性开仓 → 费率转负平仓 + CLI
 - [x] **13.9 网格交易模块** — 虚拟盘: 等距网格自动低买高卖 + 支撑阻力自动检测 + CLI
+- [x] **13.10 多策略集成权重** — 按 regime 动态分配策略权重 + weight_tracker + 多策略路由 + CLI weights
 - [x] **13.11 月度亏损熔断强化** — 连续 2 月亏损降仓 50%+暂停做多; 连续 3 月暂停 7 天
 
 ---
@@ -445,16 +460,16 @@ TELEGRAM_CHAT_ID=xxx
 
 | 指标 | 值 |
 |------|-----|
-| Python 源文件 | 136 个 |
-| 代码行数 | ~24,500 行 |
-| 测试文件 | 82 个 |
-| 测试用例 | 1343 passed |
+| Python 源文件 | 141 个 |
+| 代码行数 | ~25,500 行 |
+| 测试文件 | 87 个 |
+| 测试用例 | 1384 passed |
 | Lint | All checks passed (Ruff) |
-| CLI 子命令 | 27 个命令组 |
+| CLI 子命令 | 30 个命令组 |
 | AI 角色 | 8 个 (4 haiku + 4 sonnet) |
 | 数据源 | 16 个 |
 | 监控交易对 | 10 个 |
-| 定时任务 | 11 个 |
+| 定时任务 | 12 个 |
 | API 端点 | 10 个 |
 | 交易策略 | 5 个 (AI趋势/BB均值回归/资金费率套利/网格交易/观望) |
 
@@ -471,12 +486,12 @@ TELEGRAM_CHAT_ID=xxx
 | P6 自我进化 | **全部完成** | 7/7 |
 | P7 数据增强 | **全部完成** | 10/10 |
 | P8 量化验证 | **全部完成** | 5/5 |
-| P9 ML 引入 | 部分完成 | 2/5 |
+| P9 ML 引入 | **全部完成** | 5/5 |
 | P10 统计严谨 | 部分完成 | 4/5 |
 | P11 高级量化 | 部分完成 | 4/5 |
 | P12 回放优化 | 部分完成 | 5/7 |
-| P13 多策略适应 | Phase 1+2+3 完成 | 10/11 |
-| **合计** | | **78/88** |
+| P13 多策略适应 | **全部完成** | 11/11 |
+| **合计** | | **82/88** |
 
 ### 6.3 部署文件
 
@@ -586,9 +601,9 @@ uv run cryptobot prompt show
 |----|------|------|--------|
 | 9.1 | ~~**特征工程管道**~~ | ✅ 7 个提取器(技术/多TF/链上/情绪/订单簿/宏观/相关性) + z_score/min_max 标准化 + 特征存储(90天) | 高 |
 | 9.2 | ~~**信号评分模型**~~ | ✅ LightGBM 二分类器: 特征→涨跌概率，5-fold CV 训练/评估 + 模型持久化 + CLI (train/score/evaluate) | 高 |
-| 9.3 | **ML 信号过滤层** | 在 trade 节点之后、risk_review 之前加入 ML 过滤: 如果 ML 模型预测方向与 LLM 决策一致且概率 > 0.6 才放行，否则降级或拒绝 | 中 |
-| 9.4 | **特征重要性反馈** | 将 ML 模型的 feature importance 排名注入 analyst prompt，引导分析师关注真正有预测力的指标 | 低 |
-| 9.5 | **模型定期重训** | 每周/每月用最新数据增量训练，保存模型版本，自动回退到表现更好的版本 | 中 |
+| 9.3 | ~~**ML 信号过滤层**~~ | ✅ `workflow/nodes/ml_filter.py` trade→ml_filter→risk_review: 方向一致+概率>0.6 放行，不一致+概率>0.65 拒绝，无模型全部放行 | 中 |
+| 9.4 | ~~**特征重要性反馈**~~ | ✅ `ml/feature_feedback.py` feature importance top-5 按角色注入 analyst prompt，无模型静默跳过 | 低 |
+| 9.5 | ~~**模型定期重训**~~ | ✅ `ml/retrainer.py` + `ml/registry.py` 每周日自动重训，AUC 对比回滚，版本注册表 + CLI retrain/history | 中 |
 
 **架构变化**: LLM 从"独立决策者"变为"综合判官"，ML 模型提供量化信号，LLM 负责综合非结构化信息（新闻、宏观事件）做最终裁定。
 
@@ -651,20 +666,20 @@ uv run cryptobot prompt show
 | 13.6 | ~~**Regime 策略路由器**~~ | ✅ `workflow/strategy_router.py` trending→AI趋势 / ranging→均值回归 / volatile→观望 | 已完成 |
 | 13.7 | ~~**震荡市参数优化**~~ | ✅ ranging: 杠杆 2x / 日限 2 笔 / 止损 2% / 24h 持仓上限 | 已完成 |
 
-#### Phase 3: 高级策略（依赖 Phase 2）
+#### Phase 3: 高级策略 ✅ 已完成 (2026-02-23)
 
 | ID | 任务 | 说明 | 复杂度 |
 |----|------|------|--------|
 | 13.8 | ~~**资金费率套利**~~ | ✅ `funding_arb.py` + `virtual_portfolio.py` 虚拟盘: 扫描正费率 → delta 中性开仓 → 费率转负平仓 + CLI funding-scan/run/status | 高 |
 | 13.9 | ~~**网格交易模块**~~ | ✅ `grid_trading.py` 等距网格: 自动检测支撑阻力 → 创建网格 → 价格触发买卖 + CLI grid-create/status/check | 高 |
-| 13.10 | **多策略集成权重** | 按 regime 动态分配策略权重: 趋势市 → 80% AI趋势 + 20% 网格; 震荡市 → 20% AI趋势 + 50% 均值回归 + 30% 网格; 高波动 → 观望为主。权重基于各策略历史 Sharpe 自适应 | 高 |
+| 13.10 | ~~**多策略集成权重**~~ | ✅ `strategy/weight_tracker.py` + `strategy_router.py::route_strategies()` + `trade.py` 多策略路由 + CLI `strategy weights` | 高 |
 | 13.11 | ~~**月度亏损熔断强化**~~ | ✅ `monthly_circuit_breaker.py`: 连续 2 月亏损降仓 50%+暂停做多; 连续 3 月暂停 7 天 + risk.py 集成 + 配置化 | 中 |
 
 ### 未完成任务时间规划
 
-> 更新于 2026-02-23。P13 Phase 1+2 + 8.2 共 8 项已全部完成，前置依赖解锁了多项新任务。
+> 更新于 2026-02-23。P9 全部完成 + P13 全部完成，共 82/88 路线图。
 
-#### A. 已完成 — 7 项 ✅ (2026-02-23)
+#### A. 已完成 — 11 项 ✅ (2026-02-23)
 
 | ID | 任务 | 状态 |
 |-----|------|------|
@@ -675,17 +690,12 @@ uv run cryptobot prompt show
 | 13.9 | 网格交易模块 | ✅ `grid_trading.py` 等距网格 + 支撑阻力检测 + CLI |
 | 9.2 | 信号评分模型 (LightGBM) | ✅ `lgb_scorer.py` 5-fold CV + 模型持久化 + CLI |
 | 11.8 | 多因子相关性分析 | ✅ `factor_analysis.py` lead-lag Pearson + CLI |
+| 13.10 | 多策略集成权重 | ✅ `weight_tracker.py` + `route_strategies()` + 多策略路由 + CLI weights |
+| 9.3 | ML 信号过滤层 | ✅ `ml_filter.py` trade→ml_filter→risk_review + 9 tests |
+| 9.4 | 特征重要性反馈 | ✅ `feature_feedback.py` top-5 按角色注入 analyst prompt + 5 tests |
+| 9.5 | 模型定期重训 | ✅ `retrainer.py` + `registry.py` 每周日重训 + AUC 回滚 + CLI retrain/history |
 
-#### B. 立即可做（前置已满足）— 4 项
-
-| 优先级 | ID | 任务 | 复杂度 | 说明 |
-|--------|-----|------|--------|------|
-| **P1** | 13.10 | 多策略集成权重 | 高 | ✅ 13.8/13.9 已完成，按 regime 动态分配策略权重 |
-| **P2** | 9.3 | ML 信号过滤层 | 中 | ✅ 9.2 已完成，ML 模型预测方向与 LLM 决策一致才放行 |
-| **P2** | 9.4 | 特征重要性反馈 | 低 | ✅ 9.2 已完成，feature importance 注入 analyst prompt |
-| **P2** | 9.5 | 模型定期重训 | 中 | ✅ 9.2 已完成，每周/月增量训练 + 版本回退 |
-
-#### C. 需等数据 — 4 项
+#### B. 需等数据 — 4 项
 
 | 优先级 | ID | 任务 | 复杂度 | 等什么 | 最早可做 |
 |--------|-----|------|--------|--------|----------|
@@ -694,21 +704,16 @@ uv run cryptobot prompt show
 | P4 | 11.11 | Regime 概率模型 (HMM) | 高 | 足够 regime 历史 | 长期 |
 | P4 | 11.11b | Hurst+HMM 融合 Regime | 高 | 11.11 完成 | 长期 |
 
-#### D. 时间线总览
+#### C. 时间线总览
 
 ```
-2月23日 ─── 今天 (7 项任务全部完成, 78/88 路线图) ─────────────────
+2月23日 ─── 今天 (11 项任务完成, 82/88 路线图) ──────────────────
   │  12.5 VPS daemon 运行中（后台持续积累, 第 2 天）
-  │  ✅ 10.5/13.11/12.7/13.8/13.9/9.2/11.8 全部完成
+  │  ✅ P9 ML 引入全部完成 (9.1-9.5)
+  │  ✅ P13 多策略适应全部完成 (13.1-13.11)
   │
-  ├── 本周 (2/24 - 2/28): 策略集成 + ML 过滤
-  │   ├── 13.10 多策略集成权重               ← 前置 13.8/13.9 已就绪
-  │   ├── 9.3  ML 信号过滤层                 ← 前置 9.2 已就绪
-  │   └── 9.4  特征重要性反馈                ← 前置 9.2 已就绪
-  │
-  ├── 第 2 周 (3/1 - 3/7): ML 运维 + 验证
-  │   ├── 9.5  模型定期重训                  ← 自动化 ML 管道
-  │   └── 10.2 A/B 测试增强                  ← VPS 跑满 14 天
+  ├── ~3月8日: VPS 满 14 天
+  │   └── 10.2 A/B 测试增强                  ← VPS 数据就绪
   │
 3月24日 ─── VPS 满 30 天 ────────────────────────────────────────
   │

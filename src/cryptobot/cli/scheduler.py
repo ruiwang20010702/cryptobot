@@ -382,6 +382,29 @@ def job_overfit_check() -> None:
         )
 
 
+def job_ml_retrain() -> None:
+    """定时: ML 模型重训"""
+    from cryptobot.ml.retrainer import run_retrain
+
+    try:
+        result = run_retrain()
+        if result.action == "skipped":
+            logger.info("[调度] ML 重训跳过: %s", result.reason)
+        elif result.action == "rolled_back":
+            logger.warning("[调度] ML 重训回滚: %s", result.reason)
+            from cryptobot.notify import send_message
+            send_message(f"ML 模型重训回滚: {result.reason}")
+        else:
+            logger.info(
+                "[调度] ML 重训完成: %s (%s)", result.version, result.action,
+            )
+            from cryptobot.notify import send_message
+            auc = result.metrics.get("auc_roc", 0)
+            send_message(f"ML 模型重训: {result.version} (AUC={auc:.4f})")
+    except Exception as e:
+        logger.error("[调度] ML 重训失败: %s", e, exc_info=True)
+
+
 def job_journal_sync() -> None:
     """定时: 同步 Freqtrade 平仓数据到交易日志"""
     from cryptobot.journal.storage import get_records_by_status, update_record
@@ -577,6 +600,18 @@ def start(run_now: bool, verbose: bool):
         minute=0,
         id="overfit_check",
         name="过拟合检查 (每周一10:00)",
+        max_instances=1,
+    )
+
+    # 每周 ML 模型重训: UTC 每周日 6:00
+    scheduler.add_job(
+        job_ml_retrain,
+        "cron",
+        day_of_week="sun",
+        hour=6,
+        minute=0,
+        id="ml_retrain",
+        name="ML 模型重训 (每周日6:00)",
         max_instances=1,
     )
 

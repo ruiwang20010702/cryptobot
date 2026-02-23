@@ -51,6 +51,14 @@ def analyze(state: WorkflowState) -> dict:
     except Exception:
         pass
 
+    # ML feature importance feedback
+    ml_feedback: dict[str, str] = {}
+    try:
+        from cryptobot.ml.feature_feedback import build_feature_feedback_addon
+        ml_feedback = build_feature_feedback_addon(top_n=5)
+    except Exception:
+        pass
+
     # 打平所有任务: [(symbol, analyst_type, task_dict), ...]
     all_tasks = []
     task_index = []  # 记录每个任务对应的 (symbol, analyst_type)
@@ -115,12 +123,14 @@ def analyze(state: WorkflowState) -> dict:
             "defi_tvl": defi_tvl,
         }
 
-        # 为每个分析师追加 regime + capital hint
+        # 为每个分析师追加 regime + capital + ML feature hint
         analyst_addon = regime_analyst_addon + capital_analyst_addon
-        tech_sys = TECHNICAL_ANALYST + analyst_addon
-        onchain_sys = ONCHAIN_ANALYST + analyst_addon
-        sentiment_sys = SENTIMENT_ANALYST + analyst_addon
-        fundamental_sys = FUNDAMENTAL_ANALYST + analyst_addon
+        tech_sys = TECHNICAL_ANALYST + analyst_addon + ml_feedback.get("technical", "")
+        onchain_sys = ONCHAIN_ANALYST + analyst_addon + ml_feedback.get("onchain", "")
+        sentiment_sys = SENTIMENT_ANALYST + analyst_addon + ml_feedback.get("sentiment", "")
+        fundamental_sys = (
+            FUNDAMENTAL_ANALYST + analyst_addon + ml_feedback.get("fundamental", "")
+        )
 
         tasks_for_symbol = [
             ("technical", {

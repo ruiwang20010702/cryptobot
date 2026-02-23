@@ -202,8 +202,8 @@ class TestDaemonCLI:
 
         assert result.exit_code == 0
         assert "调度器启动" in result.output
-        # 验证 11 个 job 被添加 (含 config_reload + daily_report + prompt_optimization + urgent_review + strategy_advisor + overfit_check)
-        assert mock_sched.add_job.call_count == 11
+        # 验证 12 个 job 被添加 (含 ml_retrain + config_reload + daily_report + prompt_optimization + urgent_review + strategy_advisor + overfit_check)
+        assert mock_sched.add_job.call_count == 12
         job_ids = {
             call.kwargs.get("id") or call[2].get("id")
             for call in mock_sched.add_job.call_args_list

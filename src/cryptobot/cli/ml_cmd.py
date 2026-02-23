@@ -200,3 +200,86 @@ def evaluate(json_output: bool):
     table.add_row("Recall", f"{metrics.recall:.4f}")
     table.add_row("F1", f"{metrics.f1:.4f}")
     console.print(table)
+
+
+@ml.command("retrain")
+@click.option("--days", default=180, help="训练数据天数")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def retrain(days: int, json_output: bool):
+    """手动触发模型重训"""
+    from cryptobot.ml.retrainer import run_retrain
+
+    result = run_retrain(days=days)
+
+    output = {
+        "version": result.version,
+        "action": result.action,
+        "reason": result.reason,
+        "metrics": result.metrics,
+        "previous_version": result.previous_version,
+        "previous_metrics": result.previous_metrics,
+    }
+
+    if json_output:
+        click.echo(json.dumps(output, indent=2, ensure_ascii=False))
+        return
+
+    table = Table(title="模型重训结果")
+    table.add_column("项目", style="cyan")
+    table.add_column("值")
+    table.add_row("版本", result.version or "N/A")
+    table.add_row("动作", result.action)
+    table.add_row("原因", result.reason)
+    if result.metrics:
+        table.add_row("AUC-ROC", f"{result.metrics.get('auc_roc', 0):.4f}")
+        table.add_row("F1", f"{result.metrics.get('f1', 0):.4f}")
+    if result.previous_version:
+        table.add_row("前版本", result.previous_version)
+        prev_auc = (result.previous_metrics or {}).get("auc_roc", 0)
+        table.add_row("前版本 AUC", f"{prev_auc:.4f}")
+    console.print(table)
+
+
+@ml.command("history")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def history(json_output: bool):
+    """查看模型版本历史"""
+    from cryptobot.ml.retrainer import get_model_history
+
+    records = get_model_history()
+
+    if json_output:
+        click.echo(json.dumps(records, indent=2, ensure_ascii=False))
+        return
+
+    if not records:
+        console.print("[yellow]无模型历史记录[/yellow]")
+        return
+
+    table = Table(title="模型版本历史")
+    table.add_column("版本", style="cyan")
+    table.add_column("创建时间")
+    table.add_column("样本数", justify="right")
+    table.add_column("AUC", justify="right")
+    table.add_column("F1", justify="right")
+    table.add_column("状态")
+
+    for r in records:
+        status_style = {
+            "active": "green",
+            "superseded": "dim",
+            "rolled_back": "red",
+        }.get(r["status"], "")
+        table.add_row(
+            r["version"],
+            r["created_at"][:16],
+            str(r["training_samples"]),
+            f"{r['metrics'].get('auc_roc', 0):.4f}",
+            f"{r['metrics'].get('f1', 0):.4f}",
+            (
+                f"[{status_style}]{r['status']}[/{status_style}]"
+                if status_style
+                else r["status"]
+            ),
+        )
+    console.print(table)

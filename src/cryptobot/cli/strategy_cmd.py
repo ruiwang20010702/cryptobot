@@ -7,6 +7,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from cryptobot.config import DATA_OUTPUT_DIR
+
 console = Console()
 
 
@@ -265,3 +267,53 @@ def grid_check(symbol: str, json_output: bool):
         f"已实现盈亏: ${result['realized_pnl']:.2f}",
         title="网格检查",
     ))
+
+
+# ─── 策略权重 ──────────────────────────────────────────────────────
+
+
+@strategy.command("weights")
+@click.option("--regime", default=None, help="指定 regime (默认从最新数据获取)")
+@click.option("--json-output", is_flag=True, help="JSON 输出")
+def weights(regime: str | None, json_output: bool):
+    """查看当前策略权重"""
+    from cryptobot.strategy.weight_tracker import get_weights
+
+    if regime is None:
+        try:
+            import json as json_lib
+            hist_path = DATA_OUTPUT_DIR / "evolution" / "regime_history.json"
+            if hist_path.exists():
+                data = json_lib.loads(hist_path.read_text())
+                if data:
+                    regime = data[-1].get("regime", "trending")
+        except Exception:
+            pass
+        if regime is None:
+            regime = "trending"
+
+    allocation = get_weights(regime)
+
+    if json_output:
+        from dataclasses import asdict
+        result = {
+            "regime": allocation.regime,
+            "weights": [asdict(w) for w in allocation.weights],
+            "updated_at": allocation.updated_at,
+        }
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+
+    table = Table(title=f"策略权重 (regime={allocation.regime})")
+    table.add_column("策略", style="cyan")
+    table.add_column("权重", justify="right")
+    table.add_column("说明")
+
+    for w in allocation.weights:
+        style = "green" if w.weight > 0 else "dim"
+        table.add_row(
+            f"[{style}]{w.strategy}[/{style}]",
+            f"{w.weight:.0%}",
+            w.reason,
+        )
+    console.print(table)

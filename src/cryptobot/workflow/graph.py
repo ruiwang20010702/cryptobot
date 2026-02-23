@@ -24,6 +24,7 @@ from cryptobot.workflow.nodes.research import research
 from cryptobot.workflow.nodes.trade import trade
 from cryptobot.workflow.nodes.risk import risk_review, _decision_to_signal, _extract_votes
 from cryptobot.workflow.nodes.execute import execute
+from cryptobot.workflow.nodes.ml_filter import ml_filter
 from cryptobot.workflow.re_review import re_review, collect_data_for_symbols
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ __all__ = [
     "analyze",
     "research",
     "trade",
+    "ml_filter",
     "risk_review",
     "execute",
     # Re-review
@@ -124,6 +126,7 @@ def build_graph() -> StateGraph:
     graph.add_node("analyze", analyze)
     graph.add_node("research", research)
     graph.add_node("trade", trade)
+    graph.add_node("ml_filter", ml_filter)
     graph.add_node("risk_review", risk_review)
     graph.add_node("execute", execute)
 
@@ -134,7 +137,8 @@ def build_graph() -> StateGraph:
     graph.add_edge("research", "trade")
 
     # 条件路由
-    graph.add_conditional_edges("trade", should_risk_review)
+    graph.add_edge("trade", "ml_filter")
+    graph.add_conditional_edges("ml_filter", should_risk_review)
     graph.add_conditional_edges("risk_review", should_execute)
 
     # 入口

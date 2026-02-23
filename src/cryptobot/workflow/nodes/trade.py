@@ -9,7 +9,11 @@ from rich.console import Console
 from cryptobot.workflow.llm import call_claude_parallel
 from cryptobot.workflow.prompts import TRADER, TRADE_SCHEMA
 from cryptobot.workflow.state import WorkflowState
-from cryptobot.workflow.strategy_router import route_strategy, StrategyRoute
+from cryptobot.workflow.strategy_router import (
+    StrategyRoute,
+    route_strategy,
+    route_strategies,
+)
 from cryptobot.workflow.utils import _stage, _build_portfolio_context
 
 logger = logging.getLogger(__name__)
@@ -136,6 +140,20 @@ def trade(state: WorkflowState) -> dict:
 
         data = market_data.get(symbol, {})
         current_price = (data.get("tech") or {}).get("latest_close", 0)
+
+        # P13.10: 多策略路由 -- 获取辅助策略
+        try:
+            routes = route_strategies(
+                regime=regime_info.get("regime", ""),
+                regime_confidence=regime_info.get("regime_confidence", 0.5),
+                hurst=regime_info.get("hurst_exponent", 0.5),
+                volatility_state=regime_info.get("volatility_state", "normal"),
+            )
+            for aux in routes[1:]:
+                if aux.strategy == "grid" and aux.weight > 0:
+                    _update_virtual_grid(symbol, current_price)
+        except Exception as e:
+            logger.warning("多策略路由失败 %s: %s", symbol, e)
 
         # observe -> 直接 no_trade
         if route.strategy == "observe":
@@ -388,3 +406,12 @@ def trade(state: WorkflowState) -> dict:
         "errors": errors,
         "strategy_routes": strategy_routes,
     }
+
+
+def _update_virtual_grid(symbol: str, current_price: float) -> None:
+    """更新网格虚拟盘（静默失败）"""
+    try:
+        from cryptobot.strategy.grid_trading import run_grid_check
+        run_grid_check(symbol)
+    except Exception as e:
+        logger.debug("网格更新失败 %s: %s", symbol, e)

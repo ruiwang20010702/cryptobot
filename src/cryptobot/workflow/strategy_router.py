@@ -75,3 +75,64 @@ def route_strategy(
         reason=f"市场状态不确定，降仓 AI 决策 (regime={regime})",
         params={},
     )
+
+
+def route_strategies(
+    regime: str,
+    regime_confidence: float = 0.5,
+    hurst: float = 0.5,
+    volatility_state: str = "normal",
+) -> list[StrategyRoute]:
+    """返回多个策略路由（按权重降序排序）
+
+    volatile → [StrategyRoute("observe", 0.0, ...)]
+    trending → [StrategyRoute("ai_trend", 0.8, ...), StrategyRoute("grid", 0.2, ...)]
+    ranging  → [StrategyRoute("mean_reversion", 0.5, ...), ...]
+
+    过滤掉 weight=0 的策略。如果全部 weight=0 → 返回 [observe]。
+    """
+    from cryptobot.strategy.weight_tracker import get_weights
+
+    # 高波动 → observe
+    if regime == "volatile" or volatility_state == "high_vol":
+        return [StrategyRoute(
+            strategy="observe",
+            weight=0.0,
+            reason=f"高波动市场观望 (regime={regime}, vol={volatility_state})",
+            params={},
+        )]
+
+    allocation = get_weights(regime)
+    routes: list[StrategyRoute] = []
+    for sw in allocation.weights:
+        if sw.weight <= 0:
+            continue
+        params: dict = {}
+        if sw.strategy == "mean_reversion":
+            params = {"hurst": hurst, "max_leverage": 2}
+        elif sw.strategy == "ai_trend":
+            # 低置信度降仓
+            weight = sw.weight if regime_confidence >= 0.5 else sw.weight * 0.5
+            routes.append(StrategyRoute(
+                strategy=sw.strategy,
+                weight=weight,
+                reason=f"{sw.reason} (H={hurst:.2f})",
+                params={"hurst": hurst},
+            ))
+            continue
+        routes.append(StrategyRoute(
+            strategy=sw.strategy,
+            weight=sw.weight,
+            reason=f"{sw.reason} (H={hurst:.2f})",
+            params=params,
+        ))
+
+    if not routes:
+        return [StrategyRoute(
+            strategy="observe",
+            weight=0.0,
+            reason=f"所有策略权重为 0 (regime={regime})",
+            params={},
+        )]
+
+    return sorted(routes, key=lambda r: -r.weight)
