@@ -30,7 +30,7 @@ def signal_env(tmp_path, monkeypatch):
 
 class TestValidateSignal:
     def test_minimal_valid(self):
-        s = validate_signal({"symbol": "BTCUSDT", "action": "long"})
+        s = validate_signal({"symbol": "BTCUSDT", "action": "long", "stop_loss": 90000})
         assert s["symbol"] == "BTCUSDT"
         assert s["action"] == "long"
         assert s["leverage"] == 3  # 默认值
@@ -69,15 +69,15 @@ class TestValidateSignal:
 
 class TestWriteReadSignals:
     def test_write_and_read(self, signal_env):
-        write_signal({"symbol": "BTCUSDT", "action": "long", "confidence": 80})
+        write_signal({"symbol": "BTCUSDT", "action": "long", "confidence": 80, "stop_loss": 90000})
         signals = read_signals()
         assert len(signals) == 1
         assert signals[0]["symbol"] == "BTCUSDT"
         assert signals[0]["confidence"] == 80
 
     def test_get_signal_for_pair(self, signal_env):
-        write_signal({"symbol": "BTCUSDT", "action": "long"})
-        write_signal({"symbol": "ETHUSDT", "action": "short"})
+        write_signal({"symbol": "BTCUSDT", "action": "long", "stop_loss": 90000})
+        write_signal({"symbol": "ETHUSDT", "action": "short", "stop_loss": 3500})
 
         s = get_signal_for_pair("BTC/USDT:USDT")
         assert s is not None
@@ -91,8 +91,8 @@ class TestWriteReadSignals:
         assert s is None
 
     def test_replace_same_symbol(self, signal_env):
-        write_signal({"symbol": "BTCUSDT", "action": "long"})
-        write_signal({"symbol": "BTCUSDT", "action": "short"})
+        write_signal({"symbol": "BTCUSDT", "action": "long", "stop_loss": 90000})
+        write_signal({"symbol": "BTCUSDT", "action": "short", "stop_loss": 110000})
         signals = read_signals()
         assert len(signals) == 1
         assert signals[0]["action"] == "short"
@@ -104,10 +104,11 @@ class TestCleanup:
         write_signal({
             "symbol": "BTCUSDT",
             "action": "long",
+            "stop_loss": 90000,
             "expires_at": "2020-01-01T00:00:00+00:00",
         })
         # 写入一个有效信号
-        write_signal({"symbol": "ETHUSDT", "action": "short"})
+        write_signal({"symbol": "ETHUSDT", "action": "short", "stop_loss": 3500})
 
         removed = cleanup_expired()
         assert removed == 1
@@ -118,22 +119,22 @@ class TestCleanup:
 
 class TestPendingSignals:
     def test_write_and_read_pending(self, signal_env):
-        write_pending_signal({"symbol": "BTCUSDT", "action": "long", "confidence": 80})
+        write_pending_signal({"symbol": "BTCUSDT", "action": "long", "confidence": 80, "stop_loss": 90000})
         pending = read_pending_signals()
         assert len(pending) == 1
         assert pending[0]["symbol"] == "BTCUSDT"
         assert pending[0]["confidence"] == 80
 
     def test_replace_same_symbol(self, signal_env):
-        write_pending_signal({"symbol": "BTCUSDT", "action": "long"})
-        write_pending_signal({"symbol": "BTCUSDT", "action": "short"})
+        write_pending_signal({"symbol": "BTCUSDT", "action": "long", "stop_loss": 90000})
+        write_pending_signal({"symbol": "BTCUSDT", "action": "short", "stop_loss": 110000})
         pending = read_pending_signals()
         assert len(pending) == 1
         assert pending[0]["action"] == "short"
 
     def test_remove_pending(self, signal_env):
-        write_pending_signal({"symbol": "BTCUSDT", "action": "long"})
-        write_pending_signal({"symbol": "ETHUSDT", "action": "short"})
+        write_pending_signal({"symbol": "BTCUSDT", "action": "long", "stop_loss": 90000})
+        write_pending_signal({"symbol": "ETHUSDT", "action": "short", "stop_loss": 3500})
 
         result = remove_pending_signal("BTCUSDT")
         assert result is True
@@ -142,7 +143,7 @@ class TestPendingSignals:
         assert pending[0]["symbol"] == "ETHUSDT"
 
     def test_remove_nonexistent(self, signal_env):
-        write_pending_signal({"symbol": "BTCUSDT", "action": "long"})
+        write_pending_signal({"symbol": "BTCUSDT", "action": "long", "stop_loss": 90000})
         result = remove_pending_signal("FAKEUSDT")
         assert result is False
 
@@ -151,10 +152,11 @@ class TestPendingSignals:
         write_pending_signal({
             "symbol": "BTCUSDT",
             "action": "long",
+            "stop_loss": 90000,
             "expires_at": "2020-01-01T00:00:00+00:00",
         })
         # 写入一个有效的 pending 信号
-        write_pending_signal({"symbol": "ETHUSDT", "action": "short"})
+        write_pending_signal({"symbol": "ETHUSDT", "action": "short", "stop_loss": 3500})
 
         # 过滤过期信号
         pending = read_pending_signals(filter_expired=True)
@@ -176,7 +178,7 @@ class TestUpdateSignalField:
         assert signals[0]["stop_loss"] == 43000
 
     def test_update_nonexistent_symbol(self, signal_env):
-        write_signal({"symbol": "BTCUSDT", "action": "long"})
+        write_signal({"symbol": "BTCUSDT", "action": "long", "stop_loss": 90000})
         result = update_signal_field("FAKEUSDT", "stop_loss", 42000)
         assert result is False
 

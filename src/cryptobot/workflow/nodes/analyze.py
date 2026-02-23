@@ -18,6 +18,20 @@ logger = logging.getLogger(__name__)
 _console = Console()
 
 
+def _sanitize_external_text(data: dict | list | str, max_len: int = 2000):
+    """截断外部数据文本并添加分隔标记（防 prompt 注入）"""
+    text = json.dumps(data, ensure_ascii=False) if not isinstance(data, str) else data
+    if len(text) <= max_len:
+        return {"_marker": "[EXTERNAL_DATA_START]", "data": data, "_end": "[EXTERNAL_DATA_END]"}
+    # 截断后重新解析或保留字符串
+    truncated = text[:max_len]
+    return {
+        "_marker": "[EXTERNAL_DATA_START]",
+        "data": truncated + "...(truncated)",
+        "_end": "[EXTERNAL_DATA_END]",
+    }
+
+
 def analyze(state: WorkflowState) -> dict:
     """所有币种的 4 位分析师并行（5币 × 4 = 20 个 haiku，5 并发）"""
     screened = state.get("screened_symbols", [])
@@ -38,8 +52,8 @@ def analyze(state: WorkflowState) -> dict:
         regime = state.get("market_regime", {})
         regime_name = regime.get("regime", "") if regime else ""
         regime_analyst_addon = get_regime_addon(regime_name, "ANALYST")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Regime analyst addon 加载失败: %s", e)
 
     # Capital tier hint for analysts
     capital_analyst_addon = ""
@@ -48,16 +62,16 @@ def analyze(state: WorkflowState) -> dict:
         capital_tier = state.get("capital_tier", {})
         tier_name = capital_tier.get("tier", "")
         capital_analyst_addon = get_capital_addon(tier_name, "ANALYST")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Capital analyst addon 加载失败: %s", e)
 
     # ML feature importance feedback
     ml_feedback: dict[str, str] = {}
     try:
         from cryptobot.ml.feature_feedback import build_feature_feedback_addon
         ml_feedback = build_feature_feedback_addon(top_n=5)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("ML feature feedback 加载失败: %s", e)
 
     # 打平所有任务: [(symbol, analyst_type, task_dict), ...]
     all_tasks = []
@@ -101,13 +115,18 @@ def analyze(state: WorkflowState) -> dict:
             "options_sentiment": options_sentiment,
             "whale_activity": whale_activity,
         }
+        # R6-M2: 新闻文本截断 + 分隔标记（防注入）
+        _MAX_NEWS_LEN = 2000
+        safe_global_news = _sanitize_external_text(global_news, _MAX_NEWS_LEN)
+        safe_coin_news = _sanitize_external_text(coin_news, _MAX_NEWS_LEN)
+
         # 情绪分析师: fear_greed + market_overview + global_news + stablecoin_flows + macro_events + dxy
         macro_events = state.get("macro_events", {})
         dxy_data = state.get("dxy_data", {})
         sentiment_data = {
             "fear_greed": fear_greed,
             "market_overview": market_overview,
-            "global_news": global_news,
+            "global_news": safe_global_news,
             "stablecoin_flows": stablecoin_flows,
             "macro_events": macro_events,
             "dxy": dxy_data,
@@ -118,7 +137,7 @@ def analyze(state: WorkflowState) -> dict:
         fundamental_data = {
             "coin_info": coin_info,
             "btc_correlation": btc_correlation,
-            "coin_news": coin_news,
+            "coin_news": safe_coin_news,
             "dilution_risk": dilution_risk,
             "defi_tvl": defi_tvl,
         }
@@ -183,6 +202,18 @@ def analyze(state: WorkflowState) -> dict:
         if isinstance(result, dict) and "error" in result:
             errors.append(f"analyze_{symbol}_{analyst_type}: {result['error']}")
             result = {"direction": "neutral", "confidence": 0, "error": True}
+        elif not isinstance(result, dict):
+            # R6-H8: LLM 返回非 dict 时标记错误而非静默忽略
+            logger.warning(
+                "%s_%s: LLM 返回非 dict 类型 (%s)", symbol, analyst_type, type(result).__name__,
+            )
+            errors.append(f"analyze_{symbol}_{analyst_type}: invalid_response")
+            result = {
+                "error": "invalid_response",
+                "raw": str(result)[:200],
+                "direction": "neutral",
+                "confidence": 0,
+            }
         analyses[symbol][analyst_type] = result
 
     err_count = sum(1 for r in results if isinstance(r, dict) and "error" in r)

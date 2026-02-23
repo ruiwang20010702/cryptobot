@@ -143,30 +143,24 @@ class TestBalanceZero:
 
 class TestPositionRace:
     @patch("cryptobot.notify.send_message", return_value=True)
-    @patch("cryptobot.workflow.llm.call_claude_parallel")
+    @patch("cryptobot.workflow.nodes.risk.call_claude_parallel")
+    @patch("cryptobot.capital_strategy.get_balance_from_freqtrade", return_value=10000)
     @patch("cryptobot.freqtrade_api.ft_api_get")
     @patch("cryptobot.signal.bridge.read_signals", return_value=[])
-    def test_cumulative_position_check(self, mock_signals, mock_ft, mock_parallel, mock_notify):
+    def test_cumulative_position_check(
+        self, mock_signals, mock_ft, mock_balance, mock_parallel, mock_notify,
+    ):
         """同批多信号仓位累加检查"""
-        def ft_side_effect(endpoint):
-            if endpoint == "/balance":
-                return {"currencies": [{"currency": "USDT", "balance": 1000}]}
-            if endpoint == "/status":
-                return []
-            return None
-
-        mock_ft.side_effect = ft_side_effect
+        mock_ft.return_value = []  # /status → 无持仓
         # 3 个信号各 30%
         decisions = [
             _make_decision("BTCUSDT", position_size_pct=30),
             _make_decision("ETHUSDT", position_size_pct=30),
             _make_decision("SOLUSDT", position_size_pct=30),
         ]
-        # 风控全部通过
-        mock_parallel.return_value = [
-            {"decision": "approved", "risk_score": 3},
-            {"decision": "approved", "risk_score": 3},
-            {"decision": "approved", "risk_score": 3},
+        # 风控 AI 审核通过（返回数量与输入匹配）
+        mock_parallel.side_effect = lambda tasks: [
+            {"decision": "approved", "risk_score": 3} for _ in tasks
         ]
         state = _base_state(decisions=decisions)
 

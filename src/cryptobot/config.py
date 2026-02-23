@@ -2,6 +2,7 @@
 
 import logging
 import os
+import threading
 from pathlib import Path
 
 import yaml
@@ -42,35 +43,39 @@ FREQTRADE_DATA_DIR_ALT = PROJECT_ROOT / "user_data" / "data" / "futures"
 _settings_cache: dict | None = None
 _settings_mtime: float = 0.0
 
+_config_lock = threading.Lock()
+
 
 def load_settings() -> dict:
     global _settings_cache, _settings_mtime, _dotenv_loaded
-    if not _dotenv_loaded:
-        _load_dotenv()
-        _dotenv_loaded = True
 
-    path = CONFIG_DIR / "settings.yaml"
-    if not path.exists():
-        return {}
+    with _config_lock:
+        if not _dotenv_loaded:
+            _load_dotenv()
+            _dotenv_loaded = True
 
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        return _settings_cache or {}
+        path = CONFIG_DIR / "settings.yaml"
+        if not path.exists():
+            return {}
 
-    if _settings_cache is not None and mtime == _settings_mtime:
-        return _settings_cache
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return _settings_cache or {}
 
-    try:
-        settings = yaml.safe_load(path.read_text()) or {}
-    except yaml.YAMLError as e:
-        logger.error("settings.yaml 解析失败: %s", e)
-        return _settings_cache or {}
+        if _settings_cache is not None and mtime == _settings_mtime:
+            return _settings_cache
 
-    _validate_settings(settings)
-    _settings_cache = settings
-    _settings_mtime = mtime
-    return settings
+        try:
+            settings = yaml.safe_load(path.read_text()) or {}
+        except yaml.YAMLError as e:
+            logger.error("settings.yaml 解析失败: %s", e)
+            return _settings_cache or {}
+
+        _validate_settings(settings)
+        _settings_cache = settings
+        _settings_mtime = mtime
+        return settings
 
 
 def _validate_settings(settings: dict) -> None:

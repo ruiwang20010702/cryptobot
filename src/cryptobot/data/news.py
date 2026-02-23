@@ -51,7 +51,7 @@ def get_market_overview() -> dict:
         data = resp.json().get("data", {})
     except Exception as e:
         logger.warning("获取市场概览失败: %s", e)
-        return {"error": str(e)}
+        return {"error": str(e), "data_available": False}
 
     result = {
         "total_market_cap_usd": data.get("total_market_cap", {}).get("usd", 0),
@@ -92,7 +92,7 @@ def get_coin_info(symbol: str = "BTC") -> dict:
         data = resp.json()
     except Exception as e:
         logger.warning("获取币种信息失败 %s: %s", symbol, e)
-        return {"symbol": symbol.upper(), "error": str(e)}
+        return {"symbol": symbol.upper(), "error": str(e), "data_available": False}
 
     market = data.get("market_data", {})
     result = {
@@ -130,7 +130,7 @@ def get_trending() -> dict:
         data = resp.json()
     except Exception as e:
         logger.warning("获取热门趋势失败: %s", e)
-        return {"trending_coins": [], "count": 0, "error": str(e)}
+        return {"trending_coins": [], "count": 0, "error": str(e), "data_available": False}
 
     coins = []
     for item in data.get("coins", [])[:10]:

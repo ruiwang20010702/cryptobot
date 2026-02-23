@@ -40,7 +40,7 @@ def research(state: WorkflowState) -> dict:
             trend = tech.get("trend", {})
             sr = sym_data.get("support_resistance") or {}
             parts = []
-            price = momentum.get("close")
+            price = tech.get("latest_close")
             if price:
                 parts.append(f"当前价: {price}")
             rsi = momentum.get("rsi_14")
@@ -81,6 +81,8 @@ def research(state: WorkflowState) -> dict:
         symbol, role = task_index[i]
         if isinstance(result, dict) and "error" in result:
             errors.append(f"research_{symbol}_{role}: {result['error']}")
+            # R6-M9: 标记为不可用，方便 trader 识别
+            result = {**result, "_status": "[RESEARCH_UNAVAILABLE]"}
         research_results[symbol][role] = result
 
     err_count = sum(1 for r in results if isinstance(r, dict) and "error" in r)

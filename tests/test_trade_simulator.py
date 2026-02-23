@@ -275,16 +275,17 @@ class TestCostsAndSlippage:
         assert r_default.net_pnl_pct < r_zero.net_pnl_pct
         assert r_default.costs_pct > 0
 
-    def test_slippage_worsens_entry(self):
-        """滑点使入场价对交易者不利"""
+    def test_slippage_in_costs_not_entry(self):
+        """滑点在 cost_model 中扣除，不偏移入场价"""
         prices = [(100, 101, 99, 100)] * 5
         sig = _make_signal()
         # 有滑点
         cfg_slip = CostConfig(taker_fee_pct=0, slippage_pct=0.1, funding_rate_per_8h=0)
         r = simulate_trade(sig, _make_klines(prices), cfg_slip, max_bars=5)
         assert r is not None
-        # long 的入场价应高于 mid (100)
-        assert r.entry_price > 100.0
+        # 入场价 = entry_range 中点，滑点在 costs_pct 中体现
+        assert r.entry_price == 100.0
+        assert r.costs_pct > 0
 
 
 # ── MFE / MAE 测试 ──────────────────────────────────────────────────────

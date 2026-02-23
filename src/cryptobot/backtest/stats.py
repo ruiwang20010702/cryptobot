@@ -62,7 +62,7 @@ def _welch_t_test(sample1: list[float], sample2: list[float]) -> float:
 
     t = (mean1 - mean2) / sqrt(var1/n1 + var2/n2)
     自由度: Welch-Satterthwaite 公式
-    p-value: 用正态近似 (erfc)
+    p-value: Hill's approximation for t-distribution CDF
     """
     n1, n2 = len(sample1), len(sample2)
     if n1 < 2 or n2 < 2:
@@ -79,9 +79,100 @@ def _welch_t_test(sample1: list[float], sample2: list[float]) -> float:
 
     t_stat = (mean1 - mean2) / se
 
-    # 正态近似 p-value (双尾): erfc(|t| / sqrt(2))
-    p_value = math.erfc(abs(t_stat) / math.sqrt(2))
+    # Welch-Satterthwaite 自由度
+    v1 = var1 / n1
+    v2 = var2 / n2
+    df_num = (v1 + v2) ** 2
+    df_den = v1**2 / (n1 - 1) + v2**2 / (n2 - 1)
+    df = df_num / df_den if df_den > 0 else 2.0
+
+    # t-distribution CDF 近似 (双尾 p-value)
+    p_value = _t_distribution_p_value(abs(t_stat), df)
     return min(1.0, p_value)
+
+
+def _t_distribution_p_value(t: float, df: float) -> float:
+    """Hill's approximation for two-tailed p-value of t-distribution
+
+    对于大自由度趋近正态分布，小自由度给出更保守的 p-value。
+    """
+    if df <= 0:
+        return 1.0
+    if t <= 0:
+        return 1.0
+
+    # 使用 regularized incomplete beta function 近似
+    # I_x(a, b) where x = df/(df + t^2), a = df/2, b = 0.5
+    x = df / (df + t * t)
+    a = df / 2.0
+    b = 0.5
+
+    # 对于大 df (>100)，使用正态近似
+    if df > 100:
+        return math.erfc(t / math.sqrt(2))
+
+    # 简化的 incomplete beta function 近似 (连分式展开)
+    p = _regularized_incomplete_beta(x, a, b)
+    return min(1.0, max(0.0, p))
+
+
+def _regularized_incomplete_beta(x: float, a: float, b: float) -> float:
+    """Regularized incomplete beta function I_x(a, b) 近似
+
+    用于 t-distribution p-value 计算。
+    采用连分式展开 (Lentz's method)。
+    """
+    if x <= 0:
+        return 0.0
+    if x >= 1:
+        return 1.0
+
+    # 使用 log-beta 避免大数溢出
+    ln_beta = math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+    front = math.exp(a * math.log(x) + b * math.log(1 - x) - ln_beta) / a
+
+    # 连分式展开 (modified Lentz's method)
+    # I_x(a, b) = front * cf, 其中 cf 是连分式
+    max_iter = 200
+    eps = 1e-14
+    tiny = 1e-30
+
+    # Evaluate the continued fraction
+    c = 1.0
+    d = 1.0 - (a + b) * x / (a + 1.0)
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    result = d
+
+    for m in range(1, max_iter + 1):
+        # Even step: d_{2m}
+        numerator = m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m))
+        d = 1.0 + numerator * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + numerator / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        result *= d * c
+
+        # Odd step: d_{2m+1}
+        numerator = -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1))
+        d = 1.0 + numerator * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + numerator / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        result *= delta
+
+        if abs(delta - 1.0) < eps:
+            break
+
+    return front * result
 
 
 def run_permutation_test(
@@ -121,20 +212,7 @@ def run_permutation_test(
 
 
 def _calc_sharpe(returns: list[float]) -> float:
-    """计算简单 Sharpe ratio: mean / std × sqrt(N_annual)
+    """计算 Sharpe ratio (统一年化函数)"""
+    from cryptobot.backtest._sharpe_utils import annualize_sharpe
 
-    假设每笔交易间隔约 12 小时，年化 = 365 * 2 = 730 笔。
-    """
-    if len(returns) < 2:
-        return 0.0
-
-    n = len(returns)
-    mean = sum(returns) / n
-    var = sum((x - mean) ** 2 for x in returns) / (n - 1)
-    std = math.sqrt(var)
-
-    if std < 1e-10:
-        return 0.0
-
-    annualization = math.sqrt(730)
-    return round(mean / std * annualization, 4)
+    return round(annualize_sharpe(returns), 4)

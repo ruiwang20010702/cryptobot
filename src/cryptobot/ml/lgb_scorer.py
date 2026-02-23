@@ -28,7 +28,7 @@ class ModelMetrics:
 @dataclass(frozen=True)
 class SignalScore:
     symbol: str
-    direction: str  # "up" | "down"
+    direction: str  # "up" | "down" | "neutral"
     probability: float  # 0.0 - 1.0
     model_version: str
     features_used: int
@@ -151,19 +151,34 @@ def _find_nearest_price(
     klines: dict[int, float],
     target_ms: int,
     tolerance_ms: int,
+    _sorted_cache: dict[int, list[int]] | None = None,
 ) -> float | None:
-    """在 klines 字典中找到最接近 target_ms 的价格"""
+    """在 klines 字典中用二分查找找到最接近 target_ms 的价格"""
     if not klines:
         return None
+
+    import bisect
+
+    # 排序键列表（调用方可传入缓存避免重复排序）
+    if _sorted_cache is not None and id(klines) in _sorted_cache:
+        sorted_keys = _sorted_cache[id(klines)]
+    else:
+        sorted_keys = sorted(klines)
+        if _sorted_cache is not None:
+            _sorted_cache[id(klines)] = sorted_keys
+
+    pos = bisect.bisect_left(sorted_keys, target_ms)
 
     best_ts = None
     best_diff = float("inf")
 
-    for ts_ms in klines:
-        diff = abs(ts_ms - target_ms)
-        if diff < best_diff:
-            best_diff = diff
-            best_ts = ts_ms
+    # 检查 pos 和 pos-1 两个候选
+    for idx in (pos - 1, pos):
+        if 0 <= idx < len(sorted_keys):
+            diff = abs(sorted_keys[idx] - target_ms)
+            if diff < best_diff:
+                best_diff = diff
+                best_ts = sorted_keys[idx]
 
     if best_ts is not None and best_diff <= tolerance_ms:
         return klines[best_ts]
@@ -176,19 +191,25 @@ def _find_nearest_price(
 def _kfold_split(
     n: int, n_folds: int,
 ) -> list[tuple[list[int], list[int]]]:
-    """纯 Python K-fold 交叉验证索引分割
+    """时序交叉验证索引分割 (TimeSeriesSplit)
 
+    按时间顺序分割，train 始终在 val 之前，避免未来数据泄露。
     返回 [(train_indices, val_indices), ...] 共 n_folds 组。
+    fold_i: train=[0 : (i+1)*step], val=[(i+1)*step : (i+2)*step]
     """
-    indices = list(range(n))
-    fold_size = n // n_folds
+    step = n // (n_folds + 1)
+    if step < 1:
+        step = 1
+
     folds: list[tuple[list[int], list[int]]] = []
 
     for i in range(n_folds):
-        start = i * fold_size
-        end = start + fold_size if i < n_folds - 1 else n
-        val_idx = indices[start:end]
-        train_idx = indices[:start] + indices[end:]
+        train_end = (i + 1) * step
+        val_end = min((i + 2) * step, n)
+        if train_end >= n or val_end <= train_end:
+            break
+        train_idx = list(range(train_end))
+        val_idx = list(range(train_end, val_end))
         folds.append((train_idx, val_idx))
 
     return folds
@@ -285,12 +306,34 @@ def _compute_auc_roc(y_true: list[int], y_prob: list[float]) -> float:
 # ─── 模型训练 ─────────────────────────────────────────────────────────
 
 
+# 特征缺失时的语义默认值
+_FEATURE_DEFAULTS: dict[str, float] = {
+    "long_short_ratio": 1.0,   # 多空平衡
+    "bid_ask_ratio": 1.0,      # 买卖平衡
+    "funding_rate": 0.0,       # 无费率
+    "oi_change_pct": 0.0,      # OI 无变化
+    "spread_pct": 0.0,         # 无价差
+}
+
+
+def _feature_default(name: str) -> float | None:
+    """返回特征缺失时的默认值
+
+    已知语义默认值的返回对应值，其他返回 None (NaN)。
+    LightGBM 原生支持 NaN 作为缺失值。
+    """
+    return _FEATURE_DEFAULTS.get(name)
+
+
 def _dicts_to_matrix(
     dicts: list[dict], feature_names: list[str],
-) -> list[list[float]]:
-    """将特征字典列表转为二维列表 (样本 x 特征)"""
+) -> list[list[float | None]]:
+    """将特征字典列表转为二维列表 (样本 x 特征)
+
+    缺失特征按语义分类处理：已知语义用默认值，其他用 None (NaN)。
+    """
     return [
-        [d.get(name, 0.0) for name in feature_names]
+        [d.get(name, _feature_default(name)) for name in feature_names]
         for d in dicts
     ]
 
@@ -384,9 +427,17 @@ def train_model(
     full_data = lgb.Dataset(X_matrix, label=y, feature_name=feature_names)
     final_model = lgb.train(params, full_data, num_boost_round=200)
 
+    # Hold-out 评估: 用最后 20% 数据检验 final_model 泛化能力
+    holdout_size = max(1, len(X_matrix) // 5)
+    X_holdout = X_matrix[-holdout_size:]
+    y_holdout = y[-holdout_size:]
+    holdout_probs = final_model.predict(X_holdout)
+    holdout_auc = _compute_auc_roc(y_holdout, list(holdout_probs))
+    logger.info("Hold-out AUC (最后 %d 样本): %.4f", holdout_size, holdout_auc)
+
     logger.info(
-        "模型训练完成: accuracy=%.3f, AUC=%.3f, F1=%.3f",
-        metrics.accuracy, metrics.auc_roc, metrics.f1,
+        "模型训练完成: CV accuracy=%.3f, CV AUC=%.3f, F1=%.3f, hold-out AUC=%.3f",
+        metrics.accuracy, metrics.auc_roc, metrics.f1, holdout_auc,
     )
     return final_model, metrics
 
@@ -412,12 +463,18 @@ def score_signal(
     feature_names = model.feature_name()
     features_used = sum(1 for name in feature_names if name in features)
 
-    # 构建输入向量
-    x = [[features.get(name, 0.0) for name in feature_names]]
+    # 构建输入向量（缺失特征按语义分类处理）
+    x = [[features.get(name, _feature_default(name)) for name in feature_names]]
     probs = model.predict(x)
     prob = float(probs[0])
 
-    direction = "up" if prob > 0.5 else "down"
+    # 做空更保守: prob < 0.3 才视为 down，0.3-0.5 视为 neutral
+    if prob > 0.5:
+        direction = "up"
+    elif prob < 0.3:
+        direction = "down"
+    else:
+        direction = "neutral"
 
     return SignalScore(
         symbol=symbol,
@@ -446,14 +503,29 @@ def save_model(model: object, version: str) -> str:
 def load_latest_model() -> tuple[object, str]:
     """加载最新模型
 
+    优先从 registry 获取 active 版本号，确保版本一致性。
+    Fallback: 按文件修改时间加载最新模型。
     返回 (Booster, version)。
     """
     import lightgbm as lgb
+
+    from cryptobot.ml.registry import get_active_model
 
     if not MODELS_DIR.exists():
         msg = f"模型目录不存在: {MODELS_DIR}"
         raise FileNotFoundError(msg)
 
+    # 优先从 registry 获取 active 模型版本
+    active = get_active_model()
+    if active is not None:
+        model_path = MODELS_DIR / f"{active.version}.txt"
+        if model_path.exists():
+            booster = lgb.Booster(model_file=str(model_path))
+            logger.info("加载模型 (registry): %s (version=%s)", model_path, active.version)
+            return booster, active.version
+        logger.warning("registry active 版本 %s 文件不存在，回退文件扫描", active.version)
+
+    # Fallback: 按文件修改时间
     files = sorted(MODELS_DIR.glob("*.txt"), key=lambda f: f.stat().st_mtime, reverse=True)
     if not files:
         msg = "无可用模型"
@@ -462,5 +534,5 @@ def load_latest_model() -> tuple[object, str]:
     latest = files[0]
     version = latest.stem
     booster = lgb.Booster(model_file=str(latest))
-    logger.info("加载模型: %s (version=%s)", latest, version)
+    logger.info("加载模型 (fallback): %s (version=%s)", latest, version)
     return booster, version

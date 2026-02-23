@@ -227,6 +227,11 @@ def detect_overfit(lookback_days: int = 30) -> OverfitReport:
     score += rule_score
     signals.extend(rule_signals)
 
+    # 4d. IS/OOS Sharpe 退化检测 (0-20)
+    wf_score, wf_signals = _calc_walk_forward_degradation()
+    score += wf_score
+    signals.extend(wf_signals)
+
     # 5. 综合建议
     score = min(100.0, score)
     recommendation = _make_recommendation(score)
@@ -238,3 +243,57 @@ def detect_overfit(lookback_days: int = 30) -> OverfitReport:
         signals=signals,
         recommendation=recommendation,
     )
+
+
+def _calc_walk_forward_degradation() -> tuple[float, list[str]]:
+    """从 walk_forward 结果文件检测 IS/OOS Sharpe 退化 (0-20)"""
+    import glob
+
+    signals: list[str] = []
+    wf_dir = DATA_OUTPUT_DIR / "backtest"
+
+    try:
+        wf_files = sorted(glob.glob(str(wf_dir / "wf_*.json")))
+        if not wf_files:
+            return 0.0, signals
+
+        # 读取最新的 walk-forward 结果
+        latest = _load_json_safe(Path(wf_files[-1]))
+        if not isinstance(latest, dict):
+            return 0.0, signals
+
+        folds = latest.get("folds", [])
+        if not folds:
+            return 0.0, signals
+
+        is_sharpes = []
+        oos_sharpes = []
+        for fold in folds:
+            is_s = fold.get("is_sharpe")
+            oos_s = fold.get("oos_sharpe")
+            if is_s is not None and oos_s is not None:
+                is_sharpes.append(is_s)
+                oos_sharpes.append(oos_s)
+
+        if not is_sharpes:
+            return 0.0, signals
+
+        avg_is = sum(is_sharpes) / len(is_sharpes)
+        avg_oos = sum(oos_sharpes) / len(oos_sharpes)
+
+        # IS >> OOS 表示过拟合
+        if avg_is > 0 and avg_oos < avg_is * 0.5:
+            signals.append(
+                f"IS/OOS Sharpe 退化严重: IS={avg_is:.2f} vs OOS={avg_oos:.2f}"
+            )
+            return 20.0, signals
+        elif avg_is > 0 and avg_oos < avg_is * 0.7:
+            signals.append(
+                f"IS/OOS Sharpe 有退化: IS={avg_is:.2f} vs OOS={avg_oos:.2f}"
+            )
+            return 10.0, signals
+
+        return 0.0, signals
+    except Exception as e:
+        logger.warning("walk_forward 退化检测失败: %s", e)
+        return 0.0, signals

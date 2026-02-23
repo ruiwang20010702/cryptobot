@@ -45,21 +45,22 @@ def _atomic_write_json(path, data: dict) -> None:
 
 def read_signals(filter_expired: bool = True) -> list[dict]:
     """读取有效信号列表"""
-    if not SIGNAL_FILE.exists():
-        return []
-    try:
-        data = json.loads(SIGNAL_FILE.read_text())
-        signals = data.get("signals", [])
-        if filter_expired:
-            now = datetime.now(timezone.utc)
-            signals = [
-                s for s in signals
-                if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
-            ]
-        return signals
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
-        logger.warning(f"读取信号失败: {e}")
-        return []
+    with _signal_lock:
+        if not SIGNAL_FILE.exists():
+            return []
+        try:
+            data = json.loads(SIGNAL_FILE.read_text())
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.warning(f"读取信号失败: {e}")
+            return []
+    signals = data.get("signals", [])
+    if filter_expired:
+        now = datetime.now(timezone.utc)
+        signals = [
+            s for s in signals
+            if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
+        ]
+    return signals
 
 
 def get_signal_for_pair(pair: str) -> dict | None:
@@ -115,11 +116,23 @@ def validate_signal(signal: dict, *, regime: str = "") -> dict:
 
     now = datetime.now(timezone.utc)
 
-    # 杠杆校验
+    # 杠杆校验（全局 + 币种级别）
     leverage = signal.get("leverage", 3)
     max_lev = _max_leverage()
     if leverage < 1 or leverage > max_lev:
-        raise ValueError(f"杠杆 {leverage}x 超出范围 [1, {max_lev}]")
+        raise ValueError(f"杠杆 {leverage}x 超出全局范围 [1, {max_lev}]")
+    # 币种级杠杆上限检查
+    try:
+        from cryptobot.config import get_pair_config
+        pair_cfg = get_pair_config(symbol)
+        if pair_cfg:
+            pair_max_lev = pair_cfg.get("leverage_range", [1, max_lev])[1]
+            if leverage > pair_max_lev:
+                raise ValueError(
+                    f"{symbol} 杠杆 {leverage}x 超出币种上限 {pair_max_lev}x"
+                )
+    except (ImportError, IndexError):
+        pass
 
     # entry_price_range 有效性校验
     entry_range = signal.get("entry_price_range", [None, None])
@@ -130,8 +143,11 @@ def validate_signal(signal: dict, *, regime: str = "") -> dict:
     if entry_low is not None and entry_high is not None and entry_low > entry_high:
         raise ValueError(f"入场价下限 {entry_low} 不能大于上限 {entry_high}")
 
-    # 止损校验 (方向一致性)
+    # 止损校验：long/short 必须有止损
     sl = signal.get("stop_loss")
+    if action in ("long", "short") and sl is None:
+        raise ValueError(f"{action} 信号必须设置 stop_loss")
+    # 止损方向一致性校验
     if sl is not None and entry_low is not None and action == "long" and sl >= entry_low:
         raise ValueError(f"多单止损 {sl} 不能高于入场价 {entry_low}")
     if sl is not None and entry_high is not None and action == "short" and sl <= entry_high:
@@ -258,21 +274,22 @@ def write_pending_signal(signal: dict) -> dict:
 
 def read_pending_signals(filter_expired: bool = True) -> list[dict]:
     """读取 pending 信号列表"""
-    if not PENDING_FILE.exists():
-        return []
-    try:
-        data = json.loads(PENDING_FILE.read_text())
-        signals = data.get("signals", [])
-        if filter_expired:
-            now = datetime.now(timezone.utc)
-            signals = [
-                s for s in signals
-                if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
-            ]
-        return signals
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
-        logger.warning(f"读取 pending 信号失败: {e}")
-        return []
+    with _signal_lock:
+        if not PENDING_FILE.exists():
+            return []
+        try:
+            data = json.loads(PENDING_FILE.read_text())
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.warning(f"读取 pending 信号失败: {e}")
+            return []
+    signals = data.get("signals", [])
+    if filter_expired:
+        now = datetime.now(timezone.utc)
+        signals = [
+            s for s in signals
+            if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
+        ]
+    return signals
 
 
 def remove_pending_signal(symbol: str) -> bool:

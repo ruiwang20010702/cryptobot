@@ -66,12 +66,15 @@ def get_version_detail(version: str) -> dict | None:
     return data["versions"].get(version)
 
 
-def create_version(note: str, addons: dict | None = None) -> str:
+def create_version(
+    note: str, addons: dict | None = None, status: str = "active",
+) -> str:
     """创建新版本，自动递增版本号
 
     Args:
         note: 版本说明
         addons: 角色 addon 映射 {"TRADER": "额外段落...", ...}
+        status: 版本状态 ("active" 或 "pending_review")
 
     Returns:
         新版本号 (如 "v1.1")
@@ -90,13 +93,16 @@ def create_version(note: str, addons: dict | None = None) -> str:
                 pass
     new_version = f"v1.{max_minor + 1}"
 
-    versions[new_version] = {
+    new_entry = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "note": note,
         "addons": addons or {},
+        "status": status,
     }
+    # 不可变模式: 创建新 versions 字典
+    data = {**data, "versions": {**versions, new_version: new_entry}}
     _save(data)
-    logger.info("创建 prompt 版本: %s — %s", new_version, note)
+    logger.info("创建 prompt 版本: %s — %s (status=%s)", new_version, note, status)
     return new_version
 
 

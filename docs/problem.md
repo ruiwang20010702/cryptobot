@@ -7,6 +7,12 @@
 > 第二轮修复: 22/22 全部修复
 > 第三轮审计: 2026-02-21 | 审查范围: 盈利能力优化 (信号质量/入场出场/资金效率/数据利用率)
 > 第三轮发现: 32 个优化点 (2 极高 + 7 高 + 10 中高 + 9 中 + 4 低中)
+> 第五轮审计: 2026-02-23 | 审查范围: 全量深度缝隙审查 (35+ 核心文件逐行审读)
+> 第五轮发现: 23 个问题 (5 CRITICAL + 4 HIGH + 6 MEDIUM + 8 LOW)
+> 第五轮修复: 23/23 全部修复
+> 第六轮审计: 2026-02-23 | 审查范围: 9 维度全面深度审查
+> 第六轮发现: 68 个问题 (6 CRITICAL + 25 HIGH + 21 MEDIUM + 16 LOW)
+> 第六轮修复: 68/68 全部修复
 > 状态标记: [ ] 待修复 | [x] 已修复 | [-] 不修复(接受风险)
 
 ---
@@ -1250,3 +1256,724 @@
 | MEDIUM | 24 | 24 | 0 |
 | LOW | 14 | 14 | 0 |
 | **合计** | **54** | **54** | **0** |
+
+---
+
+# 第五轮审计 — 全量深度缝隙审查 (2026-02-23)
+
+> 审查范围: 35+ 核心源文件逐行审读，覆盖完整信号链路 collect→screen→analyze→research→trade→ml_filter→risk→execute + 所有 risk/journal/evolution/strategy/backtest 模块
+> 重点维度: 数据正确性、逻辑一致性、不可变性、线程安全、边界条件、性能
+
+---
+
+## CRITICAL（5 个 — 直接影响交易正确性）
+
+### R5-C1. 均值回归字段映射全部失效 — ranging 策略永远不触发
+- **文件**: `src/cryptobot/workflow/nodes/trade.py:228-238`
+- **问题**: mean_reversion 路径从 `tech` 字典读取 BB/RSI/ATR 时使用了错误的 key 路径：
+  - `tech.get("bollinger", {})` → key `"bollinger"` 不存在于 `calc_all_indicators` 输出
+  - `tech.get("rsi", 50)` → 顶层无 `"rsi"` key
+  - `tech.get("atr", 0)` → 顶层无 `"atr"` key
+- **正确路径**: `tech["volatility"]["bb_upper"]`, `tech["volatility"]["bb_lower"]`, `tech["volatility"]["bb_middle"]`, `tech["momentum"]["rsi_14"]`, `tech["volatility"]["atr_14"]`
+- **影响**: 传给 `check_bb_entry()` 的全是零值/默认值 → `all([close, 0, 0, 0])` 判定失败 → 永远返回 None → ranging 市永远无均值回归信号
+- **修复**: 从 `tech["volatility"]` 和 `tech["momentum"]` 正确读取字段
+- **工作量**: ~10 行
+- [x] 已修复
+
+### R5-C2. `load_weights` 函数不存在 → 分析师加权一致性评分失效
+- **文件**: `src/cryptobot/workflow/nodes/trade.py:329`
+- **问题**: `from cryptobot.journal.analyst_weights import load_weights` 会抛出 ImportError。`analyst_weights.py` 只导出 `calc_analyst_weights`, `save_weights`, `build_weights_context`，没有 `load_weights` 函数
+- **影响**: `except Exception: pass` 静默吞掉错误，`analyst_weight_map` 永远是 `{}`，所有分析师权重默认 1.0。分析师意见分歧评分（`weighted_bull/weighted_bear`）无法反映历史准确率差异，高准确率和低准确率分析师被等权对待
+- **修复**: 调用 `calc_analyst_weights()` 获取权重数据，将字符串等级映射为数值权重（very_high→1.5, high→1.2, normal→1.0, low→0.7, very_low→0.5）
+- **工作量**: ~15 行
+- [x] 已修复
+
+### R5-C3. ML K-Fold 存在未来数据泄露 — 模型评估指标虚高
+- **文件**: `src/cryptobot/ml/lgb_scorer.py:176-194` (`_kfold_split`)
+- **问题**: 使用标准 K-Fold 分割（按顺序索引切分）。特征文件按日期排序，因此 fold 0 的验证集是最早的数据，训练集包含未来数据（fold 1-4 的数据）。5 个 fold 中只有最后一个方向正确
+- **影响**: CV 指标（AUC/accuracy/F1）被 4 个有未来泄露的 fold 拉高，模型实际线上效果可能显著低于评估值。此外 `_count_virtual_pnl_positive_days()` 基于可能不可靠的 ML 评分做虚拟盘决策
+- **修复**: 改为 TimeSeriesSplit — 每个 fold 仅用更早的数据训练、更晚的数据验证：`train=[0:k], val=[k:k+step]`
+- **工作量**: ~20 行
+- [x] 已修复
+
+### R5-C4. `cache.cleanup_stale` 可能删除持久化文件
+- **文件**: `src/cryptobot/cache.py:54-68`
+- **问题**: `cleanup_stale` 扫描 `DATA_OUTPUT_DIR` 下**所有子目录**（包括 `evolution/`, `journal/`, `ml/`, `virtual/`），删除超过 72h 未修改的 `.json` 文件
+- **影响**: 在低频交易场景下，`evolution/weights.json`, `evolution/regime_history.json`, `ml/registry.json`, `virtual/*_portfolio.json` 等关键持久化文件可能超过 72h 未更新被误删。当前 scheduler 的 `job_cleanup` 调用的是 `signal.bridge.cleanup_expired` 而非此函数，但这是定时炸弹
+- **修复**: 限制扫描范围至 `.cache/` 子目录，或添加目录白名单 `_CACHE_CATEGORIES = {"klines", "stablecoin", "exchange_reserve", "orderbook", "coinglass", "dxy", "defi_tvl", "whale"}`
+- **工作量**: ~5 行
+- [x] 已修复
+
+### R5-C5. volatile 观望逻辑在 P14 子状态启用后不正确
+- **文件**: `src/cryptobot/workflow/nodes/collect.py:193`
+- **问题**: `is_observe = regime["regime"] == "volatile"` 无条件将所有 volatile 标记为 observe。P14 子状态启用后，volatile_fear/normal/greed 不再是 observe（会走 funding_arb/ai_trend/conservative 策略）
+- **影响**: 即使 volatile 策略正在运行，仍然累计 observe 计数 → `evaluate_toggle` 可能基于错误计数自动启用/禁用策略
+- **修复**: 检查 volatile 策略是否启用：`is_observe = regime["regime"] == "volatile" and not is_volatile_strategy_enabled()`
+- **工作量**: ~5 行
+- [x] 已修复
+
+---
+
+## HIGH（4 个 — 可能导致非预期交易行为）
+
+### R5-H1. 月度熔断检查重复执行 → 杠杆双重缩放
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:308-334` + `risk.py:687-710`
+- **问题**: 同一个 `cb_state` 对象在风控流程中被检查了两次。第一次（line 324）缩放杠杆：`leverage = int(leverage * 0.5)`。第二次（line 690）再次缩放已缩放过的杠杆：`leverage = int(leverage * 0.5)`
+- **影响**: 实际缩放系数 = `position_scale²` = 0.5² = 0.25。配置为降杠杆 50%，实际降到 25%。例如 5x → 2x → 1x（应为 5x → 2x）
+- **注**: R4-H6 已记录此问题但标记为已修复，实际仍存在
+- **修复**: 删除第二处重复检查（line 687-710），或在第二处添加 `if not already_applied` 标记
+- **工作量**: ~10 行
+- [x] 已修复
+
+### R5-H2. 月份计算使用 28 天近似 — 熔断月份可能错位
+- **文件**: `src/cryptobot/risk/monthly_circuit_breaker.py:62`
+- **问题**: `dt = now.replace(day=1) - timedelta(days=i * 28)` 用 28 天近似 1 个月。3 个月后偏差可达 3-6 天，在月初/月末边界可能导致同一月重复计算或跳过某月
+- **注**: R4-M1 已记录此问题但标记为已修复，实际代码仍使用 28 天近似
+- **影响**: 月度熔断判定的月份可能错位，连续亏损月数统计不准确
+- **修复**: 使用 `relativedelta(months=i)` 或手动递推：`dt = (dt.replace(day=1) - timedelta(days=1))` 逐月回退
+- **工作量**: ~10 行
+- [x] 已修复
+
+### R5-H3. 仓位相关性调整缺少方向参数 — 无法判断同向/反向
+- **文件**: `src/cryptobot/risk/position_sizer.py:163-237`
+- **问题**: `calc_portfolio_adjusted_size` 函数签名无 `action` 参数，无法判断新信号与已有持仓是同向还是反向。代码注释承认问题但未解决
+- **影响**: 高相关但反向的仓位（天然对冲）也会被缩减，降低了对冲效率。同时同向高相关仓位的风险未被正确量化
+- **修复**: 添加 `action` 参数，检查持仓方向，仅对同向高相关仓位缩减
+- **工作量**: ~15 行
+- [x] 已修复
+
+### R5-H4. `get_all_records()` 在风控循环内多次调用 — 性能瓶颈
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:39` + `risk.py:405`
+- **问题**: 每个 symbol 的风控检查中 `_check_loss_limits()` 调用一次 `get_all_records()`（读取+解析 records.json），震荡市日度限制再调用一次。N 个 symbol = N×2 次文件 IO
+- **影响**: 5 个 symbol × 2 次读取 = 10 次解析 records.json。随记录增长，延迟线性增加
+- **修复**: 在风控循环外预加载一次 `all_records = get_all_records()`，传入各检查函数
+- **工作量**: ~15 行
+- [x] 已修复
+
+---
+
+## MEDIUM（6 个 — 健壮性/一致性/安全）
+
+### R5-M1. 字符串日期比较的脆弱性
+- **文件**: `risk.py:49`, `position_sizer.py:89` 等多处
+- **问题**: `r.timestamp >= cutoff` 用 ISO 字符串字典序比较。如果某处生成了 `Z` 而非 `+00:00` 结尾的时间戳（如 `monthly_circuit_breaker.py:52` 的 `replace("Z", "+00:00")`），比较结果可能错误
+- **修复**: 统一使用 `datetime` 对象比较，或确保全项目时间戳格式一致
+- **工作量**: ~20 行（全局排查）
+- [x] 已修复
+
+### R5-M2. 模块级全局可变状态无线程安全
+- **文件**: `freqtrade_api.py`(`_ft_config`), `llm.py`(`_provider_cache`), `api_llm.py`(`_usage_stats`), `calculator.py`(`_klines_override`)
+- **问题**: 这些全局状态的首次写入没有锁保护。`call_claude_parallel` 使用 `ThreadPoolExecutor`，理论上可能触发竞态条件
+- **影响**: 大部分场景下首次写入发生在单线程路径，风险较低。`_klines_override` 在历史回放中使用 context manager 确保线程内局部性，但 `_klines_override` 本身是 global 非 thread-local
+- **修复**: 对关键全局状态添加 `threading.Lock` 或改用 `threading.local()`
+- **工作量**: ~15 行
+- [x] 已修复
+
+### R5-M3. `journal/storage.py:97` update_record 就地修改 dict
+- **文件**: `src/cryptobot/journal/storage.py:97`
+- **问题**: `r.update(updates)` 直接修改加载的 dict 对象，违反不可变原则
+- **修复**: 改为 `data["records"][idx] = {**r, **updates}`
+- **工作量**: ~3 行
+- [x] 已修复
+
+### R5-M4. Web PATCH endpoint 无字段白名单
+- **文件**: `src/cryptobot/web/routes/api.py` — `update_signal` 接受任意字段更新
+- **问题**: 客户端可以注入未预期的字段（如 `action`, `symbol`）到 signal.json，绕过信号验证
+- **修复**: 添加允许更新的字段白名单（如 `stop_loss`, `take_profit`, `leverage`）
+- **工作量**: ~5 行
+- [x] 已修复
+
+### R5-M5. 虚拟盘 PnL 未计入交易费用 — 影响自动开关决策
+- **文件**: `src/cryptobot/strategy/virtual_portfolio.py:93`
+- **问题**: `pnl = pnl_per_unit * pos.amount * pos.leverage` 纯理论 PnL，未扣除手续费和滑点。`volatile_toggle.py:_count_virtual_pnl_positive_days()` 基于此数据做自动开关决策
+- **影响**: 虚拟盘收益虚高 → 可能错误地启用 volatile 策略
+- **修复**: 在 `close_position` 中扣除 `cost_model.calc_trade_costs()` 的费用
+- **工作量**: ~10 行
+- [x] 已修复
+
+### R5-M6. 止盈列表就地修改 dict
+- **文件**: `src/cryptobot/backtest/trade_simulator.py:165`
+- **问题**: `tp["triggered"] = True` 直接修改 `_parse_take_profits` 返回的 dict 对象
+- **影响**: 在 `simulate_trade` 函数作用域内不影响外部，但违反不可变原则
+- **修复**: 使用副本或 frozen 标记
+- **工作量**: ~5 行
+- [x] 已修复
+
+---
+
+## LOW（3 个 — 可维护性/长期改进）
+
+### R5-L1. `risk_review()` 函数过长（800+ 行）
+- **文件**: `src/cryptobot/workflow/nodes/risk.py`
+- **问题**: 30+ 硬性规则检查 + AI 调用 + 结果合并全在一个函数中，难以单独测试和排查
+- **修复**: 拆分为 `_hard_rule_checks()`, `_ai_risk_review()`, `_merge_results()` 等子函数
+- **工作量**: ~2h 重构
+- [x] 已修复
+
+### R5-L2. `journal/records.json` 无增长控制
+- **文件**: `src/cryptobot/journal/storage.py`
+- **问题**: 记录文件无限增长，无归档/清理机制。`get_all_records()` 每次加载全量到内存
+- **影响**: 长期运行后文件增大，所有依赖 `get_all_records()` 的调用变慢
+- **修复**: 定期归档 closed 记录到 `records_archive_{year}.json`，保留近 N 天活跃记录
+- **工作量**: ~1h
+- [x] 已修复
+
+### R5-L3. 历史回放 regime 检测缺少 Fear & Greed 数据
+- **文件**: `src/cryptobot/backtest/historical_replay.py:256-293`
+- **问题**: `_detect_replay_regime` 仅使用 ATR + ADX + Hurst 推断 regime，缺少 Fear & Greed 指数，与正式工作流的 regime 检测逻辑不一致
+- **影响**: 回放结果与实盘的 volatile 判定可能不同，降低回测的参考价值
+- **修复**: 在回放中注入历史 FG 数据或标注 regime 来源差异
+- **工作量**: ~30min
+- [x] 已修复
+
+### R5-L4. Walk-forward Sharpe 年化因子硬编码 `365**0.5`
+- **文件**: `src/cryptobot/backtest/walk_forward.py:243`
+- **问题**: `return mean_pnl / std_pnl * (365**0.5)` 假设平均每天 1 笔交易。实际交易频率可能每天 0-3 笔或连续数天无交易，年化因子不准确
+- **对比**: `equity_tracker.py:131-136` 已正确使用实际交易天数计算 `trades_per_year`，walk_forward.py 未对齐
+- **影响**: Walk-forward 窗口的 Sharpe 比率偏差，影响 IS/OOS 对比结论
+- **修复**: 使用实际交易天数计算年化因子，与 equity_tracker 保持一致
+- **工作量**: ~5 行
+- [x] 已修复
+
+### R5-L5. Prompt 退化检测 z-test 样本重叠
+- **文件**: `src/cryptobot/evolution/prompt_optimizer.py:57-64`
+- **问题**: 短期(7d)胜率 vs 长期(30d)胜率的 z-test 中，7d 样本是 30d 的子集，两组不独立，违反 z-test 核心假设，p-value 偏小
+- **影响**: 可能过度触发"绩效退化"，导致不必要的 prompt 自动迭代
+- **修复**: 对比 7d vs 前 23d（排除重叠），或改用 Fisher 精确检验
+- **工作量**: ~10 行
+- [x] 已修复
+
+### R5-L6. ML `_find_nearest_price` 线性扫描 O(n×m)
+- **文件**: `src/cryptobot/ml/lgb_scorer.py:150-170`
+- **问题**: 对每个训练样本，线性遍历全部 klines 时间戳找最近价格。500+ klines × 数百样本 = 数十万次迭代
+- **影响**: 仅影响模型训练速度，非实时路径
+- **修复**: 对 klines 时间戳排序后用 `bisect.bisect_left` 二分查找
+- **工作量**: ~10 行
+- [x] 已修复
+
+### R5-L7. Kelly 公式重复实现
+- **文件**: `src/cryptobot/risk/position_sizer.py:55-60` + `position_sizer.py:367-373`
+- **问题**: `_kelly_f()` 函数和 `calc_position_size()` 内部各自实现了数学等价的 Kelly fraction 公式。修改其一时另一处容易遗漏
+- **修复**: `calc_position_size()` 内部调用 `_kelly_f()` 统一入口
+- **工作量**: ~5 行
+- [x] 已修复
+
+### R5-L8. `volatile_toggle._count_virtual_pnl_positive_days` 异常静默
+- **文件**: `src/cryptobot/evolution/volatile_toggle.py:96-117`
+- **问题**: `portfolio.closed_trades[-14:]` 若 `closed_trades` 属性不存在，外层 `except Exception: continue` 静默吞掉错误，永远返回 0
+- **影响**: 虚拟盘结构变化时，自动开关的正收益天数统计失效且无日志提示
+- **修复**: 缩小 except 范围或添加 `logger.debug` 记录具体异常
+- **工作量**: ~3 行
+- [x] 已修复
+
+---
+
+## 与前几轮审计的交叉引用
+
+| R5 编号 | 前轮编号 | 状态说明 |
+|---------|---------|---------|
+| R5-H1 | R4-H6 | R4 标记已修复，但实际代码仍有重复检查 |
+| R5-H2 | R4-M1 | R4 标记已修复，但实际代码仍用 28 天近似 |
+| R5-C4 | M4 (第一轮) | M4 提到"缓存清理未覆盖所有子目录"，但问题本质是覆盖了不该覆盖的目录 |
+| R5-C2 | O13 (第三轮) | O13 提到"分析师权重仅作为文字建议，投票时等权"，R5-C2 确认了根因是 load_weights 不存在 |
+
+---
+
+## 第五轮统计
+
+| 等级 | 总数 | 已修复 | 待修复 |
+|------|------|--------|--------|
+| CRITICAL | 5 | 0 | 5 |
+| HIGH | 4 | 0 | 4 |
+| MEDIUM | 6 | 0 | 6 |
+| LOW | 8 | 0 | 8 |
+| **合计** | **23** | **0** | **23** |
+
+### 修复优先级建议
+
+**Phase 1 — 立即修复（影响交易正确性和安全）**
+- R5-C1 均值回归字段映射 (~10行)
+- R5-C2 load_weights 函数缺失 (~15行)
+- R5-C5 volatile 观望逻辑修正 (~5行)
+- R5-H1 重复月度熔断检查 (~10行)
+
+**Phase 2 — 近期修复（影响数据质量）**
+- R5-C3 ML K-Fold 时序分割 (~20行)
+- R5-C4 cache cleanup 范围限制 (~5行)
+- R5-H2 月份计算修正 (~10行)
+- R5-H4 records 预加载优化 (~15行)
+
+**Phase 3 — 计划修复（健壮性/安全）**
+- R5-H3 仓位相关性方向判断 (~15行)
+- R5-M1~M6 中等优先级修复
+- R5-L1~L8 低优先级改进
+
+---
+
+# 第六轮审计 — 9 维度全面深度审查 (2026-02-23)
+
+> 审查方法: 9 个独立 Agent 并行审查，每个维度独立深度阅读源码
+> 审查维度: D1 资金安全 / D2 信号链路 / D3 风控规则 / D4 回测可信度 / D5 LLM风险 / D6 数据质量 / D7 系统可靠性 / D8 ML治理 / D9 代码质量
+> 审查范围: 143 个源文件 ~27K 行代码全覆盖
+> R5 交叉: 全部 23 条 R5 问题已确认仍存在
+> 新增发现: 6 CRITICAL + 25 HIGH + 21 MEDIUM + 16 LOW = **68 个新问题**
+
+---
+
+## CRITICAL（6 个 — 直接影响交易正确性或系统完整性）
+
+### R6-C1. hurst_exponent / regime_confidence 在 collect→trade 链路丢失 — 始终默认 0.5
+- **文件**: `src/cryptobot/workflow/nodes/collect.py:137-147`, `src/cryptobot/workflow/nodes/trade.py:138-139`
+- **问题**: `detect_regime()` 返回了 `hurst_exponent` 和 `regime_confidence`，但 `_detect_market_regime()` 构建 state 时**未传递这两个字段**。trade 节点 `regime_info.get("regime_confidence", 0.5)` 和 `regime_info.get("hurst_exponent", 0.5)` 永远使用默认值 0.5
+- **影响**: `route_strategy()` 的 regime_confidence 始终 0.5 → 低置信度时不会降仓；Hurst 展示信息全假数据，策略路由子系统退化为默认行为
+- **建议**: 在 `_detect_market_regime` 返回 dict 中增加 `hurst_exponent`、将 `confidence` key 改为 `regime_confidence`
+- **维度**: D2 信号链路
+- [x] 已修复
+
+### R6-C2. risk_review modified 路径缺止损/杠杆二次校验 — AI 可注入极端值
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:751-759`
+- **问题**: 风控 AI 返回 `modified` 时，白名单允许修改 `stop_loss` 和 `leverage`，但修改后的值**不经过 trade 节点同等的合理性校验**。AI 可设 `stop_loss: 0` 或 `leverage: 20`，绕过 trade 阶段的止损距离检查（0.5%-15%）
+- **影响**: 极端参数直接写入信号 → 爆仓或止损失效
+- **建议**: 在 modified 分支对 stop_loss 重新校验方向和距离，对 leverage 做 `min(lev, max_leverage)` clamp
+- **维度**: D5 LLM风险
+- [x] 已修复
+
+### R6-C3. regime 检测 NaN 未处理 — K 线不足时系统性偏向 bearish
+- **文件**: `src/cryptobot/indicators/regime.py:64-66`
+- **问题**: K 线不足 50 根时 TA-Lib 返回全 NaN，NaN 比较在 Python 中返回 False，导致 trend 永远 "bearish"、strength "weak"、`atr_pct` 为 NaN
+- **影响**: 新币种或 API fallback 少量数据时，regime 系统性偏向 bearish+weak → 影响策略路由和所有下游决策
+- **建议**: 检查数据量 ≥64 根，不足时返回 `{"direction": "unknown", "trend_strength": 0}` 默认值
+- **维度**: D6 数据质量
+- [x] 已修复
+
+### R6-C4. 多数据源同时失败无聚合告警 — 全默认值静默运行
+- **文件**: 全局设计（data/ + workflow/nodes/collect.py）
+- **问题**: 每个数据源独立 try/except 返回默认值。网络断开时系统用全零/中性默认值（RSI=0, funding=0, sentiment=neutral）运行完整工作流，无任何告警标记
+- **影响**: 产生看似合理但无数据支撑的交易信号，可能造成资金损失
+- **建议**: 在 collect 节点统计数据源可用率，低于 50% 时中止工作流或强制降低信号置信度
+- **维度**: D6 数据质量
+- [x] 已修复
+
+### R6-C5. ML 模型加载依赖 mtime 绕过注册表 — 回滚机制失效
+- **文件**: `src/cryptobot/ml/lgb_scorer.py:457`
+- **问题**: `load_latest_model()` 按文件 `st_mtime` 选模型，不查 `registry.json` 的 `status`。被 `retrainer.py` 回滚标记为 `rolled_back` 的模型文件仍在目录中，若其 mtime 最新则会被错误加载
+- **影响**: 回滚机制名存实亡 — 退化模型可能被持续使用
+- **建议**: `load_latest_model()` 应先查 `registry.get_active_model()` 获取版本号再加载
+- **维度**: D8 ML治理
+- [x] 已修复
+
+### R6-C6. Sharpe 年化因子全局 4 处不一致 — 回测指标不可比较
+- **文件**: `equity_tracker.py:226`(动态), `walk_forward.py:243`(365^0.5), `stats.py:139`(sqrt(730)), `bootstrap.py:150`(sqrt(252))
+- **问题**: 同一组交易在不同模块算出完全不同的 Sharpe ratio。Walk-forward IS/OOS 对比、AI vs baseline 统计检验、Bootstrap CI 都因年化因子不同而不可靠
+- **影响**: 所有涉及 Sharpe 比较的结论（过拟合检测、策略对比）可能被误导
+- **建议**: 统一为 `annualize_sharpe(returns, trades_per_year)` 工具函数
+- **维度**: D4 回测可信度
+- [x] 已修复
+
+---
+
+## HIGH（25 个 — 可能导致非预期交易/数据不可靠/资金效率损失）
+
+### R6-H1. 批量仓位溢出 — 总仓位检查用静态快照
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:438-448`, `:776-782`
+- **问题**: 硬性规则阶段 `total_used` 是循环外的初始快照，同批 5 个 decision 看到的是同一个值。全部通过硬性规则 + AI 全部 approve 后，总仓位可能超出 `max_total_position_pct`
+- **建议**: 硬性规则循环中每次通过后也累加 `total_used`
+- **维度**: D1/D3
+- [x] 已修复
+
+### R6-H2. validate_signal 允许无止损信号写入
+- **文件**: `src/cryptobot/signal/bridge.py:134-138`
+- **问题**: `validate_signal()` 允许 `stop_loss=None` 的 long/short 信号写入 signal.json。止损最终防线在 Freqtrade 默认 -5%，5x 杠杆下单笔亏损 25%
+- **建议**: 对 `action in ("long", "short")` 强制要求 `stop_loss is not None`
+- **维度**: D1
+- [x] 已修复
+
+### R6-H3. volatile regime 缺少硬性规则保护
+- **文件**: `src/cryptobot/workflow/nodes/risk.py` (整体)
+- **问题**: trending 有标准规则，ranging 有禁做多+日限+置信度加严。但 volatile（P14 启用后可交易）无任何额外硬性保护（如强制杠杆 ≤2x、置信度 ≥75、日限 1 笔）
+- **建议**: 为 volatile 添加专属硬性规则
+- **维度**: D3
+- [x] 已修复
+
+### R6-H4. position_sizer 高级功能未被 risk.py 调用
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:100-106`
+- **问题**: `_decision_to_signal()` 调用 `calc_position_size()` 时未传 positions/corr_matrix/ATR/regime 参数，导致相关性渐进缩减、波动率杠杆调整、Kelly regime 缩放全部失效
+- **建议**: 补充高级参数传递
+- **维度**: D3
+- [x] 已修复
+
+### R6-H5. 回测滑点双重计算 — 系统性低估策略表现
+- **文件**: `src/cryptobot/backtest/trade_simulator.py:87-89` + `cost_model.py:49-52`
+- **问题**: 入场价已加滑点偏移，cost_model 又按 `slippage_pct * leverage` 扣滑点成本，双重计算
+- **建议**: 移除 entry_price 的滑点偏移，仅在 cost_model 中扣除
+- **维度**: D4
+- [x] 已修复
+
+### R6-H6. 净值复利忽略并发持仓 — 回测收益率高估
+- **文件**: `src/cryptobot/backtest/equity_tracker.py:57-73`
+- **问题**: 逐笔复利 `equity *= (1 + pnl_pct)` 假设每笔用全部资金，实际并发 3-5 仓各占 20%
+- **建议**: 按 `position_usdt / total_equity` 折算每笔对总资金的影响
+- **维度**: D4
+- [x] 已修复
+
+### R6-H7. Bootstrap CI 年化因子不匹配
+- **文件**: `src/cryptobot/backtest/bootstrap.py:142-150`
+- **问题**: `_boot_sharpe()` 用 sqrt(252)，主 Sharpe 用动态 trades_per_year，CI 与点估计尺度不一致
+- **建议**: 统一年化因子（与 R6-C6 同源）
+- **维度**: D4
+- [x] 已修复
+
+### R6-H8. analyze 节点非 JSON 结果传播到下游
+- **文件**: `src/cryptobot/workflow/nodes/analyze.py:183-186`
+- **问题**: LLM 返回非 dict 字符串时，原样传递给 research 节点注入 prompt，导致后续决策基于垃圾数据
+- **建议**: 添加 `isinstance(result, dict)` 检查
+- **维度**: D5
+- [x] 已修复
+
+### R6-H9. trade 节点未 clamp 杠杆值（API 模式可超限）
+- **文件**: `src/cryptobot/workflow/nodes/trade.py:423-482`
+- **问题**: trade 节点验证了止损但未验证杠杆。API 模式下 schema 不强制，LLM 可能返回 leverage=20
+- **建议**: 添加 `corrected["leverage"] = min(corrected.get("leverage", 3), max_leverage)`
+- **维度**: D5
+- [x] 已修复
+
+### R6-H10. re_review close_position 无硬性审核 — 单 LLM 判断直接平仓
+- **文件**: `src/cryptobot/workflow/re_review.py:200-214`
+- **问题**: 复审 AI 返回 `close_position` 时直接写平仓信号，无硬性规则审核。LLM 幻觉可直接平掉盈利仓位
+- **建议**: 增加硬性规则（盈利仓位需 risk_level=critical 才允许平仓）
+- **维度**: D5
+- [x] 已修复
+
+### R6-H11. API 模式 JSON Schema 不强制执行
+- **文件**: `src/cryptobot/workflow/api_llm.py:200-221`
+- **问题**: `response_format: json_object` 仅保证有效 JSON，不保证符合 schema。LLM 可能缺少 required 字段或值超范围
+- **建议**: 在 `call_api` 返回后增加关键字段校验
+- **维度**: D5
+- [x] 已修复
+
+### R6-H12. Hurst 指数 log(0)/-inf 风险
+- **文件**: `src/cryptobot/indicators/hurst.py:32`
+- **问题**: `np.log(arr)` 当价格含 0 或负值时产生 -inf/NaN，后续 polyfit 可能 LinAlgError
+- **建议**: 添加 `if np.any(arr <= 0): return _DEFAULT_HURST`
+- **维度**: D6
+- [x] 已修复
+
+### R6-H13. 多 API error 字段无下游检查 — 默认值当真数据
+- **文件**: `data/sentiment.py:41`, `data/onchain.py:38,85,134`, `data/news.py:54` 等 7 处
+- **问题**: API 失败时返回带 error 字段的 dict 含默认值（如 current_ratio=1.0），下游直接提取数值使用
+- **建议**: 下游检查 error 字段或区分正常/错误返回类型
+- **维度**: D6
+- [x] 已修复
+
+### R6-H14. K 线不足时指标 NaN 传播
+- **文件**: `src/cryptobot/indicators/calculator.py:44-88`
+- **问题**: API 返回少于 100 根 K 线时，EMA99 等返回 NaN，部分计算（如 `atr_pct = atr_val / close`）未检查 None
+- **建议**: 添加 `if len(df) < 100: return _insufficient_data_result()`
+- **维度**: D6
+- [x] 已修复
+
+### R6-H15. 因子分析跨 symbol 拼接伪相关
+- **文件**: `src/cryptobot/features/factor_analysis.py:239-245`
+- **问题**: 不同 symbol 的序列直接 extend 拼接，跨 symbol 边界的 lead-lag 计算产生虚假相关
+- **建议**: 按 symbol 分别计算相关性后取加权平均
+- **维度**: D6/D8
+- [x] 已修复
+
+### R6-H16. 调度器仅 2/13 任务有重试和失败通知
+- **文件**: `src/cryptobot/cli/scheduler.py:120-445`
+- **问题**: 仅 `job_workflow_run` 和 `job_check_alerts` 用 `_run_with_retry()`，其余 11 个任务失败后无重试无通知
+- **建议**: 至少对 `job_re_review`, `job_urgent_review`, `job_journal_sync`, `job_ml_retrain` 添加重试
+- **维度**: D7
+- [x] 已修复
+
+### R6-H17. signal bridge 跨进程并发不安全
+- **文件**: `src/cryptobot/signal/bridge.py:25`
+- **问题**: `threading.Lock` 仅保护进程内。daemon 和 CLI 独立进程同时写时，读-改-写序列不原子
+- **建议**: 使用 `fcntl.flock` 文件锁
+- **维度**: D7
+- [x] 已修复
+
+### R6-H18. Freqtrade 断连时无告警 — 持仓监控静默失效
+- **文件**: `src/cryptobot/freqtrade_api.py:55-56`
+- **问题**: ConnectError 返回 None 无日志。调用方将 None 视为"无持仓"跳过，宕机数小时内所有监控静默失效
+- **建议**: 连续 N 次失败发 Telegram 告警；调用方区分"空列表"和"API 不可达"
+- **维度**: D7
+- [x] 已修复
+
+### R6-H19. 训练/评估 AUC 与最终模型不对应
+- **文件**: `src/cryptobot/ml/lgb_scorer.py:338-391`
+- **问题**: CV 评估的是 K-Fold boosters，但最终保存的是用全量数据重新训练的 final_model，指标不代表实际部署模型
+- **建议**: 对 final_model 做 hold-out 评估，或直接保存最后一个 fold 的 booster
+- **维度**: D8
+- [x] 已修复
+
+### R6-H20. 特征反馈映射表与实际特征名不匹配 — 反馈几乎失效
+- **文件**: `src/cryptobot/ml/feature_feedback.py:10-31`
+- **问题**: `_FEATURE_ROLE_MAP` 键名（rsi_14, bb_width, ema_cross）与 extractors.py 实际输出（rsi, bb_position, ema_score）不一致，大量特征 fallback 到默认角色
+- **建议**: 对齐键名到 extractors.py 实际输出
+- **维度**: D8
+- [x] 已修复
+
+### R6-H21. 做空标签缺失 — ML 做空过滤不可靠
+- **文件**: `src/cryptobot/ml/lgb_scorer.py:44-48,420`
+- **问题**: 标签仅定义"涨"(1) vs "不涨"(0)，prob≤0.5 被视为"看空"。实际 prob=0.3 只表示"不太可能大涨"，不等于"很可能下跌"
+- **建议**: 引入三分类或提高做空阈值（prob<0.3 才视为 down）
+- **维度**: D8
+- [x] 已修复
+
+### R6-H22. research.py price key 不存在 — 研究员 prompt 缺价格
+- **文件**: `src/cryptobot/workflow/nodes/research.py:43`
+- **问题**: `momentum.get("close")` — momentum dict 无 close 字段，应为 `tech.get("latest_close")`
+- **建议**: 修正 key 路径
+- **维度**: D2
+- [x] 已修复
+
+### R6-H23. take_profit 格式不统一 — 止盈逻辑可能失效
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:127` + `freqtrade_strategies/AgentSignalStrategy.py:337-387`
+- **问题**: LLM 可能返回纯数值列表 `[100, 105]` 而非 `[{"price":100, "pct":50}]`，Freqtrade 策略 `tp.get("price")` 会 AttributeError
+- **建议**: 在 `_decision_to_signal` 中标准化 take_profit 格式
+- **维度**: D1
+- [x] 已修复
+
+### R6-H24. Freqtrade 杠杆硬编码 5x — 最后防线不随配置更新
+- **文件**: `freqtrade_strategies/AgentSignalStrategy.py:462`
+- **问题**: `return min(lev, max_leverage, 5.0)` 硬编码，settings.yaml 改为 3x 时 Freqtrade 仍允许 5x
+- **建议**: 从 settings.yaml 读取 max_leverage
+- **维度**: D1
+- [x] 已修复
+
+### R6-H25. risk_review 余额不走 mock_balance — 离线时全部信号被拒
+- **文件**: `src/cryptobot/workflow/nodes/risk.py:161-167`
+- **问题**: 直接调用 `ft_api_get("/balance")` 而非 `get_balance_from_freqtrade()`。Freqtrade 离线时余额=0，即使配置了 mock_balance 也全拒
+- **建议**: 改为 `get_balance_from_freqtrade()`
+- **维度**: D1
+- [x] 已修复
+
+---
+
+## MEDIUM（21 个 — 健壮性/一致性/安全）
+
+### R6-M1. 均值回归路径绕过 trade 节点止损检查
+- **文件**: `trade.py:221-273` — mean_reversion 生成的信号直接 append，不经 trade 节点止损验证
+- [x] 已修复
+
+### R6-M2. Prompt 注入风险 — 新闻文本未隔离
+- **文件**: `analyze.py:144-170` — 外部新闻 json.dumps 直接注入 prompt，对抗性标题可影响输出
+- [x] 已修复
+
+### R6-M3. 多层 Prompt Addon 可能产生矛盾指令
+- **文件**: `trade.py:288-324` — regime/capital/strategy_advisor/prompt_manager 5 层 addon 无优先级声明
+- [x] 已修复
+
+### R6-M4. prompt_optimizer 自动激活新版本无 A/B 验证
+- **文件**: `evolution/prompt_optimizer.py:261-265` — 检测退化后立即切换，可能引入更差 prompt
+- [x] 已修复
+
+### R6-M5. model_competition 2 模型分歧时偏向过度自信模型
+- **文件**: `evolution/model_competition.py:150-153` — 选高 confidence 而非 no_trade
+- [x] 已修复
+
+### R6-M6. 资金费率成本按线性累积而非结算时点
+- **文件**: `backtest/cost_model.py:54-56` — `duration_hours/8` 而非计算实际跨越的结算时点
+- [x] 已修复
+
+### R6-M7. Welch t-test 用正态近似而非 t 分布
+- **文件**: `backtest/stats.py:80-83` — 小样本时 p-value 偏小，可能错误宣告显著
+- [x] 已修复
+
+### R6-M8. 止盈 ratio 之和 ≠1.0 时未归一化
+- **文件**: `backtest/trade_simulator.py:249-273` — ratio 总和 >1 或 <1 时行为不符预期
+- [x] 已修复
+
+### R6-M9. research error dict 注入 prompt
+- **文件**: `research.py:82-84` — 研究员调用失败时 `{"error": "..."}` 原样传给交易员 prompt
+- [x] 已修复
+
+### R6-M10. config.load_settings() 全局缓存无线程安全
+- **文件**: `config.py:42-72` — daemon 多线程并发调用可能读到半更新状态
+- [x] 已修复
+
+### R6-M11. freqtrade_api 配置缓存永不过期
+- **文件**: `freqtrade_api.py:11-28` — 热更新 settings 后 Freqtrade 连接配置不刷新
+- [x] 已修复
+
+### R6-M12. 进程崩溃无恢复/健康检查
+- **文件**: `cli/scheduler.py:760-764` — 无 PID 文件、看门狗、心跳机制
+- [x] 已修复
+
+### R6-M13. Web PATCH 字段值类型未校验
+- **文件**: `web/routes/api.py:172-193` — stop_loss 可被设为字符串或 null
+- [x] 已修复
+
+### R6-M14. DXY 7 天 stale 缓存被 72h cleanup 提前清除
+- **文件**: `data/dxy.py:16` + `cache.py:42` — fallback 窗口被缩短
+- [x] 已修复
+
+### R6-M15. 订单簿空返回不缓存导致 API 雪崩
+- **文件**: `data/orderbook.py:51-52` — API 暂时返回空时每次都重新请求
+- [x] 已修复
+
+### R6-M16. Fear&Greed 异常返回 schema 与正常不一致
+- **文件**: `data/sentiment.py:41` — 异常返回缺少 avg_7d/avg_30d/trend 等字段
+- [x] 已修复
+
+### R6-M17. ML 回滚阈值过宽松 (0.02)
+- **文件**: `ml/retrainer.py:46` — AUC 降 0.02 仍部署，缺统计检验
+- [x] 已修复
+
+### R6-M18. 特征缺失默认 0.0 引入偏差
+- **文件**: `ml/lgb_scorer.py:293,416` — long_short_ratio 默认应 1.0 而非 0.0
+- [x] 已修复
+
+### R6-M19. risk.py 多处就地修改 decision dict
+- **文件**: `risk.py:332,529,680,691` — 硬性规则阶段原地修改 state 中的 dict
+- [x] 已修复
+
+### R6-M20. trade.py + analyze.py 多处 `except Exception: pass` 静默吞错
+- **文件**: `trade.py:118,295,309,323,331`, `analyze.py:41,51,59` — 8 处 addon 加载完全静默
+- [x] 已修复
+
+### R6-M21. strategy_route weight/ml_score/model_id 在链路中丢失
+- **文件**: `trade.py:493`, `risk.py:121-138`, `execute.py:85-86` — 3 个字段在 `_decision_to_signal` 中未传递
+- [x] 已修复
+
+---
+
+## LOW（16 个 — 代码质量/可维护性/边界情况）
+
+### R6-L1. trade() 函数 472 行过长
+- **文件**: `trade.py:23-494` — 四条策略路径混合在一个函数中
+- [x] 已修复
+
+### R6-L2. funding_arb.py:267 except Exception: pass 静默吞错
+- **文件**: `strategy/funding_arb.py:267-268` — 套利费率获取失败静默跳过
+- [x] 已修复
+
+### R6-L3. volatile_toggle 4 处 except Exception 静默
+- **文件**: `evolution/volatile_toggle.py:114,129,159,249`
+- [x] 已修复
+
+### R6-L4. execute.py 就地修改 signal dict
+- **文件**: `execute.py:53,57-58,67-73` — 修改 approved_signals 列表中的元素
+- [x] 已修复
+
+### R6-L5. collect.py 就地修改 regime_result
+- **文件**: `collect.py:107,125` — `regime_result["regime"] = "volatile"` 原地修改
+- [x] 已修复
+
+### R6-L6. 硬编码魔数散布多处
+- **文件**: `risk.py:533`, `position_sizer.py:375`, `trade.py:348`, `screen.py:84` 等
+- [x] 已修复
+
+### R6-L7. custom_stake_amount 无下限校验
+- **文件**: `AgentSignalStrategy.py:438-441` — position_size_usdt 极小值未拦截
+- [x] 已修复
+
+### R6-L8. position_sizer 返回 margin=0 时信号仍写入
+- **文件**: `risk.py:107` + `position_sizer.py:412-413`
+- [x] 已修复
+
+### R6-L9. Freqtrade 密码可在 settings.yaml 明文存储
+- **文件**: `freqtrade_api.py:26` — 环境变量未设时 fallback 到配置文件明文
+- [x] 已修复
+
+### R6-L10. HTTP Basic Auth 明文传输
+- **文件**: `freqtrade_api.py:48-49` — host 非 localhost 时密码明文
+- [x] 已修复
+
+### R6-L11. 爆仓距离计算未使用分级维持保证金率
+- **文件**: `risk.py:563` + `liquidation_calc.py:59-88` — 用固定 0.4% 而非按仓位大小分级
+- [x] 已修复
+
+### R6-L12. 杠杆校验缺币种级别限制
+- **文件**: `signal/bridge.py:119-122` — validate_signal 仅检查全局 max_leverage
+- [x] 已修复
+
+### R6-L13. 过拟合检测器未整合回测指标
+- **文件**: `evolution/overfit_detector.py:163-240` — 仅检测修改频率，不检测 IS/OOS Sharpe 退化
+- [x] 已修复
+
+### R6-L14. 特征反馈无探索机制
+- **文件**: `ml/feature_feedback.py:34-60` — 始终 top-5，可能陷入局部最优
+- [x] 已修复
+
+### R6-L15. prompt_manager.py:93 就地修改 versions dict
+- **文件**: `evolution/prompt_manager.py:93`
+- [x] 已修复
+
+### R6-L16. 时间戳格式全局不一致
+- **文件**: 多处 — 混用 Unix ms/s、ISO 字符串、datetime 对象
+- [x] 已修复
+
+---
+
+## 与 R5 的交叉对比
+
+| R5 编号 | R6 确认 | 说明 |
+|---------|---------|------|
+| R5-C1 均值回归字段映射 | ✅ D2 确认 | 仍存在，key 路径全部错误 |
+| R5-C2 load_weights 不存在 | ✅ D2 确认 | ImportError 被静默吞掉 |
+| R5-C3 ML K-Fold 泄露 | ✅ D4/D8 确认 | 标准 K-Fold 而非 TimeSeriesSplit |
+| R5-C4 cache cleanup 误删 | ✅ D6/D7 确认 | 影响范围比 R5 描述更广 |
+| R5-C5 volatile 观望逻辑 | ✅ D2 确认 | 应移到 trade 节点根据实际路由判断 |
+| R5-H1 月度熔断双重缩放 | ✅ D1/D2/D3 确认 | 杠杆被 position_scale² 缩放 |
+| R5-H2 月份 28 天近似 | ✅ D1 确认 | 月初/月末边界可能重复或遗漏 |
+| R5-H3 相关性缺方向参数 | ✅ D1/D3 确认 | 反向对冲被错误惩罚 |
+| R5-H4 get_all_records 多次 | ✅ D1/D3 确认 | 循环内 5-6 次 |
+| R5-M1 字符串日期比较 | ✅ D6 相关确认 | YYYY-MM-DD 格式下可工作 |
+| R5-M2 全局可变状态线程安全 | ✅ D5/D7 确认 | _provider_cache, _usage_stats, _settings_cache 等 |
+| R5-M3 update_record 就地修改 | ✅ D7/D9 确认 | 仍存在 |
+| R5-M4 Web PATCH 白名单 | ✅ D7 确认 | 字段白名单已有但缺值类型校验 |
+| R5-M5 虚拟盘 PnL 未计费用 | — | 未被 R6 Agent 重复发现 |
+| R5-M6 止盈就地修改 | ✅ D4 确认 | 当前无功能 bug 但违反不可变 |
+| R5-L1 risk_review 过长 | ✅ D3/D9 确认 | 668-807 行 |
+| R5-L2 records 无增长控制 | ✅ D7 确认 | 仅增不删 |
+| R5-L3 回放 regime 缺 FG | ✅ D4 确认 | 仅技术面 regime |
+| R5-L4 WF Sharpe 365^0.5 | ✅ D4 扩展 | R6-C6 发现是全局 4 处不一致 |
+| R5-L5 z-test 样本重叠 | ✅ D5 确认 | 7d 是 30d 子集 |
+| R5-L6 线性扫描 O(n×m) | ✅ D8 确认 | 应用 bisect 二分 |
+| R5-L7 Kelly 重复 | ✅ D9 确认 | 两处等价但形式不同 |
+| R5-L8 volatile_toggle 静默 | ✅ D8/D9 确认 | 4 处 except pass |
+
+---
+
+## 第六轮统计
+
+| 等级 | 新增 | R5确认 | 合计 |
+|------|------|--------|------|
+| CRITICAL | 6 | 5 | 11 |
+| HIGH | 25 | 4 | 29 |
+| MEDIUM | 21 | 6 | 27 |
+| LOW | 16 | 8 | 24 |
+| **合计** | **68** | **23** | **91** |
+
+### 修复优先级建议
+
+**Phase 1 — 立即修复（影响交易正确性，改动小）**
+- R6-C1 hurst/regime_confidence 链路丢失 (~10行)
+- R6-C2 risk_review modified 二次校验 (~15行)
+- R6-C3 regime NaN 处理 (~10行)
+- R6-H2 validate_signal 止损强制 (~5行)
+- R6-H9 trade 节点杠杆 clamp (~3行)
+- R6-H22 research price key 修正 (~1行)
+- R6-H23 take_profit 格式标准化 (~15行)
+- R6-H25 余额走 mock_balance (~1行)
+- R5-C1~C5 + R5-H1~H4 (第五轮未修复项)
+
+**Phase 2 — 近期修复（回测可信度 + ML 可靠性）**
+- R6-C5 模型加载走注册表 (~10行)
+- R6-C6 Sharpe 年化统一 (~30行)
+- R6-H5 滑点双重计算 (~5行)
+- R6-H6 净值并发持仓 (~30行)
+- R6-H19 AUC 与最终模型对应 (~15行)
+- R6-H20 特征映射表对齐 (~20行)
+- R6-H21 做空标签 (~20行)
+
+**Phase 3 — 计划修复（风控加固 + 系统可靠性）**
+- R6-C4 数据源可用率检查 (~20行)
+- R6-H1 批量仓位累加 (~10行)
+- R6-H3 volatile 硬性规则 (~20行)
+- R6-H4 position_sizer 参数补充 (~15行)
+- R6-H10 re_review 平仓审核 (~15行)
+- R6-H11 API schema 校验 (~20行)
+- R6-H16~H18 调度器/并发/断连告警

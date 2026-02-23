@@ -264,8 +264,8 @@ def run_funding_scan() -> dict:
             from cryptobot.data.onchain import get_funding_rate
             data = get_funding_rate(pos.symbol, limit=1)
             current_rates[pos.symbol] = data.get("current_rate", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("费率获取失败 %s: %s", pos.symbol, e)
 
     close_signals = check_arb_positions(portfolio, current_rates)
     closed = 0

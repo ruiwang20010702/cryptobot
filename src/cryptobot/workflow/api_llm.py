@@ -281,6 +281,22 @@ def call_api(
     from cryptobot.workflow.llm import _extract_json
     extracted = _extract_json(content)
     if extracted is not None:
-        return extracted
+        result = extracted
+    else:
+        result = content
 
-    return content
+    # 校验必需字段 (交易决策场景)
+    if isinstance(result, dict) and json_schema:
+        required = json_schema.get("required", [])
+        missing = [f for f in required if f not in result]
+        if missing:
+            logger.warning(
+                "API 返回缺少必需字段 %s, fallback no_trade", missing,
+            )
+            return {
+                "action": result.get("action", "no_trade"),
+                "confidence": result.get("confidence", 0),
+                "reasoning": f"API 返回缺少字段: {missing}",
+            }
+
+    return result

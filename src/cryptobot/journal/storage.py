@@ -92,9 +92,9 @@ def update_record(signal_id: str, **updates) -> bool:
         data = _load_data()
 
         found = False
-        for r in data["records"]:
+        for idx, r in enumerate(data["records"]):
             if r.get("signal_id") == signal_id:
-                r.update(updates)
+                data["records"][idx] = {**r, **updates}
                 found = True
                 break
 
@@ -105,6 +105,52 @@ def update_record(signal_id: str, **updates) -> bool:
         JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
         _atomic_write(RECORDS_FILE, data)
     return True
+
+
+def archive_old_records(keep_days: int = 90) -> int:
+    """归档超过 keep_days 天的 closed 记录到独立文件
+
+    Returns:
+        归档的记录数
+    """
+    from datetime import timedelta
+
+    with _journal_lock:
+        data = _load_data()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).isoformat()
+
+        to_archive = [
+            r for r in data["records"]
+            if r.get("status") == "closed" and r.get("timestamp", "") < cutoff
+        ]
+        if not to_archive:
+            return 0
+
+        remaining = [r for r in data["records"] if r not in to_archive]
+
+        # 写归档文件
+        archive_path = JOURNAL_DIR / "archive.json"
+        existing = []
+        if archive_path.exists():
+            try:
+                existing = json.loads(archive_path.read_text())
+                if not isinstance(existing, list):
+                    existing = []
+            except (json.JSONDecodeError, OSError):
+                existing = []
+
+        JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+        _atomic_write(archive_path, existing + to_archive)
+
+        # 更新主记录
+        data = {
+            "records": remaining,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+        _atomic_write(RECORDS_FILE, data)
+
+    logger.info("归档 %d 条旧记录 (>%d天)", len(to_archive), keep_days)
+    return len(to_archive)
 
 
 def find_active_record_for_symbol(symbol: str) -> SignalRecord | None:

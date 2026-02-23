@@ -28,6 +28,10 @@ def calc_hurst_exponent(prices: list[float], max_lag: int = 20) -> float:
 
     arr = np.array(prices, dtype=np.float64)
 
+    # 安全检查: 价格必须 > 0 才能取对数
+    if np.any(arr <= 0):
+        return _DEFAULT_HURST
+
     # 转 log returns
     log_returns = np.diff(np.log(arr))
     if len(log_returns) < max_lag:

@@ -43,15 +43,15 @@ def _metrics_to_dict(m: ModelMetrics) -> dict:
 def run_retrain(
     days: int = 180,
     min_samples: int = 50,
-    rollback_threshold: float = 0.02,
+    rollback_ratio: float = 0.03,
 ) -> RetrainResult:
     """执行一次重训流程
 
     1. prepare_training_data(days)
     2. train_model(X, y) -> (model, metrics)
-    3. 与上一版本对比 AUC:
-       - 新 AUC >= 旧 AUC - rollback_threshold -> 部署新模型
-       - 新 AUC < 旧 AUC - rollback_threshold -> 回滚到旧模型
+    3. 与上一版本对比 AUC (相对比较):
+       - 新 AUC >= 旧 AUC * (1 - rollback_ratio) -> 部署新模型
+       - 新 AUC < 旧 AUC * (1 - rollback_ratio) -> 回滚到旧模型（3% 退化才回滚）
     4. 更新版本注册表
     """
     # 准备数据
@@ -98,11 +98,12 @@ def run_retrain(
             reason="首个模型，直接部署",
         )
 
-    # 对比 AUC
+    # 对比 AUC（相对比较: 退化超过 rollback_ratio 才回滚）
     prev_auc = prev.metrics.get("auc_roc", 0)
     new_auc = metrics.auc_roc
+    threshold = prev_auc * (1 - rollback_ratio)
 
-    if new_auc >= prev_auc - rollback_threshold:
+    if new_auc >= threshold:
         # 部署新模型
         save_model(model, version)
 
@@ -139,7 +140,7 @@ def run_retrain(
             action="deployed",
             reason=(
                 f"新模型 AUC {new_auc:.4f} >= "
-                f"旧 {prev_auc:.4f} - {rollback_threshold}"
+                f"旧 {prev_auc:.4f} * {1 - rollback_ratio:.2f}"
             ),
         )
     else:
@@ -162,7 +163,7 @@ def run_retrain(
             action="rolled_back",
             reason=(
                 f"新模型 AUC {new_auc:.4f} < "
-                f"旧 {prev_auc:.4f} - {rollback_threshold}, 已回滚"
+                f"旧 {prev_auc:.4f} * {1 - rollback_ratio:.2f}, 已回滚"
             ),
         )
 

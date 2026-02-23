@@ -197,6 +197,16 @@ def re_review(positions: list[dict], state: dict) -> list[dict]:
             decision = result.get("decision", "hold")
 
             # P10: close_position 决策写入平仓信号
+            # 盈利仓位保护: 需 risk_level=critical 才允许平仓
+            is_profitable = (pos.get("profit_pct", 0) or 0) > 0
+            risk_level = result.get("risk_level", "medium")
+            if decision == "close_position" and is_profitable and risk_level != "critical":
+                logger.warning(
+                    "复审 %s: 盈利仓位平仓被拦截 (risk_level=%s, 需 critical)",
+                    symbol, risk_level,
+                )
+                decision = "hold"
+
             if decision == "close_position":
                 try:
                     from datetime import datetime, timezone

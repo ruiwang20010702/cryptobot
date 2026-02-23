@@ -33,9 +33,9 @@ class TestCalcTradeCosts:
         assert costs.total_pct == pytest.approx(0.13)  # 0.04 + 0.04 + 0.05
 
     def test_short_duration_4h(self):
-        """4h 短持仓：funding = 0.01 * 0.5 * leverage"""
+        """4h 短持仓：未跨过 8h 结算点 → funding = 0"""
         costs = calc_trade_costs(CostConfig(), duration_hours=4, leverage=2)
-        assert costs.funding_pct == pytest.approx(0.01)  # 0.01 * 0.5 * 2
+        assert costs.funding_pct == pytest.approx(0.0)  # floor(4/8) = 0 次结算
         assert costs.entry_fee_pct == pytest.approx(0.08)
         assert costs.exit_fee_pct == pytest.approx(0.08)
         assert costs.slippage_pct == pytest.approx(0.10)

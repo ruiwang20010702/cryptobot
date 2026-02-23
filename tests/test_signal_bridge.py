@@ -116,7 +116,7 @@ class TestValidateSignalRegimeExpiry:
         from cryptobot.signal.bridge import validate_signal
         from datetime import datetime
 
-        base = {"symbol": "BTCUSDT", "action": "long", "leverage": 3}
+        base = {"symbol": "BTCUSDT", "action": "long", "leverage": 3, "stop_loss": 90000}
 
         sig_trend = validate_signal({**base}, regime="trending")
         sig_range = validate_signal({**base}, regime="ranging")

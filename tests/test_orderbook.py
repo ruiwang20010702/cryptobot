@@ -81,7 +81,9 @@ class TestEmptyOrderbook:
         assert result["top_bid"] == 0.0
         assert result["top_ask"] == 0.0
         assert result["spread_pct"] == 0.0
-        mock_set_cache.assert_not_called()
+        assert result["data_available"] is False
+        # 空结果也缓存 (短 TTL)，防止 API 雪崩
+        mock_set_cache.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +104,9 @@ class TestAPIException:
         assert result["bid_volume"] == 0.0
         assert result["ask_volume"] == 0.0
         assert result["bid_ask_ratio"] == 0.0
-        mock_set_cache.assert_not_called()
+        assert result["data_available"] is False
+        # 空结果也缓存 (短 TTL)，防止 API 雪崩
+        mock_set_cache.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

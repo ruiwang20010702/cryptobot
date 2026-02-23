@@ -35,7 +35,7 @@ def get_funding_rate(symbol: str = "BTCUSDT", limit: int = 100) -> dict:
         raw = resp.json()
     except Exception as e:
         logger.warning("获取资金费率失败 %s: %s", symbol, e)
-        return {"symbol": symbol, "current_rate": 0, "error": str(e)}
+        return {"symbol": symbol, "current_rate": 0, "error": str(e), "data_available": False}
 
     rates = [
         {
@@ -82,7 +82,7 @@ def get_open_interest_hist(
         raw = resp.json()
     except Exception as e:
         logger.warning("获取持仓量历史失败 %s: %s", symbol, e)
-        return {"symbol": symbol, "oi_change_pct": 0, "error": str(e)}
+        return {"symbol": symbol, "oi_change_pct": 0, "error": str(e), "data_available": False}
 
     records = [
         {
@@ -131,7 +131,7 @@ def get_taker_buy_sell_ratio(
         raw = resp.json()
     except Exception as e:
         logger.warning("获取主动买卖比失败 %s: %s", symbol, e)
-        return {"symbol": symbol, "current_ratio": 1.0, "error": str(e)}
+        return {"symbol": symbol, "current_ratio": 1.0, "error": str(e), "data_available": False}
 
     records = [
         {

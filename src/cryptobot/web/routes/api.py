@@ -169,6 +169,22 @@ def get_correlation():
     }
 
 
+_PATCH_ALLOWED_FIELDS = {"stop_loss", "take_profit", "leverage", "confidence"}
+
+
+def _validate_patch_field(field_name: str, value) -> None:
+    """校验 PATCH 字段类型"""
+    if field_name in ("stop_loss", "take_profit"):
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"{field_name} 必须为数字，收到 {type(value).__name__}")
+    elif field_name == "confidence":
+        if not isinstance(value, int) or not (0 <= value <= 100):
+            raise ValueError("confidence 必须为 0-100 的整数")
+    elif field_name == "leverage":
+        if not isinstance(value, int) or value < 1 or value > 125:
+            raise ValueError("leverage 必须为 1-125 的整数")
+
+
 @router.patch("/signals/{symbol}")
 def update_signal(symbol: str, updates: dict):
     """更新信号字段"""
@@ -178,10 +194,19 @@ def update_signal(symbol: str, updates: dict):
     if not updates:
         raise HTTPException(status_code=400, detail="无更新字段")
 
+    # 字段白名单
+    disallowed = set(updates.keys()) - _PATCH_ALLOWED_FIELDS
+    if disallowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不允许修改的字段: {', '.join(sorted(disallowed))}",
+        )
+
     results = {}
     errors = {}
     for field_name, value in updates.items():
         try:
+            _validate_patch_field(field_name, value)
             ok = update_signal_field(symbol, field_name, value)
             results[field_name] = "updated" if ok else "not_found"
         except ValueError as e:

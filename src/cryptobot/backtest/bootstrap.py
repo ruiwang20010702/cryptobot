@@ -140,14 +140,10 @@ def _std(values: list[float]) -> float:
 
 
 def _boot_sharpe(values: list[float]) -> float:
-    """计算 Sharpe ratio: mean/std * sqrt(252)"""
-    if len(values) < 2:
-        return 0.0
-    mean_r = sum(values) / len(values)
-    std_r = _std(values)
-    if std_r == 0:
-        return 0.0
-    return mean_r / std_r * math.sqrt(252)
+    """计算 Sharpe ratio (统一年化函数)"""
+    from cryptobot.backtest._sharpe_utils import annualize_sharpe
+
+    return annualize_sharpe(values)
 
 
 def _boot_profit_factor(values: list[float]) -> float:

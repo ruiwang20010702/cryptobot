@@ -60,7 +60,10 @@ def build_equity_curve(
     curve: list[EquityPoint] = []
 
     for i, t in enumerate(sorted_trades):
-        equity = equity * (1 + t.net_pnl_pct / 100)
+        # 按仓位比例折算对总资金的影响
+        position_size_pct = getattr(t, "position_size_pct", 100.0)
+        weight = position_size_pct / 100.0
+        equity = equity * (1 + t.net_pnl_pct / 100 * weight)
         peak = max(peak, equity)
         dd_pct = (peak - equity) / peak * 100 if peak > 0 else 0.0
 
@@ -132,8 +135,10 @@ def calc_metrics(
     avg_days_per_trade = total_days / n if total_days > 0 else 1
     trades_per_year = 365 / avg_days_per_trade if avg_days_per_trade > 0 else n
 
-    # Sharpe
-    sharpe_ratio = _calc_sharpe(returns, trades_per_year)
+    # Sharpe (统一年化函数)
+    from cryptobot.backtest._sharpe_utils import annualize_sharpe
+
+    sharpe_ratio = annualize_sharpe(returns, trades_per_year)
 
     # Sortino
     sortino_ratio = _calc_sortino(returns, trades_per_year)

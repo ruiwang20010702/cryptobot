@@ -60,8 +60,10 @@ def calc_liquidation_price(
     entry_price: float,
     leverage: int,
     side: str,
-    maintenance_margin_rate: float = DEFAULT_MAINTENANCE_MARGIN_RATE,
+    maintenance_margin_rate: float | None = None,
     safety_buffer_pct: float = 2,
+    symbol: str = "",
+    position_size_usdt: float = 0,
 ) -> float:
     """计算强平价格 (逐仓模式，含安全缓冲)
 
@@ -69,12 +71,23 @@ def calc_liquidation_price(
         entry_price: 入场价
         leverage: 杠杆倍数
         side: "long" 或 "short"
-        maintenance_margin_rate: 维持保证金率
+        maintenance_margin_rate: 维持保证金率 (None=按分级表自动查询)
         safety_buffer_pct: 安全缓冲百分比，使预估更保守 (默认 2%)
+        symbol: 交易对 (用于分级查询)
+        position_size_usdt: 保证金 (用于计算名义价值查分级)
 
     Returns:
         强平价格 (偏保守)
     """
+    if maintenance_margin_rate is None:
+        if symbol:
+            notional = (
+                position_size_usdt * leverage if position_size_usdt
+                else entry_price * leverage
+            )
+            maintenance_margin_rate = _get_maintenance_margin_rate(symbol, notional)
+        else:
+            maintenance_margin_rate = DEFAULT_MAINTENANCE_MARGIN_RATE
     if side == "long":
         liq = entry_price * (1 - 1 / leverage + maintenance_margin_rate)
         # 多单: 强平价上移 (更保守)

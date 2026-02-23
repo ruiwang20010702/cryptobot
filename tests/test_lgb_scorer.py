@@ -44,28 +44,28 @@ class TestDataclasses:
 
 class TestKFoldSplit:
     def test_basic_split(self):
-        folds = _kfold_split(10, 5)
+        """TimeSeriesSplit: train 始终在 val 之前"""
+        folds = _kfold_split(12, 5)
         assert len(folds) == 5
         for train_idx, val_idx in folds:
-            assert len(val_idx) == 2
-            assert len(train_idx) == 8
-            # 无重叠
+            # train 和 val 无重叠
             assert set(train_idx) & set(val_idx) == set()
+            # train 最大值 < val 最小值 (时序保证)
+            assert max(train_idx) < min(val_idx)
 
-    def test_covers_all_indices(self):
-        folds = _kfold_split(10, 5)
-        all_val = []
-        for _, val_idx in folds:
-            all_val.extend(val_idx)
-        assert sorted(all_val) == list(range(10))
+    def test_train_grows_monotonically(self):
+        """TimeSeriesSplit: 训练集逐步增大"""
+        folds = _kfold_split(12, 5)
+        train_sizes = [len(train_idx) for train_idx, _ in folds]
+        for i in range(1, len(train_sizes)):
+            assert train_sizes[i] > train_sizes[i - 1]
 
     def test_uneven_split(self):
-        folds = _kfold_split(7, 3)
-        assert len(folds) == 3
-        all_val = []
-        for _, val_idx in folds:
-            all_val.extend(val_idx)
-        assert sorted(all_val) == list(range(7))
+        folds = _kfold_split(10, 3)
+        assert len(folds) >= 2
+        for train_idx, val_idx in folds:
+            assert set(train_idx) & set(val_idx) == set()
+            assert max(train_idx) < min(val_idx)
 
 
 # ─── 指标计算 ─────────────────────────────────────────────────────────
@@ -175,7 +175,16 @@ class TestDictsToMatrix:
     def test_basic(self):
         dicts = [{"a": 1.0, "b": 2.0}, {"a": 3.0}]
         result = _dicts_to_matrix(dicts, ["a", "b"])
-        assert result == [[1.0, 2.0], [3.0, 0.0]]
+        # "b" 不在 _FEATURE_DEFAULTS 中，缺失时为 None (NaN)
+        assert result[0] == [1.0, 2.0]
+        assert result[1][0] == 3.0
+        assert result[1][1] is None
+
+    def test_semantic_defaults(self):
+        """已知语义的特征缺失时用对应默认值"""
+        dicts = [{"rsi": 50.0}]
+        result = _dicts_to_matrix(dicts, ["rsi", "long_short_ratio", "funding_rate"])
+        assert result == [[50.0, 1.0, 0.0]]
 
 
 # ─── prepare_training_data ────────────────────────────────────────────
@@ -299,11 +308,23 @@ class TestScoreSignal:
 
         mock_model = MagicMock()
         mock_model.feature_name.return_value = ["rsi"]
-        mock_model.predict.return_value = [0.3]
+        mock_model.predict.return_value = [0.2]  # < 0.3 → down
 
         result = score_signal("ETHUSDT", {"rsi": 70.0}, model=mock_model)
         assert result.direction == "down"
-        assert result.probability == 0.3
+        assert result.probability == 0.2
+
+    def test_score_neutral(self):
+        """0.3 <= prob <= 0.5 → neutral (更保守的做空标准)"""
+        from cryptobot.ml.lgb_scorer import score_signal
+
+        mock_model = MagicMock()
+        mock_model.feature_name.return_value = ["rsi"]
+        mock_model.predict.return_value = [0.4]
+
+        result = score_signal("ETHUSDT", {"rsi": 70.0}, model=mock_model)
+        assert result.direction == "neutral"
+        assert result.probability == 0.4
 
     def test_missing_features(self):
         from cryptobot.ml.lgb_scorer import score_signal

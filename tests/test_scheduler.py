@@ -91,7 +91,7 @@ class TestJobReReview:
         """异常不 raise"""
         mock_ft.side_effect = Exception("boom")
         job_re_review()
-        assert "复审失败" in caplog.text
+        assert "持仓复审 最终失败" in caplog.text
 
 
 # ─── job_cleanup ───────────────────────────────────────────────────────────
@@ -379,4 +379,4 @@ class TestJobUrgentReview:
             side_effect=RuntimeError("boom"),
         ):
             job_urgent_review()
-        assert "紧急复审失败" in caplog.text
+        assert "紧急复审 最终失败" in caplog.text

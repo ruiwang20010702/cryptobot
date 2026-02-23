@@ -115,8 +115,8 @@ def trade(state: WorkflowState) -> dict:
         try:
             from cryptobot.evolution.capital_prompts import get_capital_addon
             capital_trader_addon = get_capital_addon(tier_name, "TRADER")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("资金层级 addon 加载失败: %s", e)
 
     # O22: 获取币种级绩效数据
     perf_feedback = state.get("perf_feedback", {})
@@ -129,6 +129,20 @@ def trade(state: WorkflowState) -> dict:
 
     # P14: 从 market_regime 读取 fear_greed_value
     fg_val = regime.get("fear_greed_value", 50) if regime else 50
+
+    # O13: 分析师权重映射 (循环外计算一次)
+    _WEIGHT_LABEL_TO_NUMERIC = {
+        "very_high": 1.4, "high": 1.2, "normal": 1.0, "low": 0.8, "very_low": 0.6,
+    }
+    analyst_weight_map: dict[str, float] = {}
+    try:
+        from cryptobot.journal.analyst_weights import calc_analyst_weights
+        raw_weights = calc_analyst_weights()
+        for role, info in raw_weights.items():
+            label = info.get("weight", "normal") if isinstance(info, dict) else "normal"
+            analyst_weight_map[role] = _WEIGHT_LABEL_TO_NUMERIC.get(label, 1.0)
+    except Exception as e:
+        logger.warning("分析师权重计算失败: %s", e)
 
     for symbol in research_data:
         # -- P13.6: 策略路由 --
@@ -164,113 +178,28 @@ def trade(state: WorkflowState) -> dict:
 
         # observe -> 直接 no_trade
         if route.strategy == "observe":
-            decisions.append({
-                "symbol": symbol,
-                "action": "no_trade",
-                "confidence": 0,
-                "reasoning": route.reason,
-                "current_price": current_price,
-            })
+            decisions.append(_route_observe(symbol, current_price, route))
             _console.print(f"    {symbol}: 观望 ({route.reason})")
             continue
 
         # P14: volatile_fear → 跳过 LLM，走 funding_arb/grid
         if route.strategy == "funding_arb":
-            try:
-                from cryptobot.strategy.funding_arb import scan_funding_opportunities
-                arb_signals = scan_funding_opportunities(
-                    symbols=[symbol],
-                    min_rate=0.0003 if route.params.get("volatile_mode") else None,
-                )
-                if arb_signals:
-                    sig = arb_signals[0]
-                    decisions.append({
-                        "symbol": symbol,
-                        "action": "no_trade",
-                        "confidence": sig.confidence,
-                        "reasoning": (
-                            f"volatile_fear 费率套利信号: rate={sig.funding_rate:.4%}, "
-                            f"annualized={sig.annualized_rate:.1f}% (虚拟盘执行)"
-                        ),
-                        "current_price": current_price,
-                    })
-                    _console.print(
-                        f"    {symbol}: 费率套利 rate={sig.funding_rate:.4%}"
-                    )
-                else:
-                    decisions.append({
-                        "symbol": symbol,
-                        "action": "no_trade",
-                        "confidence": 0,
-                        "reasoning": "volatile_fear 无满足条件的费率套利机会",
-                        "current_price": current_price,
-                    })
-                    _console.print(f"    {symbol}: 费率套利无信号")
-            except Exception as e:
-                logger.warning("费率套利失败 %s: %s", symbol, e)
-                decisions.append({
-                    "symbol": symbol,
-                    "action": "no_trade",
-                    "confidence": 0,
-                    "reasoning": f"费率套利异常: {e}",
-                    "current_price": current_price,
-                })
+            decisions.append(_route_funding(symbol, current_price, route))
             continue
 
         # mean_reversion -> 规则化信号，不走 LLM
         if route.strategy == "mean_reversion":
-            try:
-                from cryptobot.strategy.mean_reversion import (
-                    check_bb_entry,
-                    signal_to_dict,
-                )
-
-                tech = data.get("tech", {})
-                latest = {}
-                if tech:
-                    latest["close"] = tech.get("latest_close", 0)
-                    bb = tech.get("bollinger", {})
-                    latest["bb_upper"] = bb.get("upper", 0)
-                    latest["bb_lower"] = bb.get("lower", 0)
-                    latest["bb_mid"] = bb.get("middle", 0)
-                    latest["rsi_14"] = tech.get("rsi", 50)
-                    latest["atr_14"] = tech.get("atr", 0)
-                    latest["volume_ratio"] = tech.get("volume_ratio", 1.0)
-
-                mr_sig = check_bb_entry(symbol, {"latest": latest})
-                if mr_sig:
-                    sig_dict = signal_to_dict(mr_sig)
-                    sig_dict["current_price"] = current_price
-                    decisions.append(sig_dict)
-                    _console.print(
-                        f"    {symbol}: 均值回归 {mr_sig.action}"
-                        f" conf={mr_sig.confidence}"
-                    )
-                else:
-                    decisions.append({
-                        "symbol": symbol,
-                        "action": "no_trade",
-                        "confidence": 0,
-                        "reasoning": "均值回归无入场信号",
-                        "current_price": current_price,
-                    })
-                    _console.print(f"    {symbol}: 均值回归无信号")
-            except ImportError:
-                logger.warning("mean_reversion 模块未就绪，fallback 到 ai_trend")
-                route = StrategyRoute(
-                    strategy="ai_trend", weight=0.5,
-                    reason="均值回归模块未就绪，fallback", params={},
-                )
-                strategy_routes[symbol] = route
-            except Exception as e:
-                logger.warning("均值回归策略失败 %s: %s", symbol, e)
-                route = StrategyRoute(
-                    strategy="ai_trend", weight=0.5,
-                    reason="均值回归失败，fallback", params={},
-                )
-                strategy_routes[symbol] = route
+            mr_result = _route_mean_reversion(symbol, current_price, data)
+            if mr_result is not None:
+                decisions.append(mr_result)
+                continue
             else:
-                continue  # 均值回归已处理，跳过 LLM
+                # fallback 到 ai_trend
+                route = StrategyRoute(
+                    strategy="ai_trend", weight=0.5,
+                    reason="均值回归 fallback", params={},
+                )
+                strategy_routes[symbol] = route
 
         # ai_trend -> 继续现有 LLM 决策流
         bull = research_data[symbol].get("bull", {})
@@ -285,15 +214,16 @@ def trade(state: WorkflowState) -> dict:
         route_lev_cap = route.params.get("max_leverage", capital_lev_cap)
         max_leverage = min(pair_max_lev, capital_lev_cap, route_lev_cap)
 
-        # 构建增强 system prompt: 基础 + prompt version addon + regime addon + capital addon
+        # 构建增强 system prompt (优先级: regime > capital > strategy_advisor > version)
+        # 冲突时硬性参数（regime）优先
         trader_system = TRADER
         try:
             from cryptobot.evolution.prompt_manager import get_prompt_addon
             version_addon = get_prompt_addon("TRADER")
             if version_addon:
                 trader_system += "\n" + version_addon
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Prompt version addon 加载失败: %s", e)
 
         # P14: volatile 子状态使用子状态 addon (覆盖通用 volatile addon)
         from cryptobot.workflow.strategy_router import classify_volatile_subtype
@@ -306,8 +236,8 @@ def trade(state: WorkflowState) -> dict:
                 sub_addon = get_regime_addon(vol_subtype, "TRADER")
                 if sub_addon:
                     trader_system += sub_addon
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Volatile 子状态 addon 加载失败: %s", e)
         elif regime_trader_addon:
             trader_system += regime_trader_addon
 
@@ -320,17 +250,10 @@ def trade(state: WorkflowState) -> dict:
             strategy_addon = get_strategy_addon("trader")
             if strategy_addon:
                 trader_system += strategy_addon
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Strategy advisor addon 加载失败: %s", e)
 
         # O13: 分析师加权一致性评分
-        analyst_weight_map = {}
-        try:
-            from cryptobot.journal.analyst_weights import load_weights
-            analyst_weight_map = load_weights()
-        except Exception:
-            pass
-
         weighted_bull = 0.0
         weighted_bear = 0.0
         total_weight = 0.0
@@ -478,7 +401,34 @@ def trade(state: WorkflowState) -> dict:
                         ),
                     }
 
-            corrected = {**corrected, "symbol": symbol, "current_price": current_price}
+            # R6-H9: 杠杆 clamp (止损验证通过后)
+            if corrected.get("action") in ("long", "short"):
+                route = strategy_routes.get(symbol)
+                pair_cfg_lev = get_pair_config(symbol) or {}
+                max_lev = min(
+                    pair_cfg_lev.get("leverage_range", [1, 5])[1],
+                    merged_params.get("max_leverage", 5) if merged_params else 5,
+                    route.params.get("max_leverage", 5) if route else 5,
+                )
+                raw_lev = corrected.get("leverage", 1)
+                clamped_lev = max(1, min(raw_lev, max_lev))
+                if clamped_lev != raw_lev:
+                    logger.warning(
+                        "%s: 杠杆 %s → %s (上限 %s)", symbol, raw_lev, clamped_lev, max_lev,
+                    )
+                corrected = {**corrected, "leverage": clamped_lev}
+
+            # R6-M21: 补充 strategy_route / weight / ml_score / model_id
+            sr = strategy_routes.get(symbol)
+            corrected = {
+                **corrected,
+                "symbol": symbol,
+                "current_price": current_price,
+                "strategy_route": sr.strategy if sr else "ai_trend",
+                "weight": sr.weight if sr else 1.0,
+                "ml_score": corrected.get("ml_score"),
+                "model_id": corrected.get("model_id"),
+            }
             decisions.append(corrected)
         else:
             err = result.get("error", "非 JSON 响应") if isinstance(result, dict) else "非 JSON 响应"
@@ -492,6 +442,123 @@ def trade(state: WorkflowState) -> dict:
         "errors": errors,
         "strategy_routes": strategy_routes,
     }
+
+
+def _route_observe(symbol: str, current_price: float, route: StrategyRoute) -> dict:
+    """观望策略路由"""
+    return {
+        "symbol": symbol,
+        "action": "no_trade",
+        "confidence": 0,
+        "reasoning": route.reason,
+        "current_price": current_price,
+    }
+
+
+def _route_funding(symbol: str, current_price: float, route: StrategyRoute) -> dict:
+    """费率套利策略路由"""
+    try:
+        from cryptobot.strategy.funding_arb import scan_funding_opportunities
+        arb_signals = scan_funding_opportunities(
+            symbols=[symbol],
+            min_rate=0.0003 if route.params.get("volatile_mode") else None,
+        )
+        if arb_signals:
+            sig = arb_signals[0]
+            _console.print(f"    {symbol}: 费率套利 rate={sig.funding_rate:.4%}")
+            return {
+                "symbol": symbol,
+                "action": "no_trade",
+                "confidence": sig.confidence,
+                "reasoning": (
+                    f"volatile_fear 费率套利信号: rate={sig.funding_rate:.4%}, "
+                    f"annualized={sig.annualized_rate:.1f}% (虚拟盘执行)"
+                ),
+                "current_price": current_price,
+            }
+        _console.print(f"    {symbol}: 费率套利无信号")
+        return {
+            "symbol": symbol,
+            "action": "no_trade",
+            "confidence": 0,
+            "reasoning": "volatile_fear 无满足条件的费率套利机会",
+            "current_price": current_price,
+        }
+    except Exception as e:
+        logger.warning("费率套利失败 %s: %s", symbol, e)
+        return {
+            "symbol": symbol,
+            "action": "no_trade",
+            "confidence": 0,
+            "reasoning": f"费率套利异常: {e}",
+            "current_price": current_price,
+        }
+
+
+def _route_mean_reversion(symbol: str, current_price: float, data: dict) -> dict | None:
+    """均值回归策略路由
+
+    Returns:
+        决策 dict，或 None 表示需要 fallback 到 ai_trend
+    """
+    try:
+        from cryptobot.strategy.mean_reversion import check_bb_entry, signal_to_dict
+
+        tech = data.get("tech", {})
+        latest = {}
+        if tech:
+            latest["close"] = tech.get("latest_close", 0)
+            vol = tech.get("volatility", {})
+            latest["bb_upper"] = vol.get("bb_upper", 0)
+            latest["bb_lower"] = vol.get("bb_lower", 0)
+            latest["bb_mid"] = vol.get("bb_middle", 0)
+            latest["rsi_14"] = tech.get("momentum", {}).get("rsi_14", 50)
+            latest["atr_14"] = vol.get("atr_14", 0)
+            latest["volume_ratio"] = tech.get("volume_ratio", 1.0)
+
+        mr_sig = check_bb_entry(symbol, {"latest": latest})
+        if mr_sig:
+            sig_dict = signal_to_dict(mr_sig)
+            sig_dict = {**sig_dict, "current_price": current_price}
+            # R6-M1: 均值回归止损距离校验
+            sl = sig_dict.get("stop_loss")
+            if (
+                sig_dict.get("action") in ("long", "short")
+                and sl is not None
+                and current_price > 0
+            ):
+                sl_dist = abs(sl - current_price) / current_price * 100
+                if sl_dist < 0.5 or sl_dist > 15:
+                    logger.warning(
+                        "%s: 均值回归止损距离 %.1f%% 超出 0.5-15%%", symbol, sl_dist,
+                    )
+                    sig_dict = {
+                        **sig_dict,
+                        "action": "no_trade",
+                        "reasoning": (
+                            sig_dict.get("reasoning", "")
+                            + f" [系统: 止损距离 {sl_dist:.1f}% 超出合理范围]"
+                        ),
+                    }
+            _console.print(
+                f"    {symbol}: 均值回归 {mr_sig.action} conf={mr_sig.confidence}"
+            )
+            return sig_dict
+
+        _console.print(f"    {symbol}: 均值回归无信号")
+        return {
+            "symbol": symbol,
+            "action": "no_trade",
+            "confidence": 0,
+            "reasoning": "均值回归无入场信号",
+            "current_price": current_price,
+        }
+    except ImportError:
+        logger.warning("mean_reversion 模块未就绪，fallback 到 ai_trend")
+        return None
+    except Exception as e:
+        logger.warning("均值回归策略失败 %s: %s", symbol, e)
+        return None
 
 
 def _update_virtual_grid(symbol: str, current_price: float) -> None:

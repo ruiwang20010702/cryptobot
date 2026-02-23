@@ -52,6 +52,15 @@ def _analyze_timeframe(symbol: str, timeframe: str) -> dict:
     """
     df = load_klines(symbol, timeframe)
 
+    if len(df) < 64:
+        return {
+            "trend": "unknown",
+            "strength": "weak",
+            "adx": 0.0,
+            "atr_pct": 0.0,
+            "closes": df["close"].values.tolist() if len(df) > 0 else [],
+        }
+
     close = df["close"].values.astype(np.float64)
     high = df["high"].values.astype(np.float64)
     low = df["low"].values.astype(np.float64)

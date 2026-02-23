@@ -235,27 +235,44 @@ def run_factor_analysis(
     all_factors: list[FactorCorrelation] = []
 
     for fname in factor_names:
-        # 汇总所有 symbol 的序列
-        all_feat: list[float] = []
-        all_ret: list[float] = []
+        # 按 symbol 分别计算 lead-lag 相关性，再取加权平均（按样本量加权）
+        lag_accum: dict[int, list[tuple[float, int]]] = {}  # lag -> [(r, n), ...]
+
         for _sym, vecs in sym_vectors.items():
             feat_series = _extract_factor_series(vecs, fname)
             ret_series = _compute_returns(vecs)
-            all_feat.extend(feat_series)
-            all_ret.extend(ret_series)
+            if len(feat_series) < 3:
+                continue
 
-        if len(all_feat) < 3:
-            continue
+            lag_results = compute_lead_lag(feat_series, ret_series, lags)
+            for fc in lag_results:
+                if fc.sample_size >= 3:
+                    lag_accum.setdefault(fc.lag_hours, []).append(
+                        (fc.correlation, fc.sample_size)
+                    )
 
-        lag_results = compute_lead_lag(all_feat, all_ret, lags)
-        for fc in lag_results:
-            # 用实际的 factor_name 替换空占位
+        # 加权平均合并各 symbol 结果
+        for lag in lags:
+            pairs = lag_accum.get(lag, [])
+            if not pairs:
+                all_factors.append(FactorCorrelation(
+                    factor_name=fname,
+                    lag_hours=lag,
+                    correlation=0.0,
+                    p_value=1.0,
+                    sample_size=0,
+                ))
+                continue
+
+            total_n = sum(n for _, n in pairs)
+            weighted_r = sum(r * n for r, n in pairs) / total_n
+            p = _pearson_p_value(weighted_r, total_n)
             all_factors.append(FactorCorrelation(
                 factor_name=fname,
-                lag_hours=fc.lag_hours,
-                correlation=fc.correlation,
-                p_value=fc.p_value,
-                sample_size=fc.sample_size,
+                lag_hours=lag,
+                correlation=round(weighted_r, 6),
+                p_value=round(p, 6),
+                sample_size=total_n,
             ))
 
     # top predictors: p < 0.05, 按 |r| 降序

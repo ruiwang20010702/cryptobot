@@ -228,20 +228,14 @@ def _calc_win_rate(trades: list) -> float:
 
 
 def _calc_simple_sharpe(trades: list) -> float:
-    """简化 Sharpe: mean(pnl) / std(pnl), 年化 (sqrt(365))"""
+    """简化 Sharpe (统一年化函数)"""
     if len(trades) < 2:
         return 0.0
 
+    from cryptobot.backtest._sharpe_utils import annualize_sharpe
+
     pnls = [t.net_pnl_pct for t in trades]
-    mean_pnl = sum(pnls) / len(pnls)
-    variance = sum((p - mean_pnl) ** 2 for p in pnls) / (len(pnls) - 1)
-    std_pnl = variance**0.5
-
-    if std_pnl < 1e-9:
-        return 0.0
-
-    # 假设平均每天 1 笔交易 -> 年化 * sqrt(365)
-    return mean_pnl / std_pnl * (365**0.5)
+    return annualize_sharpe(pnls)
 
 
 def _safe_ratio(numerator: float, denominator: float) -> float:

@@ -27,6 +27,37 @@ _config_lock = threading.Lock()
 _last_mtime: float = 0.0
 _last_config: dict = {}
 _CONFIG_PATH = os.path.join("config", "settings.yaml")
+_PID_FILE = os.path.join("data", "output", "daemon.pid")
+
+
+def _check_pid_file() -> bool:
+    """检查是否已有调度器进程运行，返回 True 表示可启动"""
+    if os.path.exists(_PID_FILE):
+        try:
+            old_pid = int(open(_PID_FILE).read().strip())
+            # 检查进程是否存活
+            os.kill(old_pid, 0)
+            return False  # 进程仍在运行
+        except (ProcessLookupError, PermissionError):
+            pass  # 旧进程已退出
+        except (ValueError, OSError):
+            pass
+    return True
+
+
+def _write_pid_file() -> None:
+    """写入 PID 文件"""
+    os.makedirs(os.path.dirname(_PID_FILE), exist_ok=True)
+    with open(_PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def _remove_pid_file() -> None:
+    """删除 PID 文件"""
+    try:
+        os.remove(_PID_FILE)
+    except OSError:
+        pass
 
 
 def _maybe_reload_config(scheduler) -> None:
@@ -172,10 +203,10 @@ def job_check_alerts() -> None:
 
 def job_re_review() -> None:
     """定时: 持仓复审"""
-    from cryptobot.freqtrade_api import ft_api_get
-    from cryptobot.signal.bridge import update_signal_field
+    def _run():
+        from cryptobot.freqtrade_api import ft_api_get
+        from cryptobot.signal.bridge import update_signal_field
 
-    try:
         positions = ft_api_get("/status")
         if not positions:
             logger.debug("[调度] 无持仓，跳过复审")
@@ -201,8 +232,8 @@ def job_re_review() -> None:
                     )
 
         logger.info("[调度] 复审完成: %d 个持仓", len(positions))
-    except Exception as e:
-        logger.error("[调度] 复审失败: %s", e, exc_info=True)
+
+    _run_with_retry("持仓复审", _run)
 
 
 def job_cleanup() -> None:
@@ -326,23 +357,19 @@ def job_prompt_optimization() -> None:
 
 def job_urgent_review() -> None:
     """P&L 分级紧急复审: 亏损>3% 或盈利>10% 时立即复审"""
-    from cryptobot.freqtrade_api import ft_api_get
-    from cryptobot.workflow.graph import collect_data_for_symbols, re_review
-    from cryptobot.signal.bridge import update_signal_field
+    def _run():
+        from cryptobot.freqtrade_api import ft_api_get
+        from cryptobot.workflow.graph import collect_data_for_symbols, re_review
+        from cryptobot.signal.bridge import update_signal_field
 
-    try:
         positions = ft_api_get("/status") or []
-    except Exception as e:
-        logger.error("[调度] 紧急复审获取持仓失败: %s", e)
-        return
 
-    for pos in positions:
-        pnl_pct = (pos.get("profit_ratio", 0) or 0) * 100
-        pair = pos.get("pair", "")
-        symbol = pair.replace("/", "").replace(":USDT", "")
-        if pnl_pct < -3 or pnl_pct > 10:
-            logger.info("紧急复审触发: %s P&L=%.1f%%", symbol, pnl_pct)
-            try:
+        for pos in positions:
+            pnl_pct = (pos.get("profit_ratio", 0) or 0) * 100
+            pair = pos.get("pair", "")
+            symbol = pair.replace("/", "").replace(":USDT", "")
+            if pnl_pct < -3 or pnl_pct > 10:
+                logger.info("紧急复审触发: %s P&L=%.1f%%", symbol, pnl_pct)
                 state = collect_data_for_symbols([symbol])
                 suggestions = re_review([pos], state)
                 for s in suggestions:
@@ -355,8 +382,8 @@ def job_urgent_review() -> None:
                                 "[调度] 紧急复审更新 %s 止损 → %s",
                                 s["symbol"], s["new_stop_loss"],
                             )
-            except Exception as e:
-                logger.error("紧急复审失败 %s: %s", symbol, e)
+
+    _run_with_retry("紧急复审", _run)
 
 
 def job_strategy_advisor() -> None:
@@ -423,9 +450,9 @@ def job_volatile_toggle() -> None:
 
 def job_ml_retrain() -> None:
     """定时: ML 模型重训"""
-    from cryptobot.ml.retrainer import run_retrain
+    def _run():
+        from cryptobot.ml.retrainer import run_retrain
 
-    try:
         result = run_retrain()
         if result.action == "skipped":
             logger.info("[调度] ML 重训跳过: %s", result.reason)
@@ -440,16 +467,16 @@ def job_ml_retrain() -> None:
             from cryptobot.notify import send_message
             auc = result.metrics.get("auc_roc", 0)
             send_message(f"ML 模型重训: {result.version} (AUC={auc:.4f})")
-    except Exception as e:
-        logger.error("[调度] ML 重训失败: %s", e, exc_info=True)
+
+    _run_with_retry("ML 模型重训", _run)
 
 
 def job_journal_sync() -> None:
     """定时: 同步 Freqtrade 平仓数据到交易日志"""
-    from cryptobot.journal.storage import get_records_by_status, update_record
-    from cryptobot.freqtrade_api import ft_api_get
+    def _run():
+        from cryptobot.journal.storage import get_records_by_status, update_record
+        from cryptobot.freqtrade_api import ft_api_get
 
-    try:
         trades = ft_api_get("/trades") or []
         closed_trades = [t for t in trades if t.get("is_open") is False]
         active_records = get_records_by_status("active")
@@ -507,8 +534,8 @@ def job_journal_sync() -> None:
 
         if synced:
             logger.info("[调度] 交易日志同步: %d 笔", synced)
-    except Exception as e:
-        logger.error("[调度] 交易日志同步失败: %s", e, exc_info=True)
+
+    _run_with_retry("交易日志同步", _run)
 
 
 # ─── CLI ───────────────────────────────────────────────────────────────────
@@ -529,6 +556,11 @@ def start(run_now: bool, verbose: bool):
         level=level,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
+
+    if not _check_pid_file():
+        console.print("[red]调度器已在运行中 (PID 文件存在且进程存活)[/red]")
+        raise SystemExit(1)
+    _write_pid_file()
 
     settings = load_settings()
     schedule_cfg = settings.get("schedule", {})
@@ -761,4 +793,5 @@ def start(run_now: bool, verbose: bool):
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         stop_event.set()
+        _remove_pid_file()
         console.print("\n[yellow]调度器已停止[/yellow]")

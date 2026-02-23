@@ -63,18 +63,17 @@ class TestSelectWinner:
         assert winner["result"]["action"] == "long"
         assert winner["model_id"] == "b"  # 更高置信度
 
-    def test_two_models_disagreement_picks_higher_confidence(self, comp_setup):
-        """2 模型分歧时选置信度更高的"""
+    def test_two_models_disagreement_conservative_no_trade(self, comp_setup):
+        """2 模型分歧时保守策略 → no_trade"""
         mc = comp_setup
         results = [
             {"model_id": "a", "result": {"action": "long", "confidence": 70, "reasoning": "ok"}},
             {"model_id": "b", "result": {"action": "short", "confidence": 80, "reasoning": "ok"}},
         ]
         winner = mc.select_winner(results, "consensus", "BTCUSDT")
-        # 2 模型分歧: 选置信度更高的 b (short, 80)
-        assert winner["result"]["action"] == "short"
-        assert winner["model_id"] == "b"
-        assert winner["result"]["confidence"] == 80
+        # 2 模型分歧: 保守策略 → no_trade
+        assert winner["result"]["action"] == "no_trade"
+        assert "分歧" in winner["result"]["reasoning"]
 
     def test_three_models_no_consensus(self, comp_setup):
         """3 模型无共识 → no_trade"""

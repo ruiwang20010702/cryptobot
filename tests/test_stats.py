@@ -111,14 +111,14 @@ class TestCalcSharpe:
         assert _calc_sharpe([5.0]) == 0.0
 
     def test_known_value(self):
-        """验证计算公式: mean/std * sqrt(730)"""
+        """验证计算公式: mean/std * sqrt(252) (统一年化因子)"""
         import math
 
         returns = [1.0, 2.0, 3.0, 4.0, 5.0]
         mean = 3.0
         var = sum((x - mean) ** 2 for x in returns) / 4  # n-1
         std = math.sqrt(var)
-        expected = round(mean / std * math.sqrt(730), 4)
+        expected = round(mean / std * math.sqrt(252), 4)
         assert _calc_sharpe(returns) == expected
 
 

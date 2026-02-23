@@ -171,7 +171,7 @@ class TestRunRetrain:
         assert records[1].status == "active"
 
     def test_rolled_back_worse_model(self, tmp_path):
-        """新模型退化严重 -> rolled_back"""
+        """新模型退化严重 -> rolled_back (相对比较: 3% 退化)"""
         reg_path = tmp_path / "registry.json"
 
         old_record = ModelRecord(
@@ -185,7 +185,7 @@ class TestRunRetrain:
             save_registry([old_record])
 
         mock_model = MagicMock()
-        # AUC 0.80 < 0.85 - 0.02 = 0.83 -> 回滚
+        # AUC 0.80 < 0.85 * 0.97 = 0.8245 -> 回滚
         bad_metrics = _mock_metrics(0.80)
         X = [{"rsi": i} for i in range(60)]
         y = [i % 2 for i in range(60)]
@@ -196,7 +196,7 @@ class TestRunRetrain:
             patch("cryptobot.ml.retrainer.save_model") as mock_save,
             patch("cryptobot.ml.registry.REGISTRY_PATH", reg_path),
         ):
-            result = run_retrain(min_samples=50, rollback_threshold=0.02)
+            result = run_retrain(min_samples=50, rollback_ratio=0.03)
 
         assert result.action == "rolled_back"
         assert "已回滚" in result.reason
@@ -211,7 +211,7 @@ class TestRunRetrain:
         assert records[1].status == "rolled_back"
 
     def test_deployed_within_threshold(self, tmp_path):
-        """新模型略差但在阈值内 -> 仍然 deployed"""
+        """新模型略差但在阈值内 -> 仍然 deployed (相对比较)"""
         reg_path = tmp_path / "registry.json"
 
         old_record = ModelRecord(
@@ -225,8 +225,8 @@ class TestRunRetrain:
             save_registry([old_record])
 
         mock_model = MagicMock()
-        # AUC 0.84 >= 0.85 - 0.02 = 0.83 -> 部署
-        ok_metrics = _mock_metrics(0.84)
+        # AUC 0.83 >= 0.85 * 0.97 = 0.8245 -> 部署
+        ok_metrics = _mock_metrics(0.83)
         X = [{"rsi": i} for i in range(60)]
         y = [i % 2 for i in range(60)]
 
@@ -236,7 +236,7 @@ class TestRunRetrain:
             patch("cryptobot.ml.retrainer.save_model"),
             patch("cryptobot.ml.registry.REGISTRY_PATH", reg_path),
         ):
-            result = run_retrain(min_samples=50, rollback_threshold=0.02)
+            result = run_retrain(min_samples=50, rollback_ratio=0.03)
 
         assert result.action == "deployed"
 

@@ -254,14 +254,18 @@ REPLAY_TRADER_PROMPT = """\
 
 
 def _detect_replay_regime(snapshot: ReplaySnapshot) -> str:
-    """基于快照技术指标 + Hurst 指数推断 regime
+    """基于快照技术指标 + Hurst 指数推断 regime + 平滑
 
     规则:
     - ATR% > 3 → volatile (优先)
     - ADX(0.7) + Hurst(0.3) 加权评分 > 0.5 → trending
     - 其他 → ranging
+
+    回放模式下调用 regime_smoother (is_simulation=True) 做平滑，
+    并标注 regime_source: "replay_estimated"。
     """
     from cryptobot.indicators.hurst import calc_hurst_exponent, classify_hurst
+    from cryptobot.regime_smoother import smooth_regime_transition
 
     tech = snapshot.tech_indicators or {}
     volatility = tech.get("volatility", {})
@@ -271,26 +275,28 @@ def _detect_replay_regime(snapshot: ReplaySnapshot) -> str:
     adx = trend.get("adx", 0)
 
     if atr_pct > 3:
-        return "volatile"
-
-    # Hurst 计算: 从 _closes_4h 提取 (如有)
-    closes = tech.get("_closes_4h", [])
-    hurst_val = calc_hurst_exponent(closes) if closes else 0.5
-    hurst_hint, hurst_conf = classify_hurst(hurst_val)
-
-    # 加权评分: Hurst random 时中性 (不干预 ADX)
-    adx_score = min(adx / 50.0, 1.0)
-    if hurst_hint == "trending":
-        hurst_trending = hurst_conf
-    elif hurst_hint == "random":
-        hurst_trending = 0.5
+        raw_regime = "volatile"
     else:
-        hurst_trending = 0.0
-    trending_score = adx_score * 0.7 + hurst_trending * 0.3
+        # Hurst 计算: 从 _closes_4h 提取 (如有)
+        closes = tech.get("_closes_4h", [])
+        hurst_val = calc_hurst_exponent(closes) if closes else 0.5
+        hurst_hint, hurst_conf = classify_hurst(hurst_val)
 
-    if trending_score > 0.5:
-        return "trending"
-    return "ranging"
+        # 加权评分: Hurst random 时中性 (不干预 ADX)
+        adx_score = min(adx / 50.0, 1.0)
+        if hurst_hint == "trending":
+            hurst_trending = hurst_conf
+        elif hurst_hint == "random":
+            hurst_trending = 0.5
+        else:
+            hurst_trending = 0.0
+        trending_score = adx_score * 0.7 + hurst_trending * 0.3
+
+        raw_regime = "trending" if trending_score > 0.5 else "ranging"
+
+    # 回放模式平滑 (is_simulation=True 跳过持久化)
+    smoothed, _ = smooth_regime_transition(raw_regime, is_simulation=True)
+    return smoothed
 
 
 def _format_snapshot_prompt(snapshot: ReplaySnapshot, max_leverage: int) -> str:
@@ -407,6 +413,7 @@ def _parse_to_signal(
         "confidence": confidence,
         "timestamp": snapshot.as_of,
         "signal_source": "replay",
+        "regime_source": "replay_estimated",
         "reasoning": llm_output.get("reasoning", ""),
     }
 

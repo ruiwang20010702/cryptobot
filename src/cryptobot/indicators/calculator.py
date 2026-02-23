@@ -164,11 +164,46 @@ def load_klines(symbol: str = "BTCUSDT", timeframe: str = "4h") -> pd.DataFrame:
         ) from e
 
 
+def _insufficient_data_result(symbol: str, timeframe: str) -> dict:
+    """数据不足时返回全 None 的安全结果"""
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "kline_count": 0,
+        "latest_close": None,
+        "latest_time": None,
+        "trend": {
+            "ema_7": None, "ema_25": None, "ema_99": None,
+            "ema_alignment": "unknown",
+            "macd": None, "macd_signal": None, "macd_hist": None,
+            "macd_cross": "none",
+            "adx": None, "di_plus": None, "di_minus": None,
+        },
+        "momentum": {
+            "rsi_14": None, "rsi_zone": "unknown",
+            "stochrsi_k": None, "stochrsi_d": None,
+            "cci_20": None, "willr_14": None, "mfi_14": None,
+        },
+        "volatility": {
+            "bb_upper": None, "bb_middle": None, "bb_lower": None,
+            "bb_width": None, "bb_position": None,
+            "atr_14": None, "atr_pct": 0,
+        },
+        "volume": {"obv": None, "volume_latest": None},
+        "signals": {"technical_score": 0, "bias": "neutral", "signals": []},
+        "_insufficient_data": True,
+    }
+
+
 def calc_all_indicators(
     symbol: str = "BTCUSDT", timeframe: str = "4h", regime: str = "trending",
 ) -> dict:
     """计算全部技术指标，返回最新值的字典"""
     df = load_klines(symbol, timeframe)
+
+    if len(df) < 100:
+        logger.warning("K 线数据不足: %s %s 仅 %d 根 (需 ≥100)", symbol, timeframe, len(df))
+        return _insufficient_data_result(symbol, timeframe)
 
     close = df["close"].values.astype(np.float64)
     high = df["high"].values.astype(np.float64)

@@ -38,7 +38,11 @@ def get_fear_greed_index(limit: int = 30) -> dict:
         raw = resp.json()
     except Exception as e:
         logger.warning("获取恐惧贪婪指数失败: %s", e)
-        return {"current_value": 50, "current_classification": "Neutral", "error": str(e)}
+        return {
+            "current_value": 50, "current_classification": "Neutral",
+            "avg_7d": None, "avg_30d": None, "trend": None,
+            "error": str(e), "data_available": False,
+        }
 
     records = [
         {
@@ -134,7 +138,10 @@ def get_long_short_ratio(
         raw = resp.json()
     except Exception as e:
         logger.warning("获取多空比失败 %s: %s", symbol, e)
-        return {"symbol": symbol, "current_ratio": 1.0, "error": str(e)}
+        return {
+            "symbol": symbol, "current_ratio": 1.0,
+            "error": str(e), "data_available": False,
+        }
 
     records = [
         {
@@ -182,7 +189,10 @@ def get_top_trader_long_short(
         raw = resp.json()
     except Exception as e:
         logger.warning("获取大户多空比失败 %s: %s", symbol, e)
-        return {"symbol": symbol, "current_ratio": 1.0, "error": str(e)}
+        return {
+            "symbol": symbol, "current_ratio": 1.0,
+            "error": str(e), "data_available": False,
+        }
 
     records = [
         {

@@ -92,6 +92,8 @@ def close_position(
 
     pnl = pnl_per_unit * pos.amount * pos.leverage
     margin = pos.amount * pos.entry_price / pos.leverage
+    # 扣除往返手续费 (0.05% × 2 = 0.1%)
+    pnl -= margin * 0.001
     pnl_pct = pnl / margin * 100 if margin > 0 else 0.0
 
     trade_record = {

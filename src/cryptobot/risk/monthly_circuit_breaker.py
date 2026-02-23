@@ -55,16 +55,16 @@ def calc_monthly_pnl(months: int = 6) -> list[MonthlyPnL]:
         ym = ts.strftime("%Y-%m")
         monthly[ym].append(r.actual_pnl_usdt)
 
-    # 生成最近 N 个月的 key
+    # 生成最近 N 个自然月的 key（逐月回退到上月最后一天）
     now = datetime.now(timezone.utc)
     recent_months: list[str] = []
-    for i in range(months):
-        dt = now.replace(day=1) - timedelta(days=i * 28)
+    dt = now
+    for _ in range(months):
         ym = dt.strftime("%Y-%m")
-        if ym not in recent_months:
-            recent_months.append(ym)
+        recent_months.append(ym)
+        # 回退到上月：当月1号减1天 = 上月最后一天
+        dt = dt.replace(day=1) - timedelta(days=1)
 
-    # 补齐到正好 N 个月（上面近似可能重复或缺少）
     recent_months = sorted(set(recent_months), reverse=True)[:months]
 
     result: list[MonthlyPnL] = []

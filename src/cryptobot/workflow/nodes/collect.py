@@ -99,13 +99,16 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
             "description": "检测失败，默认震荡市",
         }
 
-    # 恐惧贪婪极端值可升级为 volatile
+    # 恐惧贪婪极端值可升级为 volatile (R6-L5: 不可变模式)
     fg_val = fear_greed.get("current_value", 50)
     is_volatile_upgrade = False
     old_regime = regime_result["regime"]  # 升级前保存
     if (fg_val < 20 or fg_val > 80) and regime_result["regime"] != "volatile":
-        regime_result["regime"] = "volatile"
-        regime_result["description"] += " (恐惧贪婪极端值触发升级)"
+        regime_result = {
+            **regime_result,
+            "regime": "volatile",
+            "description": regime_result["description"] + " (恐惧贪婪极端值触发升级)",
+        }
         is_volatile_upgrade = True
 
     # 平滑 regime 切换 (防止边界反复跳动)
@@ -122,7 +125,7 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
         is_volatile_upgrade=is_volatile_upgrade,
         is_simulation=is_simulation,
     )
-    regime_result["regime"] = smoothed_regime
+    regime_result = {**regime_result, "regime": smoothed_regime}
 
     if regime_changed:
         from cryptobot.notify import notify_regime_change
@@ -144,6 +147,8 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
         "volatility_state": regime_result.get("volatility_state", "normal"),
         "timeframe_details": regime_result.get("timeframe_details", {}),
         "fear_greed_value": fg_val,
+        "hurst_exponent": regime_result.get("hurst_exponent", 0.5),
+        "regime_confidence": regime_result.get("regime_confidence", 0.0),
     }
 
 
@@ -170,8 +175,22 @@ def collect_data(state: WorkflowState) -> dict:
     ok = sum(1 for d in market_data.values() if d.get("tech"))
     fail_rate = (len(symbols) - ok) / len(symbols) if symbols else 1
 
+    # R6-C4: 数据源可用率统计
+    _source_checks = [
+        ("fear_greed", fear_greed), ("market_overview", market_overview),
+        ("global_news", global_news), ("stablecoin_flows", stablecoin_flows),
+        ("macro_events", macro_events),
+    ]
+    available_sources = sum(1 for _, val in _source_checks if val)
+    total_sources = len(_source_checks)
+    data_availability = available_sources / total_sources if total_sources else 0
+    data_quality = "normal" if data_availability >= 0.5 else "degraded"
+    if data_quality == "degraded":
+        logger.warning("数据源可用率 %.0f%% < 50%%, 降低置信度上限", data_availability * 100)
+
     _console.print(f"    完成: {ok}/{len(symbols)} 有技术数据, "
                     f"恐惧贪婪={fear_greed.get('current_value', '?')}, "
+                    f"数据源={available_sources}/{total_sources}, "
                     f"耗时 {time.time() - t0:.0f}s")
 
     if fail_rate > 0.5:
@@ -185,12 +204,22 @@ def collect_data(state: WorkflowState) -> dict:
 
     # 市场状态检测
     regime = _detect_market_regime(market_data, fear_greed)
+    # R6-C4: 数据质量降级时注入标记并限制置信度
+    if data_quality == "degraded":
+        capped_conf = min(regime.get("confidence", 50), 60)
+        regime = {**regime, "data_quality": "degraded", "confidence": capped_conf}
+    else:
+        regime = {**regime, "data_quality": "normal"}
     _console.print(f"    市场状态: {regime['regime']} (置信度 {regime['confidence']}%)")
 
     # 记录 volatile 周期（仅累计，不做决策）
+    # R5-C5: volatile 策略已启用时不标记为观望
     try:
-        from cryptobot.evolution.volatile_toggle import record_volatile_cycle
-        is_observe = regime["regime"] == "volatile"
+        from cryptobot.evolution.volatile_toggle import (
+            record_volatile_cycle,
+            is_volatile_strategy_enabled,
+        )
+        is_observe = regime["regime"] == "volatile" and not is_volatile_strategy_enabled()
         record_volatile_cycle(regime["regime"], is_observe)
     except Exception as e:
         logger.debug("volatile_toggle 记录跳过: %s", e)
@@ -235,8 +264,8 @@ def collect_data(state: WorkflowState) -> dict:
                 "avg_pnl_pct": perf["avg_pnl_pct"],
                 "by_symbol": perf.get("by_symbol", {}),
             }
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("历史绩效摘要加载失败: %s", e)
 
     # 特征工程（非关键路径）
     try:

@@ -82,12 +82,9 @@ def simulate_trade(
     take_profits = signal.get("take_profit", [])
     signal_source = signal.get("signal_source", "ai")
 
-    # 入场价 = entry_range 中点 ± 滑点
+    # 入场价 = entry_range 中点 (滑点已在 cost_model 中统一扣除，不再偏移入场价)
     entry_mid = (entry_range[0] + entry_range[1]) / 2
-    slippage_offset = entry_mid * cost_config.slippage_pct / 100
-    entry_price = (
-        entry_mid + slippage_offset if is_long else entry_mid - slippage_offset
-    )
+    entry_price = entry_mid
 
     if entry_price <= 0:
         return None
@@ -155,14 +152,14 @@ def simulate_trade(
 
         # ── 止盈检查 ──
         if remaining_ratio > 0:
-            for tp in tp_levels:
+            for idx, tp in enumerate(tp_levels):
                 if tp["triggered"]:
                     continue
                 tp_hit = (
                     (high >= tp["price"]) if is_long else (low <= tp["price"])
                 )
                 if tp_hit:
-                    tp["triggered"] = True
+                    tp_levels[idx] = {**tp, "triggered": True}
                     portion = min(tp["ratio"], remaining_ratio)
                     weighted_exit_sum += tp["price"] * portion
                     remaining_ratio -= portion
@@ -267,6 +264,13 @@ def _parse_take_profits(take_profits: list, is_long: bool) -> list[dict]:
 
         if price is not None and price > 0:
             levels.append({"price": price, "ratio": ratio, "triggered": False})
+
+    # 归一化 ratio: 确保总和为 1.0
+    total_ratio = sum(lv["ratio"] for lv in levels)
+    if total_ratio > 0 and abs(total_ratio - 1.0) > 1e-9:
+        levels = [
+            {**lv, "ratio": lv["ratio"] / total_ratio} for lv in levels
+        ]
 
     # 按价格排序: long 从低到高触发，short 从高到低触发
     levels.sort(key=lambda x: x["price"], reverse=not is_long)

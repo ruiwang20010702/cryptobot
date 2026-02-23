@@ -111,7 +111,8 @@ def _count_virtual_pnl_positive_days() -> int:
             # 最近 7 天
             sorted_days = sorted(daily_pnl.keys(), reverse=True)[:7]
             positive_days += sum(1 for d in sorted_days if daily_pnl[d] > 0)
-        except Exception:
+        except Exception as e:
+            logger.warning("统计虚拟盘 %s 收益天数失败: %s", strategy, e)
             continue
 
     return positive_days
@@ -126,7 +127,8 @@ def _count_subtype_loss_streak() -> int:
 
     try:
         records = get_all_records()
-    except Exception:
+    except Exception as e:
+        logger.warning("获取交易记录失败: %s", e)
         return 0
 
     # 筛选 volatile 子状态的已平仓记录，按时间倒序
@@ -156,7 +158,8 @@ def _check_14d_volatile_pnl_negative() -> bool:
 
     try:
         records = get_all_records()
-    except Exception:
+    except Exception as e:
+        logger.warning("获取交易记录失败: %s", e)
         return False
 
     from datetime import timedelta
@@ -246,8 +249,8 @@ def evaluate_toggle(settings: dict | None = None) -> VolatileToggleState:
             send_message(
                 f"{emoji} Volatile 策略自适应: *{action}*\n{reason}"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Telegram 通知发送失败: %s", e)
 
     new_state = VolatileToggleState(
         enabled=new_enabled,

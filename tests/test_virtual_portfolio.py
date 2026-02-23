@@ -78,29 +78,35 @@ class TestClosePosition:
         portfolio = _make_portfolio(5000.0, [pos])
         result = close_position(portfolio, "BTCUSDT", "long", 55000.0)
         # pnl = (55000 - 50000) * 0.1 * 1 = 500
+        # fee = 5000 * 0.001 = 5 (往返手续费 0.1%)
+        # net_pnl = 500 - 5 = 495
         # margin = 0.1 * 50000 / 1 = 5000
-        # new_balance = 5000 + 5000 + 500 = 10500
-        assert result.current_balance == 10500.0
+        # new_balance = 5000 + 5000 + 495 = 10495
+        assert result.current_balance == 10495.0
         assert len(result.positions) == 0
         assert len(result.closed_trades) == 1
-        assert result.closed_trades[0]["pnl"] == 500.0
+        assert result.closed_trades[0]["pnl"] == 495.0
 
     def test_close_short_profit(self):
         pos = _make_position(side="short", price=50000.0, amount=0.1, leverage=2)
         portfolio = _make_portfolio(7500.0, [pos])
         result = close_position(portfolio, "BTCUSDT", "short", 48000.0)
         # pnl = (50000 - 48000) * 0.1 * 2 = 400
+        # fee = 2500 * 0.001 = 2.5 (往返手续费 0.1%)
+        # net_pnl = 400 - 2.5 = 397.5
         # margin = 0.1 * 50000 / 2 = 2500
-        # new_balance = 7500 + 2500 + 400 = 10400
-        assert result.current_balance == 10400.0
+        # new_balance = 7500 + 2500 + 397.5 = 10397.5
+        assert result.current_balance == 10397.5
 
     def test_close_long_loss(self):
         pos = _make_position(price=50000.0, amount=0.1, leverage=1)
         portfolio = _make_portfolio(5000.0, [pos])
         result = close_position(portfolio, "BTCUSDT", "long", 45000.0)
         # pnl = (45000 - 50000) * 0.1 * 1 = -500
-        assert result.current_balance == 9500.0
-        assert result.closed_trades[0]["pnl"] == -500.0
+        # fee = 5000 * 0.001 = 5 (往返手续费 0.1%)
+        # net_pnl = -500 - 5 = -505
+        assert result.current_balance == 9495.0
+        assert result.closed_trades[0]["pnl"] == -505.0
 
     def test_close_not_found(self):
         portfolio = _make_portfolio()

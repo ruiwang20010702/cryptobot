@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 BINANCE_FAPI = "https://fapi.binance.com"
 CACHE_TTL = 300  # 5 分钟 (订单簿变化快)
+EMPTY_CACHE_TTL = 60  # 空返回短 TTL，防止 API 雪崩
 
 
 def _empty_result() -> dict:
@@ -21,6 +22,7 @@ def _empty_result() -> dict:
         "top_bid": 0.0,
         "top_ask": 0.0,
         "spread_pct": 0.0,
+        "data_available": False,
     }
 
 
@@ -49,7 +51,9 @@ def get_orderbook_depth(symbol: str = "BTCUSDT", limit: int = 20) -> dict:
         asks = raw.get("asks", [])
 
         if not bids or not asks:
-            return _empty_result()
+            empty = _empty_result()
+            set_cache("orderbook", cache_key, empty)
+            return empty
 
         bid_volume = sum(float(qty) for _price, qty in bids)
         ask_volume = sum(float(qty) for _price, qty in asks)
@@ -72,4 +76,7 @@ def get_orderbook_depth(symbol: str = "BTCUSDT", limit: int = 20) -> dict:
 
     except Exception as e:
         logger.warning("订单簿获取失败 %s: %s", symbol, e)
-        return _empty_result()
+        empty = _empty_result()
+        # 短 TTL 缓存空结果，防止频繁重试导致 API 雪崩
+        set_cache("orderbook", cache_key, empty)
+        return empty

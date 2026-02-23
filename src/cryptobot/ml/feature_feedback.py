@@ -1,38 +1,53 @@
 """ML 特征重要性反馈 — 将 top features 注入分析师 prompt"""
 
 import logging
+import random
 
 from cryptobot.ml.lgb_scorer import load_latest_model
 
 logger = logging.getLogger(__name__)
 
-# 特征名 → 分析师角色映射
+# 特征名 → 分析师角色映射（与 extractors.py 实际输出对齐）
 _FEATURE_ROLE_MAP: dict[str, str] = {
-    "rsi_14": "technical",
+    # extract_tech_features
+    "rsi": "technical",
+    "adx": "technical",
     "macd_hist": "technical",
-    "bb_width": "technical",
-    "volume_ratio": "technical",
+    "bb_position": "technical",
+    "ema_score": "technical",
     "atr_pct": "technical",
-    "ema_cross": "technical",
-    "mtf_trend_score": "technical",
-    "mtf_momentum": "technical",
+    # extract_multi_tf_features
+    "tf_alignment_score": "technical",
+    "tf_bullish_count": "technical",
+    "tf_bearish_count": "technical",
+    # extract_onchain_features
     "funding_rate": "onchain",
-    "open_interest_change": "onchain",
+    "oi_change_pct": "onchain",
     "long_short_ratio": "onchain",
-    "taker_buy_ratio": "onchain",
-    "fear_greed_value": "sentiment",
+    # extract_sentiment_features
+    "fear_greed_index": "sentiment",
     "news_sentiment": "sentiment",
-    "btc_correlation": "fundamental",
-    "dxy_trend": "sentiment",
-    "stablecoin_flow": "sentiment",
-    "macro_risk": "sentiment",
+    # extract_orderbook_features
     "bid_ask_ratio": "technical",
     "spread_pct": "technical",
+    # extract_macro_features
+    "dxy_value": "sentiment",
+    "high_impact_events": "sentiment",
+    "stablecoin_flow": "sentiment",
+    # extract_correlation_features
+    "btc_correlation": "fundamental",
+    "btc_corr_category": "fundamental",
 }
 
 
-def build_feature_feedback_addon(top_n: int = 5) -> dict[str, str]:
+def build_feature_feedback_addon(
+    top_n: int = 5,
+    epsilon: float = 0.1,
+) -> dict[str, str]:
     """加载最新模型的 feature importance, 按角色分组生成 addon
+
+    epsilon-greedy 探索: 以 epsilon 概率随机替换 1 个 top 特征为非 top 特征，
+    防止特征反馈陷入局部最优。
 
     Returns: {"technical": "\\n### ML ...", "onchain": "...", ...}
     无模型时返回空 dict。
@@ -48,7 +63,18 @@ def build_feature_feedback_addon(top_n: int = 5) -> dict[str, str]:
 
     # 按重要性降序排列，取 top_n
     pairs = sorted(zip(names, importances), key=lambda x: -x[1])
-    top_pairs = pairs[:top_n]
+    top_pairs = list(pairs[:top_n])
+
+    # epsilon-greedy 探索: 随机替换 1 个 top 特征为非 top 特征
+    rest_pairs = pairs[top_n:]
+    if rest_pairs and top_pairs and random.random() < epsilon:
+        replace_idx = random.randrange(len(top_pairs))
+        explore_feat = random.choice(rest_pairs)
+        logger.info(
+            "epsilon-greedy 探索: 替换 %s → %s",
+            top_pairs[replace_idx][0], explore_feat[0],
+        )
+        top_pairs[replace_idx] = explore_feat
 
     # 按角色分组
     grouped: dict[str, list[tuple[str, float]]] = {}

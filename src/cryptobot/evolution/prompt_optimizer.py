@@ -55,13 +55,18 @@ def check_performance_decline(days_short: int = 7, days_long: int = 30) -> dict:
         gap_pct = round((wr_long - wr_short) / wr_long * 100, 1)
 
     # z-test for statistical significance of win rate decline
+    # 使用互斥样本: 7d vs 前 23d (排除最近 7d)
     significant = False
     if closed_short >= 30 and wr_long > 0:
         import math
-        pooled_wr = (wr_short * closed_short + wr_long * closed_long) / (closed_short + closed_long) if (closed_short + closed_long) > 0 else 0
-        se = math.sqrt(pooled_wr * (1 - pooled_wr) * (1 / closed_short + 1 / closed_long)) if pooled_wr > 0 and pooled_wr < 1 else 0
-        z_score = (wr_long - wr_short) / se if se > 0 else 0
-        significant = z_score > 1.645  # one-tailed p < 0.05
+        prior = calc_performance(days_long)
+        wr_prior = prior.get("win_rate", 0)
+        closed_prior = prior.get("closed", 0) - closed_short  # 扣除重叠的 7d 部分
+        if closed_prior > 0 and wr_prior > 0:
+            pooled_wr = (wr_short * closed_short + wr_prior * closed_prior) / (closed_short + closed_prior) if (closed_short + closed_prior) > 0 else 0
+            se = math.sqrt(pooled_wr * (1 - pooled_wr) * (1 / closed_short + 1 / closed_prior)) if 0 < pooled_wr < 1 else 0
+            z_score = (wr_prior - wr_short) / se if se > 0 else 0
+            significant = z_score > 1.645  # one-tailed p < 0.05
 
     declined = (
         closed_short >= 30
@@ -224,8 +229,7 @@ def run_optimization_cycle() -> dict:
     Returns:
         {"triggered": bool, "new_version": str|None, "reason": str}
     """
-    from cryptobot.evolution.prompt_manager import create_version, activate_version
-    from cryptobot.workflow.prompts import reset_prompt_version_cache
+    from cryptobot.evolution.prompt_manager import create_version
 
     # 1. 检查绩效下降
     decline = check_performance_decline()
@@ -255,14 +259,13 @@ def run_optimization_cycle() -> dict:
     # 3. AI 生成改进
     improvement = generate_improved_prompt(analysis + "\n\n" + win_analysis)
 
-    # 4. 创建新版本
+    # 4. 创建新版本 (草稿，不自动激活)
     addons = improvement.get("addons", {})
     note = improvement.get("note", "自动优化")
-    new_version = create_version(note=f"[自动优化] {note}", addons=addons)
-
-    # 5. 激活新版本
-    activate_version(new_version)
-    reset_prompt_version_cache()
+    new_version = create_version(
+        note=f"[自动优化-待审核] {note}", addons=addons,
+        status="pending_review",
+    )
 
     # 6. 记录迭代
     iteration = {

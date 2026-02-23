@@ -435,10 +435,12 @@ class AgentSignalStrategy(IStrategy):
         **kwargs,
     ) -> float:
         """控制初始仓位大小"""
+        min_stake_amount = min_stake if min_stake else 0
         signal = self._get_signal_for_pair(pair)
         if signal and signal.get("position_size_usdt"):
-            return min(signal["position_size_usdt"], max_stake)
-        return proposed_stake
+            stake = min(signal["position_size_usdt"], max_stake)
+            return max(stake, min_stake_amount)
+        return max(proposed_stake, min_stake_amount)
 
     def leverage(
         self,
@@ -454,10 +456,26 @@ class AgentSignalStrategy(IStrategy):
         """杠杆控制
 
         优先读取 Agent 信号杠杆，否则使用默认值。
-        硬上限 5x。
+        硬上限从 signal.max_leverage → settings.yaml → 5x 依次 fallback。
         """
         signal = self._get_signal_for_pair(pair)
+
+        # 确定杠杆硬上限: signal.max_leverage → settings → 5
+        hard_limit = 5.0
+        if signal and signal.get("max_leverage"):
+            hard_limit = float(signal["max_leverage"])
+        else:
+            try:
+                import yaml
+                with open("config/settings.yaml") as f:
+                    settings = yaml.safe_load(f) or {}
+                hard_limit = float(
+                    settings.get("risk", {}).get("max_leverage", 5)
+                )
+            except Exception:
+                pass
+
         if signal and signal.get("leverage"):
             lev = float(signal["leverage"])
-            return min(lev, max_leverage, 5.0)
-        return min(3.0, max_leverage)
+            return min(lev, max_leverage, hard_limit)
+        return min(3.0, max_leverage, hard_limit)

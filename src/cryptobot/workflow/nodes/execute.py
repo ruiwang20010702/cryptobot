@@ -50,12 +50,19 @@ def execute(state: WorkflowState) -> dict:
             logger.info("跳过 %s: 已持有同方向 %s 仓位", sym, sig_action)
             _console.print(f"    [yellow]跳过 {sym}: 已有 {sig_action} 持仓[/yellow]")
             continue
-        signal["prompt_version"] = get_prompt_version()
-        # P20: 注入 regime/capital_tier 上下文
+        # 不可变模式: 构建新 dict 而非修改原信号
         regime = state.get("market_regime", {})
         capital_tier_info = state.get("capital_tier", {})
-        signal["regime_name"] = regime.get("regime")
-        signal["capital_tier"] = capital_tier_info.get("tier")
+        signal = {
+            **signal,
+            "prompt_version": get_prompt_version(),
+            "regime_name": regime.get("regime"),
+            "capital_tier": capital_tier_info.get("tier"),
+            "strategy_route": signal.get("strategy_route"),
+            "weight": signal.get("weight"),
+            "ml_score": signal.get("ml_score"),
+            "model_id": signal.get("model_id"),
+        }
         # P11.12: 附加执行优化建议
         try:
             from cryptobot.risk.execution_optimizer import (
@@ -64,13 +71,13 @@ def execute(state: WorkflowState) -> dict:
             )
             window = calc_optimal_execution_window(sym, sig_action)
             funding = calc_funding_schedule(sym)
-            signal["execution_hint"] = {
+            signal = {**signal, "execution_hint": {
                 "recommended_hour_utc": window.recommended_hour_utc,
                 "total_cost_estimate": window.total_cost_estimate,
                 "funding_hours_until": funding.hours_until,
                 "funding_rate": funding.current_rate,
                 "funding_suggestion": funding.action_suggestion,
-            }
+            }}
         except Exception:
             pass  # 执行建议是增强功能，失败不阻塞
         try:

@@ -83,11 +83,19 @@ def calc_kelly_params(
     try:
         from cryptobot.journal.storage import get_all_records
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        all_closed = [
-            r for r in get_all_records()
-            if r.status == "closed" and r.timestamp >= cutoff
-        ]
+        cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
+        all_closed = []
+        for r in get_all_records():
+            if r.status != "closed" or not r.timestamp:
+                continue
+            try:
+                ts = datetime.fromisoformat(r.timestamp.replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except (ValueError, AttributeError):
+                continue
+            if ts >= cutoff_dt:
+                all_closed.append(r)
     except Exception as e:
         logger.warning("Kelly 记录加载失败: %s, 使用默认值", e)
         f = _kelly_f(0.5, 1.5)
@@ -167,10 +175,12 @@ def calc_portfolio_adjusted_size(
     corr_matrix: object | None = None,
     high_corr_threshold: float = 0.7,
     reduction_factor: float = 0.5,
+    action: str | None = None,
 ) -> dict:
     """高相关同向持仓 -> 仓位缩减
 
     positions: [{"symbol": "...", "action": "...", "size_usdt": ...}]
+    action: 新信号方向 (long/short)，仅对同向高相关仓位缩减
 
     统计 positions 中与 symbol 相关性 > high_corr_threshold 且同方向的数量 n。
     n >= 3: base_size * reduction_factor^2
@@ -189,12 +199,6 @@ def calc_portfolio_adjusted_size(
             "reason": "无持仓或无相关性矩阵",
         }
 
-    # 推断新信号方向: 从 positions 列表之外获取不到，用 symbol 匹配
-    # 调用者应在 positions 外传 action; 这里从最后一个 position 推断 "同向"
-    # 实际上，调用者需要提供新信号 action，我们通过 positions 中的同 symbol 推断
-    # -> 改用额外参数不破坏签名，通过 positions 最后传入当前信号
-    # 但为了简洁，我们假设 symbol 是新信号，需要 action 来判断同向
-    # 方案: 检查所有持仓与 symbol 的相关性和方向
     try:
         from cryptobot.risk.correlation import get_correlation
     except ImportError:
@@ -211,6 +215,9 @@ def calc_portfolio_adjusted_size(
     for pos in positions:
         pos_sym = pos.get("symbol", "")
         if pos_sym == symbol:
+            continue
+        # 仅对同向持仓缩减（做多和做多同向，做空和做空同向）
+        if action is not None and pos.get("action") != action:
             continue
         corr = get_correlation(corr_matrix, symbol, pos_sym)
         if corr > high_corr_threshold:
@@ -362,15 +369,9 @@ def calc_position_size(
         max_loss_amount / effective_sl_pct if effective_sl_pct > 0 else 0
     )
 
-    # --- 方法 2: 凯利公式 ---
-    # f* = (p * b - q) / b  其中 p=胜率, b=盈亏比, q=1-p
-    kelly_fraction = 0
-    if avg_win_loss_ratio > 0:
-        q = 1 - win_rate
-        kelly_fraction = (
-            (win_rate * avg_win_loss_ratio - q) / avg_win_loss_ratio
-        )
-        kelly_fraction = max(0, kelly_fraction)
+    # --- 方法 2: 凯利公式 (复用 _kelly_f) ---
+    kelly_fraction = _kelly_f(win_rate, avg_win_loss_ratio)
+    if kelly_fraction > 0:
         # 动态半 Kelly 比例：基于 regime 和 confidence 查表
         _KELLY_SCALE = {
             ("trending", True): 0.6,
@@ -403,7 +404,7 @@ def calc_position_size(
     portfolio_adj = None
     if positions is not None and corr_matrix is not None:
         portfolio_adj = calc_portfolio_adjusted_size(
-            symbol, margin_amount, positions, corr_matrix,
+            symbol, margin_amount, positions, corr_matrix, action=action,
         )
         margin_amount = portfolio_adj["adjusted_size_usdt"]
 

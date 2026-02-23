@@ -29,6 +29,17 @@ class TradeCosts:
     total_pct: float  # 总成本 (%)
 
 
+def _count_funding_settlements(duration_hours: float) -> int:
+    """计算持仓期间经历的资金费率结算次数
+
+    Binance 永续合约在 UTC 0:00, 8:00, 16:00 结算。
+    结算周期为 8h，持仓 N 小时最多经历 floor(N/8) 次结算。
+    """
+    if duration_hours <= 0:
+        return 0
+    return int(duration_hours // 8)
+
+
 def calc_trade_costs(
     config: CostConfig,
     duration_hours: float,
@@ -51,8 +62,8 @@ def calc_trade_costs(
         slip_base = slip_base * config.volatile_slippage_multiplier
     slippage = slip_base * leverage
 
-    # 资金费率: 按持仓时长累积，每8小时结算一次
-    funding_periods = max(0, duration_hours / 8)
+    # 资金费率: 按 8h 结算时点 (0, 8, 16 UTC) 计算实际结算次数
+    funding_periods = _count_funding_settlements(duration_hours)
     funding = config.funding_rate_per_8h * funding_periods * leverage
 
     total = entry_fee + exit_fee + slippage + funding
