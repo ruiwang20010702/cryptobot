@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # ─── 配置热更新 ──────────────────────────────────────────────────────────
 
+_config_lock = threading.Lock()
 _last_mtime: float = 0.0
 _last_config: dict = {}
 _CONFIG_PATH = os.path.join("config", "settings.yaml")
@@ -37,21 +38,22 @@ def _maybe_reload_config(scheduler) -> None:
     except OSError:
         return  # 文件不存在不报错
 
-    if mtime == _last_mtime:
-        return
+    with _config_lock:
+        if mtime == _last_mtime:
+            return
 
-    _last_mtime = mtime
+        _last_mtime = mtime
 
-    try:
-        import yaml
-        with open(_CONFIG_PATH) as f:
-            new_config = yaml.safe_load(f) or {}
-    except Exception as e:
-        logger.warning("配置文件解析失败: %s", e)
-        return
+        try:
+            import yaml
+            with open(_CONFIG_PATH) as f:
+                new_config = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning("配置文件解析失败: %s", e)
+            return
 
-    old_config = _last_config
-    _last_config = new_config
+        old_config = _last_config
+        _last_config = new_config
 
     if not old_config:
         return  # 首次加载，不触发 reschedule
@@ -91,12 +93,35 @@ def _symbol_to_ft_pair(symbol: str) -> str:
 
 # ─── 定时任务函数 ──────────────────────────────────────────────────────────
 
+def _notify_task_failure(task_name: str, error: Exception) -> None:
+    """任务失败时发送 Telegram 通知"""
+    try:
+        from cryptobot.notify import send_message
+        send_message(f"[调度] 任务失败: {task_name}\n{error}")
+    except Exception:
+        logger.warning("[调度] 失败通知发送失败")
+
+
+def _run_with_retry(task_name: str, fn, max_retries: int = 1) -> None:
+    """运行任务，失败时重试一次并发送通知"""
+    for attempt in range(1 + max_retries):
+        try:
+            fn()
+            return
+        except Exception as e:
+            if attempt < max_retries:
+                logger.warning("[调度] %s 失败 (重试 %d/%d): %s",
+                               task_name, attempt + 1, max_retries, e)
+            else:
+                logger.error("[调度] %s 最终失败: %s", task_name, e, exc_info=True)
+                _notify_task_failure(task_name, e)
+
+
 def job_workflow_run() -> None:
     """定时: 完整分析工作流"""
-    from cryptobot.workflow.graph import build_graph
-
-    logger.info("[调度] 开始完整分析工作流...")
-    try:
+    def _run():
+        from cryptobot.workflow.graph import build_graph
+        logger.info("[调度] 开始完整分析工作流...")
         app = build_graph()
         final_state = app.invoke({})
         executed = final_state.get("executed", [])
@@ -105,17 +130,17 @@ def job_workflow_run() -> None:
             "[调度] 工作流完成: %d 信号写入, %d 错误",
             len(executed), len(errors),
         )
-    except Exception as e:
-        logger.error("[调度] 工作流失败: %s", e, exc_info=True)
+
+    _run_with_retry("完整分析工作流", _run)
 
 
 def job_check_alerts() -> None:
     """定时: 检查告警"""
-    from cryptobot.cli.monitor import _build_position_alerts, _build_signal_only_alerts
-    from cryptobot.freqtrade_api import ft_api_get
-    from cryptobot.signal.bridge import read_signals
+    def _run():
+        from cryptobot.cli.monitor import _build_position_alerts, _build_signal_only_alerts
+        from cryptobot.freqtrade_api import ft_api_get
+        from cryptobot.signal.bridge import read_signals
 
-    try:
         signals = read_signals(filter_expired=False)
         positions = ft_api_get("/status")
 
@@ -141,8 +166,8 @@ def job_check_alerts() -> None:
                 notify_alert("WARNING", a["message"])
         else:
             logger.debug("[调度] 告警检查: 一切正常")
-    except Exception as e:
-        logger.error("[调度] 告警检查失败: %s", e, exc_info=True)
+
+    _run_with_retry("告警检查", _run)
 
 
 def job_re_review() -> None:
@@ -425,8 +450,15 @@ def job_journal_sync() -> None:
                     continue
                 # 时间窗口: trade 的开仓时间必须在 record 之后
                 open_date = trade.get("open_date", "")
-                if open_date and record.timestamp > open_date:
-                    continue
+                if open_date:
+                    from datetime import datetime
+                    try:
+                        open_dt = datetime.fromisoformat(open_date[:19])
+                        record_dt = datetime.fromisoformat(record.timestamp[:19])
+                        if record_dt > open_dt:
+                            continue
+                    except (ValueError, TypeError):
+                        continue
 
                 pnl_pct = (trade.get("profit_ratio", 0) or 0) * 100
                 pnl_usdt = trade.get("profit_abs", 0) or 0
@@ -628,13 +660,14 @@ def start(run_now: bool, verbose: bool):
 
     # 初始化配置快照
     global _last_mtime, _last_config
-    try:
-        _last_mtime = os.path.getmtime(_CONFIG_PATH)
-        import yaml
-        with open(_CONFIG_PATH) as f:
-            _last_config = yaml.safe_load(f) or {}
-    except OSError:
-        pass
+    with _config_lock:
+        try:
+            _last_mtime = os.path.getmtime(_CONFIG_PATH)
+            import yaml
+            with open(_CONFIG_PATH) as f:
+                _last_config = yaml.safe_load(f) or {}
+        except OSError:
+            pass
 
     console.print("[cyan]调度器启动[/cyan]")
     console.print(f"  完整分析: 每 {full_cycle_min}min")

@@ -59,9 +59,24 @@ def init_cmd():
             env_lines.append(f"TELEGRAM_CHAT_ID={tg_chat}")
 
     if env_lines and ENV_FILE.exists():
-        with open(ENV_FILE, "a") as f:
-            f.write("\n" + "\n".join(env_lines) + "\n")
-        console.print(f"  已追加 {len(env_lines)} 个配置到 .env")
+        existing_content = ENV_FILE.read_text()
+        existing_keys = set()
+        for line in existing_content.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                existing_keys.add(stripped.split("=", 1)[0])
+
+        new_lines = [
+            line for line in env_lines
+            if line.split("=", 1)[0] not in existing_keys
+        ]
+        if new_lines:
+            with open(ENV_FILE, "a") as f:
+                f.write("\n" + "\n".join(new_lines) + "\n")
+            console.print(f"  已追加 {len(new_lines)} 个配置到 .env")
+        skipped = len(env_lines) - len(new_lines)
+        if skipped:
+            console.print(f"  跳过 {skipped} 个已存在的 key")
 
     # 4. 运行 doctor
     console.print("\n运行健康检查...")

@@ -173,17 +173,23 @@ def screen(state: WorkflowState) -> dict:
             errs.append(f"coin_news_{sym}: {e}")
         return sym, info, news, errs
 
+    # 收集结果后批量创建新 dict，不在线程中修改 state
+    extra_results: dict[str, tuple] = {}
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {pool.submit(_fetch_coin_extra, s): s for s in screened}
         for future in as_completed(futures):
             sym, info, news, errs = future.result()
-            market_data[sym]["coin_info"] = info
-            market_data[sym]["coin_news"] = news
+            extra_results[sym] = (info, news)
             errors.extend(errs)
+
+    # 批量创建新 market_data，不原地修改
+    updated_market_data = {**market_data}
+    for sym, (info, news) in extra_results.items():
+        updated_market_data[sym] = {**updated_market_data[sym], "coin_info": info, "coin_news": news}
 
     return {
         "screened_symbols": screened,
         "screening_scores": scores,
-        "market_data": market_data,
+        "market_data": updated_market_data,
         "errors": errors,
     }

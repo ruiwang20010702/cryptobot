@@ -54,10 +54,20 @@ def check_performance_decline(days_short: int = 7, days_long: int = 30) -> dict:
     if wr_long > 0:
         gap_pct = round((wr_long - wr_short) / wr_long * 100, 1)
 
+    # z-test for statistical significance of win rate decline
+    significant = False
+    if closed_short >= 30 and wr_long > 0:
+        import math
+        pooled_wr = (wr_short * closed_short + wr_long * closed_long) / (closed_short + closed_long) if (closed_short + closed_long) > 0 else 0
+        se = math.sqrt(pooled_wr * (1 - pooled_wr) * (1 / closed_short + 1 / closed_long)) if pooled_wr > 0 and pooled_wr < 1 else 0
+        z_score = (wr_long - wr_short) / se if se > 0 else 0
+        significant = z_score > 1.645  # one-tailed p < 0.05
+
     declined = (
         closed_short >= 30
         and wr_long > 0
         and wr_short < wr_long * 0.8
+        and significant
     )
 
     return {
@@ -67,6 +77,7 @@ def check_performance_decline(days_short: int = 7, days_long: int = 30) -> dict:
         "gap_pct": gap_pct,
         "closed_7d": closed_short,
         "closed_30d": closed_long,
+        "significant": significant,
     }
 
 

@@ -173,6 +173,17 @@ def grid_create(
         save_grid_state,
     )
 
+    # 参数边界验证
+    if grids < 2 or grids > 100:
+        console.print("[red]Error: grids 须在 2~100 之间[/red]")
+        return
+    if investment <= 0:
+        console.print("[red]Error: investment 须大于 0[/red]")
+        return
+    if leverage < 1 or leverage > 5:
+        console.print("[red]Error: leverage 须在 1~5 之间[/red]")
+        return
+
     if auto_range or (upper is None and lower is None):
         try:
             lower, upper = auto_detect_range(symbol)
@@ -185,6 +196,10 @@ def grid_create(
             return
     elif upper is None or lower is None:
         console.print("[red]请同时指定 --upper 和 --lower[/red]")
+        return
+
+    if lower >= upper:
+        console.print("[red]Error: lower 必须小于 upper[/red]")
         return
 
     config = GridConfig(

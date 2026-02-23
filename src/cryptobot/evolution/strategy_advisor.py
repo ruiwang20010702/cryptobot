@@ -113,6 +113,7 @@ def _expire_old_rules(data: dict) -> dict:
                 renewed = {
                     **rule,
                     "expires_at": (now + timedelta(days=RULE_TTL_DAYS)).isoformat(),
+                    "renewed_at": now.isoformat(),
                 }
                 still_active.append(renewed)
                 logger.info("规则续期: %s (提升 %.1f%%)", rule["id"], evaluation["improvement_pct"])
@@ -157,8 +158,15 @@ def _evaluate_expired_rule(rule: dict) -> dict:
             if r.status == "closed" and r.actual_pnl_pct is not None
         ]
 
-        before = [r for r in closed if r.timestamp < created_at]
-        after = [r for r in closed if r.timestamp >= created_at]
+        created_dt = datetime.fromisoformat(created_at) if created_at else datetime.min
+        before = [
+            r for r in closed
+            if datetime.fromisoformat(r.timestamp) < created_dt
+        ]
+        after = [
+            r for r in closed
+            if datetime.fromisoformat(r.timestamp) >= created_dt
+        ]
 
         if len(before) < 2 or len(after) < 2:
             return {
@@ -271,7 +279,11 @@ def _gather_evidence() -> dict | None:
     capital_info = {}
     try:
         from cryptobot.capital_strategy import detect_capital_tier
-        capital_info = detect_capital_tier()
+        from cryptobot.freqtrade_api import ft_api_get
+        balance_data = ft_api_get("/balance") or {}
+        balance = balance_data.get("total", 0)
+        if balance > 0:
+            capital_info = detect_capital_tier(balance)
     except Exception:
         pass
 

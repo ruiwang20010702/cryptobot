@@ -88,6 +88,10 @@ def evaluate(days: int, json_output: bool):
 @click.option("--yes", "-y", is_flag=True, help="跳过确认")
 def simulate(days: int, interval: int, json_output: bool, yes: bool):
     """历史回放模拟: 用过去数据跑 AI 工作流并评估"""
+    if interval <= 0:
+        console.print("[red]Error: interval 须大于 0[/red]")
+        return
+
     from cryptobot.backtest.simulator import run_simulation
 
     total_cycles = days * 24 // interval
@@ -674,6 +678,10 @@ def replay_history(
     yes: bool,
 ):
     """历史回放: 用历史 K 线驱动 LLM 生成交易信号并回测"""
+    if interval <= 0:
+        console.print("[red]Error: interval 须大于 0[/red]")
+        return
+
     from dataclasses import asdict
     from cryptobot.backtest.historical_replay import (
         ReplayConfig,

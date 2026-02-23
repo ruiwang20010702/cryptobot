@@ -152,6 +152,8 @@ def trade(state: WorkflowState) -> dict:
             for aux in routes[1:]:
                 if aux.strategy == "grid" and aux.weight > 0:
                     _update_virtual_grid(symbol, current_price)
+                elif aux.strategy == "funding_arb" and aux.weight > 0:
+                    _update_virtual_funding(symbol)
         except Exception as e:
             logger.warning("多策略路由失败 %s: %s", symbol, e)
 
@@ -347,53 +349,63 @@ def trade(state: WorkflowState) -> dict:
     for i, result in enumerate(results):
         symbol, current_price = task_meta[i]
         if isinstance(result, dict) and "error" not in result:
+            # 创建副本，不修改原始 result
+            corrected = {**result}
+
             # C6 兜底: long/short 必须有 stop_loss，否则强制 no_trade
-            if result.get("action") in ("long", "short") and result.get("stop_loss") is None:
-                logger.warning("%s: action=%s 但无 stop_loss，强制改为 no_trade", symbol, result["action"])
-                result["action"] = "no_trade"
-                result["reasoning"] = (result.get("reasoning", "") + " [系统: 缺少止损，已拦截]")
+            if corrected.get("action") in ("long", "short") and corrected.get("stop_loss") is None:
+                logger.warning("%s: action=%s 但无 stop_loss，强制改为 no_trade", symbol, corrected["action"])
+                corrected = {
+                    **corrected,
+                    "action": "no_trade",
+                    "reasoning": corrected.get("reasoning", "") + " [系统: 缺少止损，已拦截]",
+                }
             # P2: 止损方向验证
-            if result.get("action") == "long" and result.get("stop_loss") is not None:
-                if result["stop_loss"] >= current_price and current_price > 0:
+            if corrected.get("action") == "long" and corrected.get("stop_loss") is not None:
+                if corrected["stop_loss"] >= current_price and current_price > 0:
                     logger.warning(
                         "%s: long 止损 %.2f >= 当前价 %.2f, 方向错误",
-                        symbol, result["stop_loss"], current_price,
+                        symbol, corrected["stop_loss"], current_price,
                     )
-                    result["action"] = "no_trade"
-                    result["reasoning"] = (
-                        result.get("reasoning", "") + " [系统: 止损方向错误]"
-                    )
-            elif result.get("action") == "short" and result.get("stop_loss") is not None:
-                if result["stop_loss"] <= current_price and current_price > 0:
+                    corrected = {
+                        **corrected,
+                        "action": "no_trade",
+                        "reasoning": corrected.get("reasoning", "") + " [系统: 止损方向错误]",
+                    }
+            elif corrected.get("action") == "short" and corrected.get("stop_loss") is not None:
+                if corrected["stop_loss"] <= current_price and current_price > 0:
                     logger.warning(
                         "%s: short 止损 %.2f <= 当前价 %.2f, 方向错误",
-                        symbol, result["stop_loss"], current_price,
+                        symbol, corrected["stop_loss"], current_price,
                     )
-                    result["action"] = "no_trade"
-                    result["reasoning"] = (
-                        result.get("reasoning", "") + " [系统: 止损方向错误]"
-                    )
+                    corrected = {
+                        **corrected,
+                        "action": "no_trade",
+                        "reasoning": corrected.get("reasoning", "") + " [系统: 止损方向错误]",
+                    }
 
             # P2: 止损距离验证 (0.5% - 15%)
             if (
-                result.get("action") in ("long", "short")
-                and result.get("stop_loss") is not None
+                corrected.get("action") in ("long", "short")
+                and corrected.get("stop_loss") is not None
                 and current_price > 0
             ):
-                sl_dist = abs(result["stop_loss"] - current_price) / current_price * 100
+                sl_dist = abs(corrected["stop_loss"] - current_price) / current_price * 100
                 if sl_dist < 0.5 or sl_dist > 15:
                     logger.warning(
                         "%s: 止损距离 %.1f%% 不在合理范围 0.5-15%%", symbol, sl_dist,
                     )
-                    result["action"] = "no_trade"
-                    result["reasoning"] = (
-                        result.get("reasoning", "")
-                        + f" [系统: 止损距离 {sl_dist:.1f}% 超出合理范围 0.5-15%]"
-                    )
+                    corrected = {
+                        **corrected,
+                        "action": "no_trade",
+                        "reasoning": (
+                            corrected.get("reasoning", "")
+                            + f" [系统: 止损距离 {sl_dist:.1f}% 超出合理范围 0.5-15%]"
+                        ),
+                    }
 
-            result["symbol"] = symbol
-            result["current_price"] = current_price
-            decisions.append(result)
+            corrected = {**corrected, "symbol": symbol, "current_price": current_price}
+            decisions.append(corrected)
         else:
             err = result.get("error", "非 JSON 响应") if isinstance(result, dict) else "非 JSON 响应"
             errors.append(f"trade_{symbol}: {err}")
@@ -415,3 +427,12 @@ def _update_virtual_grid(symbol: str, current_price: float) -> None:
         run_grid_check(symbol)
     except Exception as e:
         logger.debug("网格更新失败 %s: %s", symbol, e)
+
+
+def _update_virtual_funding(symbol: str) -> None:
+    """更新资金费率套利虚拟盘（静默失败）"""
+    try:
+        from cryptobot.strategy.funding_arb import scan_funding_opportunities
+        scan_funding_opportunities()
+    except Exception as e:
+        logger.debug("资金费率套利更新失败 %s: %s", symbol, e)

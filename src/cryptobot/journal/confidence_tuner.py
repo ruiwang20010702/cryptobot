@@ -63,7 +63,8 @@ def calc_dynamic_threshold(days: int = 30) -> dict:
             continue
 
         midpoint = bucket_def["midpoint"]
-        expected_wr = midpoint / 100  # 用中位数作为期望胜率
+        # 假设: 区间中位数 ≈ 期望胜率 (简化近似, 未来可用校准曲线替代)
+        expected_wr = midpoint / 100
 
         if actual_wr < expected_wr * 0.5:
             # 偏差>50%: 大幅调整

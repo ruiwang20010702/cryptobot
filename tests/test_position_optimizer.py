@@ -54,11 +54,11 @@ CORR_MOCK = "cryptobot.risk.correlation.get_correlation"
 
 class TestCalcKellyParams:
     def test_symbol_direction_source(self):
-        """10+ 笔 BTC long -> source='symbol'"""
+        """10+ 笔 BTC long -> source='journal'"""
         records = _make_records(12, "BTCUSDT", "long", 3.0)
         with patch(STORAGE_MOCK, return_value=records):
             kp = calc_kelly_params("BTCUSDT", "long")
-        assert kp.source == "symbol"
+        assert kp.source == "journal"
         assert kp.sample_size == 12
         assert kp.win_rate > 0
 
@@ -70,7 +70,7 @@ class TestCalcKellyParams:
         )
         with patch(STORAGE_MOCK, return_value=records):
             kp = calc_kelly_params("BTCUSDT", "long")
-        assert kp.source == "symbol"
+        assert kp.source == "journal"
         assert kp.sample_size == 12
 
     def test_direction_fallback(self):
@@ -82,7 +82,7 @@ class TestCalcKellyParams:
         with patch(STORAGE_MOCK, return_value=records):
             kp = calc_kelly_params("BTCUSDT", "long")
         # BTCUSDT only 5 < 10, all long = 20 >= 15
-        assert kp.source == "direction"
+        assert kp.source == "journal"
 
     def test_global_fallback(self):
         """方向不足 -> global (>= 20 笔)"""
@@ -94,7 +94,7 @@ class TestCalcKellyParams:
         # action=None -> skip direction check, total 22 >= 20
         with patch(STORAGE_MOCK, return_value=records):
             kp = calc_kelly_params("BTCUSDT", action=None)
-        assert kp.source == "global"
+        assert kp.source == "journal"
         assert kp.sample_size == 22
 
     def test_default_fallback(self):
@@ -288,10 +288,10 @@ class TestKellyParamsFrozen:
 
     def test_fields(self):
         """所有字段正确初始化"""
-        kp = KellyParams(0.6, 2.0, 0.35, 50, "high", "symbol")
+        kp = KellyParams(0.6, 2.0, 0.35, 50, "high", "journal")
         assert kp.win_rate == 0.6
         assert kp.avg_win_loss_ratio == 2.0
         assert kp.kelly_fraction == 0.35
         assert kp.sample_size == 50
         assert kp.confidence_level == "high"
-        assert kp.source == "symbol"
+        assert kp.source == "journal"

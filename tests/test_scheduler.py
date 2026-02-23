@@ -38,13 +38,16 @@ class TestJobWorkflowRun:
         mock_app.invoke.assert_called_once_with({})
 
     def test_handles_exception(self, caplog):
-        """工作流异常不应 raise，只记 log"""
-        with patch(
-            "cryptobot.workflow.graph.build_graph",
-            side_effect=RuntimeError("boom"),
+        """工作流异常不应 raise，只记 log + 重试 + 通知"""
+        with (
+            patch(
+                "cryptobot.workflow.graph.build_graph",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("cryptobot.notify.send_message"),
         ):
             job_workflow_run()  # 不抛异常
-        assert "工作流失败" in caplog.text
+        assert "最终失败" in caplog.text
 
 
 # ─── job_check_alerts ──────────────────────────────────────────────────────
@@ -65,10 +68,11 @@ class TestJobCheckAlerts:
     @patch("cryptobot.freqtrade_api.ft_api_get")
     @patch("cryptobot.signal.bridge.read_signals", return_value=[])
     def test_handles_exception(self, mock_signals, mock_ft, caplog):
-        """异常时不 raise"""
+        """异常时不 raise，重试后通知"""
         mock_ft.side_effect = Exception("连接失败")
-        job_check_alerts()
-        assert "告警检查失败" in caplog.text
+        with patch("cryptobot.notify.send_message"):
+            job_check_alerts()
+        assert "最终失败" in caplog.text
 
 
 # ─── job_re_review ─────────────────────────────────────────────────────────

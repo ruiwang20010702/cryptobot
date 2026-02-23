@@ -99,7 +99,7 @@ def get_klines(symbol: str, interval: str = "4h", limit: int = 100):
     _validate_symbol(symbol)
     if interval not in _VALID_KLINE_INTERVALS:
         raise HTTPException(status_code=400, detail=f"无效 interval: {interval}")
-    limit = min(limit, 200)
+    limit = max(1, min(limit, 200))
 
     from cryptobot.indicators.calculator import load_klines
 
@@ -129,7 +129,7 @@ def get_klines(symbol: str, interval: str = "4h", limit: int = 100):
 @router.get("/journal/recent")
 def get_journal_recent(limit: int = 20):
     """最近交易记录"""
-    limit = min(limit, 200)
+    limit = max(1, min(limit, 200))
     from cryptobot.journal.storage import get_all_records
 
     records = get_all_records()
@@ -179,11 +179,15 @@ def update_signal(symbol: str, updates: dict):
         raise HTTPException(status_code=400, detail="无更新字段")
 
     results = {}
+    errors = {}
     for field_name, value in updates.items():
         try:
             ok = update_signal_field(symbol, field_name, value)
             results[field_name] = "updated" if ok else "not_found"
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            errors[field_name] = str(e)
 
-    return {"symbol": symbol, "results": results}
+    if errors and not results:
+        raise HTTPException(status_code=400, detail=errors)
+
+    return {"symbol": symbol, "results": results, "errors": errors}

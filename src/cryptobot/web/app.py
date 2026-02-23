@@ -16,7 +16,7 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # 不需要认证的路径前缀
-_PUBLIC_PREFIXES = ("/docs", "/openapi.json", "/redoc")
+_PUBLIC_PREFIXES = ("/docs", "/openapi.json", "/redoc", "/static")
 
 
 def _get_auth_token() -> str:
@@ -29,7 +29,9 @@ def _get_auth_token() -> str:
 
 
 def _is_local(request: Request) -> bool:
-    """判断请求是否来自本地"""
+    """判断请求是否来自本地（存在代理头时不信任）"""
+    if request.headers.get("x-forwarded-for"):
+        return False
     client = request.client
     if client is None:
         return False

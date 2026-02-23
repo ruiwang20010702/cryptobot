@@ -29,7 +29,7 @@ class KellyParams:
     kelly_fraction: float
     sample_size: int
     confidence_level: str  # "high"/"medium"/"low"
-    source: str  # "symbol"/"direction"/"global"/"default"
+    source: str  # "journal"/"default"
 
 
 def _calc_wr_ratio(records: list) -> tuple[float, float]:
@@ -93,7 +93,7 @@ def calc_kelly_params(
         f = _kelly_f(0.5, 1.5)
         return KellyParams(0.5, 1.5, f, 0, "low", "default")
 
-    # 1) 币种+方向
+    # 1) 币种+方向 → source="journal" (最精确)
     if action:
         sym_dir = [
             r for r in all_closed
@@ -104,20 +104,20 @@ def calc_kelly_params(
             f = _kelly_f(wr, ratio)
             return KellyParams(
                 wr, ratio, f, len(sym_dir),
-                _confidence_level(len(sym_dir)), "symbol",
+                _confidence_level(len(sym_dir)), "journal",
             )
 
-    # 2) 币种
+    # 2) 币种 → source="journal"
     sym_all = [r for r in all_closed if r.symbol == symbol]
     if len(sym_all) >= 10:
         wr, ratio = _calc_wr_ratio(sym_all)
         f = _kelly_f(wr, ratio)
         return KellyParams(
             wr, ratio, f, len(sym_all),
-            _confidence_level(len(sym_all)), "symbol",
+            _confidence_level(len(sym_all)), "journal",
         )
 
-    # 3) 方向
+    # 3) 方向 → source="journal"
     if action:
         dir_all = [r for r in all_closed if r.action == action]
         if len(dir_all) >= 15:
@@ -125,16 +125,16 @@ def calc_kelly_params(
             f = _kelly_f(wr, ratio)
             return KellyParams(
                 wr, ratio, f, len(dir_all),
-                _confidence_level(len(dir_all)), "direction",
+                _confidence_level(len(dir_all)), "journal",
             )
 
-    # 4) 全局
+    # 4) 全局 → source="journal"
     if len(all_closed) >= 20:
         wr, ratio = _calc_wr_ratio(all_closed)
         f = _kelly_f(wr, ratio)
         return KellyParams(
             wr, ratio, f, len(all_closed),
-            _confidence_level(len(all_closed)), "global",
+            _confidence_level(len(all_closed)), "journal",
         )
 
     # 5) 默认

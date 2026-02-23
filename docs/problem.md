@@ -928,33 +928,33 @@
 - **问题**: `resume_date = now + 7d` 每次调用都重新计算，从不读取已有 suspend 状态。每次检查都把恢复日期往后推 7 天，导致 suspend 永远不会到期。
 - **影响**: 一旦触发 suspend，系统永久停止交易
 - **修复**: 首次 suspend 时持久化 `{triggered_at, resume_date}` 到文件；后续检查读取已有状态，`now > resume_date` 时自动恢复
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-C2. risk.py 多处直接修改 decision 字典（不可变性再次违反）
 - **文件**: `src/cryptobot/workflow/nodes/risk.py:332, 529, 680, 691`
 - **问题**: 第一轮 M3 仅修复了 :328 一处，但 P13 新增的月度熔断(332)、币种分级(529)、动态杠杆(680,691) 再次引入 `decision["leverage"] = ...` 直接修改。同一 decision 被多个硬规则反复修改，难以追踪最终值来源。
 - **影响**: 多重规则叠加修改导致不可预期的杠杆值
 - **修复**: 循环开头 `decision = {**decision}` 创建副本，所有修改作用于副本
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-C3. model_competition 多线程内 task.pop() 修改传入字典
 - **文件**: `src/cryptobot/evolution/model_competition.py:82`
 - **问题**: `task.pop("_competition_model", None)` 在 ThreadPoolExecutor 线程内修改传入的 task 字典。虽然当前各线程操作不同 dict 对象，但违反不可变性原则，若外部持有同一引用则看到被修改的 dict。
 - **修复**: 改用 `task.get()` 读取，不修改原字典
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-C4. 资金费率套利 delta 中性实现不完整
 - **文件**: `src/cryptobot/strategy/funding_arb.py:145-156`
 - **问题**: 文档和注释声称 "现货做多 + 永续做空 = delta 中性"，但实际只开了 short 仓位，没有 long。当价格上涨时 short 亏损无法对冲。`spot_price` 参数传入后完全未使用（:121）。
 - **影响**: 价格上涨时虚拟盘亏损，误导用户以为策略无方向风险
 - **修复**: 方案 A — 同时开 long + short 实现真正 delta 中性; 方案 B — 修改文档为"单边费率收割"
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-C5. 调度器全局变量无线程锁保护
 - **文件**: `src/cryptobot/cli/scheduler.py:26-27, 31-59`
 - **问题**: `_last_mtime` 和 `_last_config` 被多个定时任务线程读写，无 `threading.Lock` 保护。配置热更新与工作流执行可能并发触发竞态。
 - **修复**: 添加 `_config_lock = threading.Lock()`
-- [ ] 待修复
+- [x] 已修复
 
 ---
 
@@ -964,67 +964,67 @@
 - **文件**: `src/cryptobot/risk/monthly_circuit_breaker.py:148-149`
 - **问题**: `if m.trade_count == 0: break` — 连亏 2 月触发 suspend 暂停交易 → 暂停期无交易 → 下月"无交易月 break" → 连续计数归零 → 自动解除 suspend。与 R4-C1 联合形成 suspend 自我取消的循环。
 - **修复**: 无交易月应 `continue` 跳过而非 `break` 中断
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H2. Welch t-test p-value 用正态近似代替 t 分布
 - **文件**: `src/cryptobot/backtest/stats.py:83`
 - **问题**: `p_value = math.erfc(abs(t_stat) / math.sqrt(2))` 对 t 统计量使用正态分布 CDF。小样本（n<30）时正态近似低估 p-value，导致统计检验假阳性率偏高。代码注释已说明是"正态近似"。
 - **修复**: 实现 t 分布 CDF 近似或引入 scipy
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H3. 特征标准化用全量数据（ML 数据泄漏）
 - **文件**: `src/cryptobot/features/pipeline.py:111-142`
 - **问题**: `_normalize_z_score()` 在全量矩阵上计算 mean/std（包含测试集）。tree-based 模型影响较小，但影响 pipeline 严谨性。
 - **修复**: 为 `normalize_features()` 添加 `fit_stats` 参数，允许传入训练集统计量
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H4. Walk-forward 训练窗口包含前期测试数据
 - **文件**: `src/cryptobot/backtest/walk_forward.py:79-84`
 - **问题**: Window 2 训练区间 [30-90] 包含 Window 1 测试区间 [60-90]。虽然测试区间不重叠，但训练使用了"已验证过"的数据，可能导致过拟合信号泄漏。
 - **修复**: 明确 expanding vs sliding window 设计意图，若需严格隔离则 step_days >= train_days
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H5. 风控节点多处 except Exception: pass 静默吞错
 - **文件**: `src/cryptobot/workflow/nodes/risk.py:230-241`
 - **问题**: 多处 `except Exception: pass` 吞掉所有异常。风控 addon 加载失败（如 capital_prompts、regime_prompts）完全无日志，规则未注入但无人知晓。
 - **修复**: 改为 `except Exception as e: logger.warning(...)`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H6. 月度熔断逻辑被执行了两次（双重降杠杆）
 - **文件**: `src/cryptobot/workflow/nodes/risk.py:308-334 + 687-710`
 - **问题**: 月度熔断检查分布在两个位置，P13 实施时第一处已有，第二处新增。若信号未在第一处被 `continue` 拒绝，会在第二处被二次降杠杆（5x → 3x → 2x）。
 - **修复**: 合并为单一检查点，或第二处检查是否已处理
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H7. symbol_profile C 级条件用 OR 过于宽松
 - **文件**: `src/cryptobot/risk/symbol_profile.py:49`
 - **问题**: `if win_rate > 0.35 or avg_pnl > -1.0: return "C"` — 胜率 10% 但均亏 -0.5% 的币种也被评为 C 级。几乎不可能有币种被评为 D 级。
 - **修复**: 改为 `and` 或调整阈值
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H8. 实时监控 promote 信号不具原子性
 - **文件**: `src/cryptobot/realtime/monitor.py:164-181`
 - **问题**: 先写 signal.json 再删 pending，两步之间若进程崩溃导致信号重复。
 - **修复**: promote 前检查 signal.json 中是否已有相同 symbol 活跃信号
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H9. Web 本地访问检测可被反向代理绕过
 - **文件**: `src/cryptobot/web/app.py:31-36`
 - **问题**: `_is_local()` 只检查 `request.client.host`。nginx/caddy 反向代理后 client.host 是代理 IP（127.0.0.1），所有请求跳过 token 认证。
 - **修复**: 存在 `X-Forwarded-For` 头时不判定为本地访问
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H10. 置信度校准分桶边界不清晰
 - **文件**: `src/cryptobot/journal/analytics.py:130-135`
 - **问题**: `"60-70": {min:60, max:70}` 和 `"70-80": {min:70, max:80}`，confidence=70 归属取决于 `<` vs `<=`。
 - **修复**: 统一使用 `[min, max)` 左闭右开
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-H11. virtual_portfolio 浮点精度累积误差
 - **文件**: `src/cryptobot/strategy/virtual_portfolio.py:56, 116`
 - **问题**: 只在最终结果 `round(new_balance, 4)`，中间无精度控制。多次 open/close 后误差累积。
 - **修复**: 中间步骤也做精度控制或使用 Decimal
-- [ ] 待修复
+- [x] 已修复
 
 ---
 
@@ -1033,122 +1033,122 @@
 ### R4-M1. 月份计算用 i×28 天近似
 - **文件**: `monthly_circuit_breaker.py:62`
 - **问题**: `now.replace(day=1) - timedelta(days=i * 28)` 不精确。有 `set()` 去重兜底，但意图不清晰。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M2. pnl_pct 始终为 0.0
 - **文件**: `monthly_circuit_breaker.py:79`
 - **问题**: "缺少月初余额，用 0.0 占位"，下游使用者可能误读。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M3. lgb_scorer K-fold 未打乱顺序
 - **文件**: `ml/lgb_scorer.py:176-194`
 - **问题**: 按连续索引切分。若特征有时间序列性，CV 过于乐观。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M4. walk_forward/equity_tracker Sharpe 年化因子假设日频交易
 - **文件**: `walk_forward.py:231-244`, `equity_tracker.py:131-142`
 - **问题**: `sqrt(365)` 假设每天 1 笔交易，实际交易密度远低。Sharpe 被系统性高估。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M5. bootstrap profit_factor inf 处理不当
 - **文件**: `backtest/bootstrap.py:190-210`
 - **问题**: 超 50% 样本为 inf 时返回点估计作为 CI，摧毁置信区间意义。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M6. sentiment 多空比 ×100 可能导致百分比 >100
 - **文件**: `data/sentiment.py:155-156`
 - **问题**: Binance API 返回 0-1 比例，再乘 100 超预期。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M7. 调度器任务失败无重试无通知
 - **文件**: `cli/scheduler.py:94-109`
 - **问题**: 工作流失败只记日志，用户可能数小时不知道系统中断。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M8. strategy_advisor 时间戳字符串比较（时区不一致风险）
 - **文件**: `evolution/strategy_advisor.py:153, 160-161`
 - **问题**: `r.timestamp < created_at` 字符串比较，UTC 带 Z vs 无时区时出错。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M9. strategy_advisor 规则续期无 renewed_at 字段
 - **文件**: `evolution/strategy_advisor.py:113-117`
 - **问题**: 多次续期后 `created_at` 仍为初始时间，无法追踪续期历史。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M10. regime_evaluator 样本量阈值 4 太低
 - **文件**: `journal/regime_evaluator.py:145`
 - **问题**: Welch t-test 需至少 10-30 样本。4 个样本统计检验几乎无意义。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M11. prompt_optimizer 退化阈值不考虑统计波动
 - **文件**: `evolution/prompt_optimizer.py:57-61`
 - **问题**: 30 笔交易胜率波动 ~9%，`wr_short < wr_long * 0.8` 可能误触发。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M12. model_competition 新模型默认 win_rate=0.5
 - **文件**: `evolution/model_competition.py:173-186`
 - **问题**: 未出现在历史中的模型默认 0.5，既不鼓励探索也不惩罚未知。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M13. factor_analysis 返回空因子名
 - **文件**: `features/factor_analysis.py:95-120`
 - **问题**: 样本不足时 `factor_name=""`，后续需替换，增加维护复杂性。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M14. dxy 缓存过期命名误导
 - **文件**: `data/dxy.py:16`
 - **问题**: `STALE_CACHE_TTL` 实际语义是"最大缓存年龄"。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M15. signal bridge ISO 格式异常处理粒度不足
 - **文件**: `signal/bridge.py:57`
 - **问题**: `fromisoformat()` 失败时整个信号列表返回空。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M16. journal storage 读写锁粒度
 - **文件**: `journal/storage.py:22-25`
 - **问题**: `_load_data()` 可能在锁外被调用。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M17. Web API 批量更新错误处理不完善
 - **文件**: `web/routes/api.py:172-189`
 - **问题**: 第一个字段验证失败即返回 400，后续字段不处理。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M18. Web Auth 缺少 /static 路由豁免
 - **文件**: `web/app.py:18-19`
 - **问题**: `_PUBLIC_PREFIXES` 未含 `/static`，静态资源可能被拦截。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M19. check_arb_positions 平仓条件不考虑 PnL
 - **文件**: `strategy/funding_arb.py:159-186`
 - **问题**: 只检查费率阈值，不检查浮亏。价格大涨时 short 亏损超 funding 收入。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M20. multi_timeframe 异常捕获不一致
 - **文件**: `indicators/multi_timeframe.py:91-114`
 - **问题**: 1h/4h 只捕获 FileNotFoundError，feather 损坏时 EOFError 未处理。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M21. calculator K 线缓存 TTL 30min 偏长
 - **文件**: `indicators/calculator.py:37-41`
 - **问题**: 1h K 线缓存 30 分钟，实时监控可能用半小时前数据做决策。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M22. historical_replay 日期采样逻辑
 - **文件**: `backtest/historical_replay.py:506-523`
 - **问题**: `range(total_hours, 0, -interval_hours)` 可能产生超预期采样点数。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M23. grid_trading 网格触发浮点精度问题
 - **文件**: `strategy/grid_trading.py:152, 174`
 - **问题**: `current_price <= level.price` 直接浮点比较，边界误触发。
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-M24. Freqtrade 分批止盈计算可读性差
 - **文件**: `freqtrade_strategies/AgentSignalStrategy.py:415`
 - **问题**: `trade.amount * current_rate / trade.leverage * reduce_pct / 100` 虽然近似正确（≈ stake_amount * reduce_pct / 100），但单位混乱、可读性差，且与 PnL 变化后的实际 stake 有偏差。
-- [ ] 待修复
+- [x] 已修复
 
 ---
 
@@ -1156,59 +1156,59 @@
 
 ### R4-L1. regime_smoother 初始状态硬编码 "ranging"
 - **文件**: `regime_smoother.py:21-34`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L2. notify Markdown 转义不完整
 - **文件**: `notify.py:162-166`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L3. hurst 数据长度检查冗余
 - **文件**: `indicators/hurst.py:26-46`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L4. prompt_manager 版本号解析简陋
 - **文件**: `evolution/prompt_manager.py:82-91`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L5. config 缓存异常后不强制重载
 - **文件**: `config.py:56-62`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L6. cost_model 资金费率线性假设
 - **文件**: `backtest/cost_model.py:48-50`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L7. archive 清理用字符串比较日期
 - **文件**: `cli/archive.py:183-192`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L8. init_cmd .env 追加可能重复
 - **文件**: `cli/init_cmd.py:61-64`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L9. doctor Freqtrade ping 无超时
 - **文件**: `cli/doctor.py:103-111`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L10. archive 大数据集查询无索引
 - **文件**: `archive/reader.py:64-111`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L11. grid_trading auto_detect_range percentile 计算简陋
 - **文件**: `strategy/grid_trading.py:93-126`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L12. Kelly source 标签不区分
 - **文件**: `risk/position_sizer.py:107, 117`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L13. execution_optimizer 结算时间条件冗余
 - **文件**: `risk/execution_optimizer.py:96-98`
-- [ ] 待修复
+- [x] 已修复
 
 ### R4-L14. mean_reversion int() 截断
 - **文件**: `strategy/mean_reversion.py:119, 128`
-- [ ] 待修复
+- [x] 已修复
 
 ---
 
@@ -1245,8 +1245,8 @@
 
 | 等级 | 总数 | 已修复 | 待修复 |
 |------|------|--------|--------|
-| CRITICAL | 5 | 0 | 5 |
-| HIGH | 11 | 0 | 11 |
-| MEDIUM | 24 | 0 | 24 |
-| LOW | 14 | 0 | 14 |
-| **合计** | **54** | **0** | **54** |
+| CRITICAL | 5 | 5 | 0 |
+| HIGH | 11 | 11 | 0 |
+| MEDIUM | 24 | 24 | 0 |
+| LOW | 14 | 14 | 0 |
+| **合计** | **54** | **54** | **0** |

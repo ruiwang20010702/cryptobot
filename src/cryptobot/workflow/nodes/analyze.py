@@ -123,13 +123,20 @@ def analyze(state: WorkflowState) -> dict:
             "defi_tvl": defi_tvl,
         }
 
-        # 为每个分析师追加 regime + capital + ML feature hint
+        # 为每个分析师追加 regime + capital + ML feature hint (上限 2000 字符)
+        _MAX_ADDON_LEN = 2000
         analyst_addon = regime_analyst_addon + capital_analyst_addon
-        tech_sys = TECHNICAL_ANALYST + analyst_addon + ml_feedback.get("technical", "")
-        onchain_sys = ONCHAIN_ANALYST + analyst_addon + ml_feedback.get("onchain", "")
-        sentiment_sys = SENTIMENT_ANALYST + analyst_addon + ml_feedback.get("sentiment", "")
+        if len(analyst_addon) > _MAX_ADDON_LEN:
+            analyst_addon = analyst_addon[:_MAX_ADDON_LEN] + "\n...(截断)"
+        tech_ml = ml_feedback.get("technical", "")
+        onchain_ml = ml_feedback.get("onchain", "")
+        sentiment_ml = ml_feedback.get("sentiment", "")
+        fundamental_ml = ml_feedback.get("fundamental", "")
+        tech_sys = TECHNICAL_ANALYST + analyst_addon + tech_ml[:_MAX_ADDON_LEN]
+        onchain_sys = ONCHAIN_ANALYST + analyst_addon + onchain_ml[:_MAX_ADDON_LEN]
+        sentiment_sys = SENTIMENT_ANALYST + analyst_addon + sentiment_ml[:_MAX_ADDON_LEN]
         fundamental_sys = (
-            FUNDAMENTAL_ANALYST + analyst_addon + ml_feedback.get("fundamental", "")
+            FUNDAMENTAL_ANALYST + analyst_addon + fundamental_ml[:_MAX_ADDON_LEN]
         )
 
         tasks_for_symbol = [

@@ -34,10 +34,15 @@ def calc_performance(days: int = 30, *, with_ci: bool = False) -> dict:
     pnl_list = [r.actual_pnl_pct or 0 for r in closed]
     avg_pnl_pct = sum(pnl_list) / len(pnl_list) if pnl_list else 0
 
-    # Profit Factor
+    # Profit Factor (capped at 99.9 to avoid inf)
     gross_profit = sum(r.actual_pnl_pct for r in wins if r.actual_pnl_pct)
     gross_loss = abs(sum(r.actual_pnl_pct for r in losses if r.actual_pnl_pct))
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf") if gross_profit > 0 else 0
+    if gross_loss > 0:
+        profit_factor = min(gross_profit / gross_loss, 99.9)
+    elif gross_profit > 0:
+        profit_factor = 99.9
+    else:
+        profit_factor = 0
 
     # 置信度校准
     calibration = _calc_confidence_calibration(closed)
@@ -83,11 +88,7 @@ def calc_performance(days: int = 30, *, with_ci: bool = False) -> dict:
         "expired": len(expired),
         "win_rate": round(win_rate, 3),
         "avg_pnl_pct": round(avg_pnl_pct, 2),
-        "profit_factor": (
-            round(profit_factor, 2)
-            if profit_factor != float("inf")
-            else "inf"
-        ),
+        "profit_factor": round(profit_factor, 2),
         "total_pnl_usdt": round(
             sum(r.actual_pnl_usdt or 0 for r in closed), 2,
         ),
@@ -155,6 +156,16 @@ def _calc_confidence_calibration(closed_records: list) -> dict:
     return result
 
 
+def _normalize_direction(direction: str) -> str:
+    """统一方向名称: long/buy/up → bullish, short/sell/down → bearish"""
+    d = direction.lower().strip()
+    if d in ("bullish", "long", "buy", "up"):
+        return "bullish"
+    if d in ("bearish", "short", "sell", "down"):
+        return "bearish"
+    return "neutral"
+
+
 def calc_analyst_accuracy(days: int = 30) -> dict:
     """按分析师角色计算投票方向与交易结果的准确率
 
@@ -184,7 +195,8 @@ def calc_analyst_accuracy(days: int = 30) -> dict:
                 role_stats[role] = {"total": 0, "correct": 0}
 
             role_stats[role]["total"] += 1
-            vote_agrees = (vote == action_direction)
+            normalized_vote = _normalize_direction(vote)
+            vote_agrees = (normalized_vote == action_direction)
             if (vote_agrees and is_win) or (not vote_agrees and not is_win):
                 role_stats[role]["correct"] += 1
 

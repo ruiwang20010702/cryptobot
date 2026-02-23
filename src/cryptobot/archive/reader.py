@@ -8,6 +8,28 @@ logger = logging.getLogger(__name__)
 
 ARCHIVE_BASE = Path("data/output/archive")
 
+# 按月份缓存文件列表索引: {month_str: [file_paths]}
+_month_index_cache: dict[str, list[Path]] = {}
+_month_index_mtime: dict[str, float] = {}
+
+
+def _get_month_files(month_dir: Path) -> list[Path]:
+    """获取月份目录下的文件列表（带缓存）"""
+    month_key = month_dir.name
+    try:
+        current_mtime = month_dir.stat().st_mtime
+    except OSError:
+        return []
+
+    cached_mtime = _month_index_mtime.get(month_key)
+    if cached_mtime == current_mtime and month_key in _month_index_cache:
+        return _month_index_cache[month_key]
+
+    files = sorted(month_dir.glob("*.json"), reverse=True)
+    _month_index_cache[month_key] = files
+    _month_index_mtime[month_key] = current_mtime
+    return files
+
 
 def list_archives(month: str | None = None, limit: int = 20) -> list[dict]:
     """列出归档摘要，按时间倒序
@@ -23,11 +45,11 @@ def list_archives(month: str | None = None, limit: int = 20) -> list[dict]:
     if month:
         month_dir = ARCHIVE_BASE / month
         if month_dir.exists():
-            files = sorted(month_dir.glob("*.json"), reverse=True)
+            files = _get_month_files(month_dir)
     else:
         for month_dir in sorted(ARCHIVE_BASE.iterdir(), reverse=True):
             if month_dir.is_dir():
-                files.extend(sorted(month_dir.glob("*.json"), reverse=True))
+                files.extend(_get_month_files(month_dir))
 
     summaries = []
     for f in files[:limit]:
@@ -77,7 +99,7 @@ def get_symbol_history(symbol: str, days: int = 30) -> list[dict]:
     for month_dir in sorted(ARCHIVE_BASE.iterdir(), reverse=True):
         if not month_dir.is_dir():
             continue
-        for f in sorted(month_dir.glob("*.json"), reverse=True):
+        for f in _get_month_files(month_dir):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 ts = data.get("timestamp", "")

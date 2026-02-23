@@ -142,7 +142,7 @@ def evaluate_rule_effectiveness(
     harmful_count = 0
 
     for r in regime_results:
-        if r.sample_size < 4:
+        if r.sample_size < 15:
             verdict = "insufficient_data"
         elif r.significant and r.improvement_pct > 5:
             verdict = "effective"

@@ -79,7 +79,7 @@ def _call_multi_model(flat_tasks: list[dict]) -> list:
     results = [None] * len(flat_tasks)
 
     def _run(idx: int, task: dict):
-        model_id = task.pop("_competition_model", None)
+        model_id = task.get("_competition_model")
         # 直接用 model_id 作为 actual model，绕过 role_models 映射
         return idx, call_api(
             task["prompt"],
@@ -178,7 +178,7 @@ def _best_performer_select(valid: list[dict], symbol: str) -> dict:
     best_wr = -1
     for r in valid:
         model_stat = stats.get(r["model_id"], {})
-        wr = model_stat.get("win_rate", 0.5)
+        wr = model_stat.get("win_rate", 0.45)
         if wr > best_wr:
             best_wr = wr
             best_model = r

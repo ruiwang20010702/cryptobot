@@ -185,7 +185,14 @@ def cleanup_cmd(keep_months: int):
     removed = 0
 
     for month_dir in sorted(archive_base.iterdir()):
-        if month_dir.is_dir() and month_dir.name < cutoff_month:
+        if not month_dir.is_dir():
+            continue
+        try:
+            dir_date = datetime.strptime(month_dir.name, "%Y-%m")
+            cutoff_date = datetime.strptime(cutoff_month, "%Y-%m")
+        except ValueError:
+            continue
+        if dir_date < cutoff_date:
             count = len(list(month_dir.glob("*.json")))
             shutil.rmtree(month_dir)
             removed += count
