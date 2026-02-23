@@ -51,18 +51,21 @@ class GridState:
     created_at: str
 
 
-def create_grid(config: GridConfig) -> GridState:
+def create_grid(config: GridConfig, wide_mode: bool = False) -> GridState:
     """生成等距网格
 
     从 lower_price 到 upper_price 均匀分布 grid_count 个价位。
     低于中间价的为 buy level，高于的为 sell level。
+    wide_mode=True 时网格间距 ×2（等效 2×ATR），适合高波动市场。
     """
     if config.grid_count < 2:
         raise ValueError("网格数量至少为 2")
     if config.upper_price <= config.lower_price:
         raise ValueError("上界必须大于下界")
 
-    step = (config.upper_price - config.lower_price) / config.grid_count
+    effective_count = config.grid_count // 2 if wide_mode else config.grid_count
+    effective_count = max(2, effective_count)
+    step = (config.upper_price - config.lower_price) / effective_count
     mid_price = (config.upper_price + config.lower_price) / 2
 
     # 每格投资额
@@ -71,7 +74,7 @@ def create_grid(config: GridConfig) -> GridState:
     amount_per_grid = per_grid / mid_price if mid_price > 0 else 0
 
     levels: list[GridLevel] = []
-    for i in range(config.grid_count + 1):
+    for i in range(effective_count + 1):
         price = round(config.lower_price + step * i, 8)
         side = "buy" if price < mid_price else "sell"
         levels.append(GridLevel(
@@ -208,6 +211,32 @@ def check_grid_triggers(
             filled=level.filled or triggered,
         ))
 
+    # P14: 浮亏保护 — 单网格浮亏 > 5% 标记关闭
+    protected_portfolio = new_portfolio
+    for pos in list(new_portfolio.positions):
+        if pos.strategy != "grid" or pos.symbol != state.config.symbol:
+            continue
+        if current_price <= 0 or pos.entry_price <= 0:
+            continue
+        if pos.side == "long":
+            unrealized_pct = (current_price - pos.entry_price) / pos.entry_price * 100
+        else:
+            unrealized_pct = (pos.entry_price - current_price) / pos.entry_price * 100
+        if unrealized_pct < -5.0:
+            try:
+                protected_portfolio = close_position(
+                    protected_portfolio, pos.symbol, pos.side, current_price, "grid",
+                )
+                if protected_portfolio.closed_trades:
+                    last_trade = protected_portfolio.closed_trades[-1]
+                    realized_pnl += last_trade.get("pnl", 0)
+                logger.info(
+                    "网格浮亏保护 %s %s @ %.2f (浮亏 %.1f%%)",
+                    pos.symbol, pos.side, current_price, unrealized_pct,
+                )
+            except ValueError:
+                pass
+
     new_state = GridState(
         config=state.config,
         levels=new_levels,
@@ -216,7 +245,7 @@ def check_grid_triggers(
         created_at=state.created_at,
     )
 
-    return new_state, new_portfolio
+    return new_state, protected_portfolio
 
 
 def calc_grid_metrics(state: GridState) -> dict:

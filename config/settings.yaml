@@ -222,6 +222,31 @@ strategies:
     enabled: false                    # 默认关闭
     virtual_balance: 10000            # 虚拟盘初始余额
 
+# P14: 高波动市场策略 (默认关闭，不影响现有行为)
+volatile_strategy:
+  enabled: false                       # 手动模式时的开关
+  auto: true                           # 自动模式（默认开启）
+  auto_enable_observe_cycles: 3        # 连续 N 轮观望 → 启用
+  auto_disable_loss_streak: 5          # 连续 N 笔亏损 → 禁用
+  fear_threshold: 20                   # FG < 20 → volatile_fear
+  greed_threshold: 80                  # FG > 80 → volatile_greed
+  normal:                              # 20 ≤ FG ≤ 80
+    min_confidence: 75
+    max_leverage: 1
+    max_positions: 1
+    strategies: [ai_trend, grid]
+  fear:                                # FG < 20 (极度恐惧)
+    min_confidence: 90
+    max_leverage: 1
+    max_positions: 1
+    strategies: [funding_arb, grid]
+  greed:                               # FG > 80 (极度贪婪)
+    min_confidence: 80
+    max_leverage: 1
+    max_positions: 1
+    direction_bias: short
+    strategies: [ai_trend]
+
 # 资金感知策略 (可覆盖默认层级参数)
 # capital_strategy:
 #   micro:                            # <$500

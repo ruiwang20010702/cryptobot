@@ -163,3 +163,55 @@ class TestCalcArbPnl:
         assert result["total_trades"] == 2
         assert result["total_pnl"] == 70.0
         assert result["win_rate"] == 0.5
+
+
+# ─── P14: volatile_mode 高阈值 ──────────────────────────
+
+
+class TestVolatileMode:
+    @patch("cryptobot.strategy.funding_arb._get_arb_config")
+    @patch("cryptobot.data.onchain.get_funding_rate")
+    def test_volatile_mode_raises_threshold(self, mock_rate, mock_cfg):
+        """volatile_mode=True 时 min_rate 提高 3x"""
+        mock_cfg.return_value = {
+            "enabled": True,
+            "min_funding_rate": 0.01,  # 0.01% = 0.0001
+            "consecutive_positive": 3,
+            "max_positions": 3,
+        }
+        # rate=0.00015 在 normal mode 下能通过 (> 0.0001)
+        # 但在 volatile_mode 下不行 (< 0.0003)
+        mock_rate.return_value = {
+            "rates": [{"rate": 0.00015}, {"rate": 0.00015}, {"rate": 0.00015}],
+        }
+        normal_signals = scan_funding_opportunities(symbols=["BTCUSDT"], volatile_mode=False)
+        assert len(normal_signals) == 1
+
+        volatile_signals = scan_funding_opportunities(symbols=["BTCUSDT"], volatile_mode=True)
+        assert len(volatile_signals) == 0
+
+
+class TestRateReversalProtection:
+    @patch("cryptobot.strategy.funding_arb._get_arb_config")
+    def test_short_pos_negative_rate_triggers_close(self, mock_cfg):
+        """short 持仓 + 负费率 = 费率反转 → 平仓"""
+        mock_cfg.return_value = {"min_funding_rate": 0.01}
+        pos = VirtualPosition(
+            "ETHUSDT", "short", 3000, 1.0, 1,
+            "2026-01-01T00:00:00", "funding_arb",
+        )
+        portfolio = _make_portfolio(9000.0, [pos])
+        close_signals = check_arb_positions(portfolio, {"ETHUSDT": -0.0002})
+        assert len(close_signals) == 1
+
+    @patch("cryptobot.strategy.funding_arb._get_arb_config")
+    def test_short_pos_positive_rate_no_close(self, mock_cfg):
+        """short 持仓 + 正费率 = 正常 → 不平仓"""
+        mock_cfg.return_value = {"min_funding_rate": 0.01}
+        pos = VirtualPosition(
+            "ETHUSDT", "short", 3000, 1.0, 1,
+            "2026-01-01T00:00:00", "funding_arb",
+        )
+        portfolio = _make_portfolio(9000.0, [pos])
+        close_signals = check_arb_positions(portfolio, {"ETHUSDT": 0.0005})
+        assert len(close_signals) == 0

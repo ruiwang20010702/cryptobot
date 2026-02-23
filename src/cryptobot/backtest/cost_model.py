@@ -15,6 +15,7 @@ class CostConfig:
     taker_fee_pct: float = 0.04  # Taker 手续费 (%)
     slippage_pct: float = 0.05  # 滑点 (%)
     funding_rate_per_8h: float = 0.01  # 8小时资金费率 (%)
+    volatile_slippage_multiplier: float = 3.0  # volatile 时滑点乘数
 
 
 @dataclass(frozen=True)
@@ -32,18 +33,23 @@ def calc_trade_costs(
     config: CostConfig,
     duration_hours: float,
     leverage: int = 1,
+    regime: str = "",
 ) -> TradeCosts:
     """计算单笔交易的总成本
 
     - 手续费和滑点与杠杆成正比（名义价值）
     - 资金费率按持仓时长线性累积（每8小时结算一次）
+    - volatile regime 时滑点按 volatile_slippage_multiplier 放大
     """
     # 手续费: 名义价值 = 保证金 × 杠杆，费率作用于名义价值
     entry_fee = config.taker_fee_pct * leverage
     exit_fee = config.taker_fee_pct * leverage
 
-    # 滑点: 同样作用于名义价值
-    slippage = config.slippage_pct * leverage
+    # 滑点: 同样作用于名义价值, volatile 时放大
+    slip_base = config.slippage_pct
+    if regime.startswith("volatile"):
+        slip_base = slip_base * config.volatile_slippage_multiplier
+    slippage = slip_base * leverage
 
     # 资金费率: 按持仓时长累积，每8小时结算一次
     funding_periods = max(0, duration_hours / 8)

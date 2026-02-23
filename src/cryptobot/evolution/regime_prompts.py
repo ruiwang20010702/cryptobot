@@ -77,6 +77,78 @@ _VOLATILE_ANALYST = """\
 - 关注清算聚集区域和资金费率极值
 - 技术指标可靠度降低，以量价和资金流为准"""
 
+# ─── P14: Volatile 子状态 Addon ──────────────────────────────
+
+_VOLATILE_NORMAL_TRADER = """\
+
+## 当前市场状态偏好: 高波动(中性)
+- 保守趋势跟踪，仅追最强信号 (置信度 75+)
+- 杠杆严格限制 1x，不加仓
+- 宽止损 (2x ATR) 但小仓位
+- 优先等待波动率收敛再入场
+- 只做最明确的趋势方向"""
+
+_VOLATILE_NORMAL_RISK = """\
+
+## 当前市场状态偏好: 高波动(中性)
+- 杠杆上限 1x，无例外
+- 单仓不超过标准仓位 30%
+- 置信度门槛 75+
+- 必须有明确止损，止损宽度 2x ATR"""
+
+_VOLATILE_NORMAL_ANALYST = """\
+
+## 当前市场状态: 高波动(中性)
+- 重点关注波动率趋势：ATR 是否收敛
+- 仅报告最强方向信号，过滤噪音
+- 量价分析权重提高"""
+
+_VOLATILE_FEAR_TRADER = """\
+
+## 当前市场状态偏好: 高波动(恐惧)
+- 禁止方向性交易 (long/short)，输出 no_trade
+- 仅通过费率套利和宽网格获取收益
+- 极端恐惧市场波动巨大，方向性交易亏损概率极高
+- 等待恐惧指数回升至 30+ 再考虑入场"""
+
+_VOLATILE_FEAR_RISK = """\
+
+## 当前市场状态偏好: 高波动(恐惧)
+- 拒绝所有方向性交易信号
+- 仅允许 delta 中性策略 (费率套利)
+- 关注市场流动性，防止极端滑点"""
+
+_VOLATILE_FEAR_ANALYST = """\
+
+## 当前市场状态: 高波动(恐惧)
+- 关注清算聚集区域、资金外流
+- 恐惧指数极端时技术指标可靠度极低
+- 重点监控稳定币流入/流出"""
+
+_VOLATILE_GREED_TRADER = """\
+
+## 当前市场状态偏好: 高波动(贪婪)
+- 仅允许做空 (short)，严禁做多
+- 置信度要求 80+，低于此值输出 no_trade
+- 杠杆 1x，仓位小 (标准仓位 30%)
+- 贪婪市场追高风险极大，逆向做空获取回调收益
+- 关注过热信号：RSI>80、资金费率极高、持仓量激增"""
+
+_VOLATILE_GREED_RISK = """\
+
+## 当前市场状态偏好: 高波动(贪婪)
+- 仅允许做空方向
+- 杠杆上限 1x
+- 做多信号一律驳回
+- 关注多头清算风险"""
+
+_VOLATILE_GREED_ANALYST = """\
+
+## 当前市场状态: 高波动(贪婪)
+- 重点关注过热信号：超买区域、高费率、高持仓
+- 寻找回调前兆：量能背离、MACD 顶背离
+- 关注鲸鱼抛售和交易所流入"""
+
 # ─── Addon 映射 ──────────────────────────────────────────
 
 _REGIME_ADDONS = {
@@ -94,6 +166,21 @@ _REGIME_ADDONS = {
         "TRADER": _VOLATILE_TRADER,
         "RISK_MANAGER": _VOLATILE_RISK,
         "ANALYST": _VOLATILE_ANALYST,
+    },
+    "volatile_normal": {
+        "TRADER": _VOLATILE_NORMAL_TRADER,
+        "RISK_MANAGER": _VOLATILE_NORMAL_RISK,
+        "ANALYST": _VOLATILE_NORMAL_ANALYST,
+    },
+    "volatile_fear": {
+        "TRADER": _VOLATILE_FEAR_TRADER,
+        "RISK_MANAGER": _VOLATILE_FEAR_RISK,
+        "ANALYST": _VOLATILE_FEAR_ANALYST,
+    },
+    "volatile_greed": {
+        "TRADER": _VOLATILE_GREED_TRADER,
+        "RISK_MANAGER": _VOLATILE_GREED_RISK,
+        "ANALYST": _VOLATILE_GREED_ANALYST,
     },
 }
 

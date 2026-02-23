@@ -127,6 +127,9 @@ def trade(state: WorkflowState) -> dict:
     decisions = []  # 提前初始化，observe/mean_reversion 直接写入
     strategy_routes = {}
 
+    # P14: 从 market_regime 读取 fear_greed_value
+    fg_val = regime.get("fear_greed_value", 50) if regime else 50
+
     for symbol in research_data:
         # -- P13.6: 策略路由 --
         regime_info = regime if regime else {}
@@ -135,6 +138,7 @@ def trade(state: WorkflowState) -> dict:
             regime_confidence=regime_info.get("regime_confidence", 0.5),
             hurst=regime_info.get("hurst_exponent", 0.5),
             volatility_state=regime_info.get("volatility_state", "normal"),
+            fear_greed_value=fg_val,
         )
         strategy_routes[symbol] = route
 
@@ -148,6 +152,7 @@ def trade(state: WorkflowState) -> dict:
                 regime_confidence=regime_info.get("regime_confidence", 0.5),
                 hurst=regime_info.get("hurst_exponent", 0.5),
                 volatility_state=regime_info.get("volatility_state", "normal"),
+                fear_greed_value=fg_val,
             )
             for aux in routes[1:]:
                 if aux.strategy == "grid" and aux.weight > 0:
@@ -167,6 +172,49 @@ def trade(state: WorkflowState) -> dict:
                 "current_price": current_price,
             })
             _console.print(f"    {symbol}: 观望 ({route.reason})")
+            continue
+
+        # P14: volatile_fear → 跳过 LLM，走 funding_arb/grid
+        if route.strategy == "funding_arb":
+            try:
+                from cryptobot.strategy.funding_arb import scan_funding_opportunities
+                arb_signals = scan_funding_opportunities(
+                    symbols=[symbol],
+                    min_rate=0.0003 if route.params.get("volatile_mode") else None,
+                )
+                if arb_signals:
+                    sig = arb_signals[0]
+                    decisions.append({
+                        "symbol": symbol,
+                        "action": "no_trade",
+                        "confidence": sig.confidence,
+                        "reasoning": (
+                            f"volatile_fear 费率套利信号: rate={sig.funding_rate:.4%}, "
+                            f"annualized={sig.annualized_rate:.1f}% (虚拟盘执行)"
+                        ),
+                        "current_price": current_price,
+                    })
+                    _console.print(
+                        f"    {symbol}: 费率套利 rate={sig.funding_rate:.4%}"
+                    )
+                else:
+                    decisions.append({
+                        "symbol": symbol,
+                        "action": "no_trade",
+                        "confidence": 0,
+                        "reasoning": "volatile_fear 无满足条件的费率套利机会",
+                        "current_price": current_price,
+                    })
+                    _console.print(f"    {symbol}: 费率套利无信号")
+            except Exception as e:
+                logger.warning("费率套利失败 %s: %s", symbol, e)
+                decisions.append({
+                    "symbol": symbol,
+                    "action": "no_trade",
+                    "confidence": 0,
+                    "reasoning": f"费率套利异常: {e}",
+                    "current_price": current_price,
+                })
             continue
 
         # mean_reversion -> 规则化信号，不走 LLM
@@ -233,7 +281,9 @@ def trade(state: WorkflowState) -> dict:
         pair_max_lev = pair_cfg.get("leverage_range", [1, 3])[1]
         # 资金层级限制杠杆: 取 pair_cfg 和 merged_params 中更低值
         capital_lev_cap = merged_params.get("max_leverage", 5) if merged_params else 5
-        max_leverage = min(pair_max_lev, capital_lev_cap)
+        # P14: volatile 子状态强制 1x 杠杆
+        route_lev_cap = route.params.get("max_leverage", capital_lev_cap)
+        max_leverage = min(pair_max_lev, capital_lev_cap, route_lev_cap)
 
         # 构建增强 system prompt: 基础 + prompt version addon + regime addon + capital addon
         trader_system = TRADER
@@ -244,8 +294,23 @@ def trade(state: WorkflowState) -> dict:
                 trader_system += "\n" + version_addon
         except Exception:
             pass
-        if regime_trader_addon:
+
+        # P14: volatile 子状态使用子状态 addon (覆盖通用 volatile addon)
+        from cryptobot.workflow.strategy_router import classify_volatile_subtype
+        vol_subtype = classify_volatile_subtype(
+            fg_val, regime_info.get("volatility_state", "normal"),
+        )
+        if vol_subtype:
+            try:
+                from cryptobot.evolution.regime_prompts import get_regime_addon
+                sub_addon = get_regime_addon(vol_subtype, "TRADER")
+                if sub_addon:
+                    trader_system += sub_addon
+            except Exception:
+                pass
+        elif regime_trader_addon:
             trader_system += regime_trader_addon
+
         if capital_trader_addon:
             trader_system += capital_trader_addon
 
@@ -298,6 +363,14 @@ def trade(state: WorkflowState) -> dict:
                 f"- 平均盈亏: {sp.get('avg_pnl_pct', 0):+.1f}%\n\n"
             )
 
+        # P14: volatile 子状态方向偏好注入
+        direction_note = ""
+        if route.params.get("direction_bias") == "short":
+            direction_note = "\n\n⚠️ 当前高波动贪婪市场，仅允许做空 (short)。做多信号请输出 no_trade。\n"
+        min_conf_override = route.params.get("min_confidence")
+        if min_conf_override:
+            direction_note += f"\n⚠️ 最低置信度要求: {min_conf_override}\n"
+
         all_tasks.append({
             "prompt": (
                 f"## {symbol} 交易决策\n\n"
@@ -310,6 +383,7 @@ def trade(state: WorkflowState) -> dict:
                 f"{capital_ctx}"
                 f"{confidence_ctx}"
                 f"{symbol_perf_ctx}"
+                f"{direction_note}"
                 f"### 看多研究员观点\n{json.dumps(bull, ensure_ascii=False, indent=2)}\n\n"
                 f"### 看空研究员观点\n{json.dumps(bear, ensure_ascii=False, indent=2)}\n\n"
                 f"### 分析师数据\n{json.dumps(analysis, ensure_ascii=False, indent=2)}\n\n"

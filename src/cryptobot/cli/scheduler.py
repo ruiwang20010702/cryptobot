@@ -407,6 +407,20 @@ def job_overfit_check() -> None:
         )
 
 
+def job_volatile_toggle() -> None:
+    """定时: Volatile 策略自适应评估"""
+    from cryptobot.evolution.volatile_toggle import evaluate_toggle
+
+    try:
+        state = evaluate_toggle()
+        logger.info(
+            "[调度] volatile_toggle 评估: enabled=%s, observe=%d, loss_streak=%d",
+            state.enabled, state.consecutive_observe, state.subtype_loss_streak,
+        )
+    except Exception as e:
+        logger.error("[调度] volatile_toggle 评估失败: %s", e, exc_info=True)
+
+
 def job_ml_retrain() -> None:
     """定时: ML 模型重训"""
     from cryptobot.ml.retrainer import run_retrain
@@ -620,6 +634,16 @@ def start(run_now: bool, verbose: bool):
         hour=9, minute=0,
         id="strategy_advisor",
         name="策略顾问 (每日9:00)",
+        max_instances=1,
+    )
+
+    # 每日 Volatile 策略评估: UTC 12:00
+    scheduler.add_job(
+        job_volatile_toggle,
+        "cron",
+        hour=12, minute=0,
+        id="volatile_toggle",
+        name="Volatile 策略评估 (每日12:00)",
         max_instances=1,
     )
 

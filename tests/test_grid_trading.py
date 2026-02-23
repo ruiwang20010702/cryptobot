@@ -156,3 +156,78 @@ class TestPersistence:
     def test_load_missing(self, tmp_path):
         with patch("cryptobot.strategy.grid_trading.GRID_STATE_DIR", tmp_path):
             assert load_grid_state("NONEXIST") is None
+
+
+# ─── P14: wide_mode 宽网格 ──────────────────────────────
+
+
+class TestWideMode:
+    def test_wide_mode_fewer_levels(self):
+        """wide_mode=True 时网格数量减半"""
+        config = GridConfig("BTCUSDT", 52000.0, 48000.0, 10, 1000.0, 1)
+        normal_state = create_grid(config, wide_mode=False)
+        wide_state = create_grid(config, wide_mode=True)
+        # normal: 10+1=11 levels, wide: 5+1=6 levels
+        assert len(normal_state.levels) == 11
+        assert len(wide_state.levels) == 6
+
+    def test_wide_mode_wider_step(self):
+        """wide_mode 网格间距更大"""
+        config = GridConfig("BTCUSDT", 52000.0, 48000.0, 10, 1000.0, 1)
+        normal_state = create_grid(config, wide_mode=False)
+        wide_state = create_grid(config, wide_mode=True)
+        normal_step = normal_state.levels[1].price - normal_state.levels[0].price
+        wide_step = wide_state.levels[1].price - wide_state.levels[0].price
+        assert wide_step > normal_step
+
+    def test_wide_mode_min_count(self):
+        """wide_mode grid_count=2 时保持至少 2 格"""
+        config = GridConfig("BTCUSDT", 52000.0, 48000.0, 2, 1000.0, 1)
+        state = create_grid(config, wide_mode=True)
+        # 2 // 2 = 1 → max(2, 1) = 2 → 3 levels
+        assert len(state.levels) >= 3
+
+
+class TestFloatingLossProtection:
+    def _make_filled_state(self):
+        """所有 level 已填充的网格状态（不触发新交易）"""
+        config = GridConfig("BTCUSDT", 52000.0, 48000.0, 4, 1000.0, 1)
+        state = create_grid(config)
+        filled_levels = [
+            GridLevel(lv.price, lv.side, lv.amount, True) for lv in state.levels
+        ]
+        return GridState(config, filled_levels, 0.0, 0, state.created_at)
+
+    def test_loss_over_5pct_closes_position(self):
+        """浮亏 > 5% 的网格仓位被自动关闭"""
+        from cryptobot.strategy.virtual_portfolio import VirtualPosition
+
+        state = self._make_filled_state()
+
+        # long 仓位 entry=50000, 当前价=47000 → 浮亏 6%
+        pos = VirtualPosition(
+            "BTCUSDT", "long", 50000, 0.005, 1,
+            "2026-01-01T00:00:00", "grid",
+        )
+        portfolio = _make_portfolio(9750.0, [pos])
+
+        new_state, new_portfolio = check_grid_triggers(state, 47000.0, portfolio)
+        grid_longs = [p for p in new_portfolio.positions if p.strategy == "grid" and p.side == "long"]
+        assert len(grid_longs) == 0  # 已被保护性平仓
+
+    def test_small_loss_keeps_position(self):
+        """浮亏 < 5% 的网格仓位保持不动"""
+        from cryptobot.strategy.virtual_portfolio import VirtualPosition
+
+        state = self._make_filled_state()
+
+        # long 仓位 entry=50000, 当前价=48500 → 浮亏 3%
+        pos = VirtualPosition(
+            "BTCUSDT", "long", 50000, 0.005, 1,
+            "2026-01-01T00:00:00", "grid",
+        )
+        portfolio = _make_portfolio(9750.0, [pos])
+
+        new_state, new_portfolio = check_grid_triggers(state, 48500.0, portfolio)
+        grid_longs = [p for p in new_portfolio.positions if p.strategy == "grid" and p.side == "long"]
+        assert len(grid_longs) == 1  # 仓位保持

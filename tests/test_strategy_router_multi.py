@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from cryptobot.workflow.strategy_router import route_strategies
+from cryptobot.workflow.strategy_router import route_strategies, classify_volatile_subtype
 
 
 def test_volatile_returns_observe():
@@ -73,3 +73,41 @@ def test_all_zero_returns_observe():
         routes = route_strategies("custom")
         assert len(routes) == 1
         assert routes[0].strategy == "observe"
+
+
+# ─── P14: volatile 子状态多策略路由 ──────────────────────
+
+
+_ENABLED = {"volatile_strategy": {"enabled": True, "fear_threshold": 20, "greed_threshold": 80}}
+
+
+@patch("cryptobot.workflow.strategy_router.load_settings", return_value=_ENABLED)
+def test_volatile_fear_returns_funding_and_grid(mock_settings):
+    routes = route_strategies("volatile", volatility_state="high_vol", fear_greed_value=10)
+    names = [r.strategy for r in routes]
+    assert "funding_arb" in names
+    assert "grid" in names
+    assert all(r.weight > 0 for r in routes)
+
+
+@patch("cryptobot.workflow.strategy_router.load_settings", return_value=_ENABLED)
+def test_volatile_greed_returns_ai_trend_short(mock_settings):
+    routes = route_strategies("volatile", volatility_state="high_vol", fear_greed_value=90)
+    assert len(routes) == 1
+    assert routes[0].strategy == "ai_trend"
+    assert routes[0].params.get("direction_bias") == "short"
+
+
+@patch("cryptobot.workflow.strategy_router.load_settings", return_value=_ENABLED)
+def test_volatile_normal_returns_ai_and_grid(mock_settings):
+    routes = route_strategies("volatile", volatility_state="high_vol", fear_greed_value=50)
+    names = [r.strategy for r in routes]
+    assert "ai_trend" in names
+    assert "grid" in names
+
+
+@patch("cryptobot.workflow.strategy_router.load_settings", return_value={"volatile_strategy": {"enabled": False}})
+def test_volatile_disabled_still_observe(mock_settings):
+    routes = route_strategies("volatile", volatility_state="high_vol", fear_greed_value=10)
+    assert len(routes) == 1
+    assert routes[0].strategy == "observe"

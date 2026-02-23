@@ -43,6 +43,17 @@ _DEFAULT_WEIGHTS: dict[str, list[StrategyWeight]] = {
         StrategyWeight("mean_reversion", 0.0, "高波动不交易"),
         StrategyWeight("grid", 0.0, "高波动不交易"),
     ],
+    "volatile_normal": [
+        StrategyWeight("ai_trend", 0.3, "保守趋势(1x杠杆)"),
+        StrategyWeight("grid", 0.2, "宽网格"),
+    ],
+    "volatile_fear": [
+        StrategyWeight("funding_arb", 0.6, "高费率套利"),
+        StrategyWeight("grid", 0.2, "宽网格"),
+    ],
+    "volatile_greed": [
+        StrategyWeight("ai_trend", 0.4, "做空(80+置信度)"),
+    ],
 }
 
 

@@ -42,3 +42,36 @@ class TestRegimePrompts:
             for role in ("TRADER", "RISK_MANAGER", "ANALYST"):
                 addon = get_regime_addon(regime, role)
                 assert addon, f"{regime}/{role} addon 为空"
+
+
+# ─── P14: volatile 子状态 addon ──────────────────────────
+
+
+class TestVolatileSubtypeAddons:
+    def test_volatile_normal_trader(self):
+        addon = get_regime_addon("volatile_normal", "TRADER")
+        assert "保守" in addon or "1x" in addon
+        assert addon != ""
+
+    def test_volatile_fear_trader(self):
+        addon = get_regime_addon("volatile_fear", "TRADER")
+        assert "禁止" in addon or "no_trade" in addon
+        assert addon != ""
+
+    def test_volatile_greed_trader(self):
+        addon = get_regime_addon("volatile_greed", "TRADER")
+        assert "做空" in addon
+        assert addon != ""
+
+    def test_all_subtypes_have_three_roles(self):
+        for subtype in ("volatile_normal", "volatile_fear", "volatile_greed"):
+            for role in ("TRADER", "RISK_MANAGER", "ANALYST"):
+                addon = get_regime_addon(subtype, role)
+                assert addon, f"{subtype}/{role} addon 为空"
+
+    def test_subtypes_differ_from_base_volatile(self):
+        """子状态 addon 与基础 volatile addon 不同"""
+        base = get_regime_addon("volatile", "TRADER")
+        for subtype in ("volatile_normal", "volatile_fear", "volatile_greed"):
+            sub = get_regime_addon(subtype, "TRADER")
+            assert sub != base, f"{subtype} TRADER addon 不应与 volatile 相同"

@@ -2,21 +2,47 @@
 
 trending  -> ai_trend (现有 LLM 决策流)
 ranging   -> mean_reversion (BB 均值回归，规则化信号)
-volatile  -> observe (不交易)
+volatile  -> observe (不交易) | 子状态策略 (P14 启用时)
 混合/不确定 -> ai_trend + 降仓
 """
 
 from dataclasses import dataclass
+
+from cryptobot.config import load_settings
 
 
 @dataclass(frozen=True)
 class StrategyRoute:
     """策略路由结果"""
 
-    strategy: str  # "ai_trend" | "mean_reversion" | "observe"
+    strategy: str  # "ai_trend" | "mean_reversion" | "observe" | "funding_arb"
     weight: float  # 1.0 = 全仓, 0.5 = 半仓, 0.0 = 不交易
     reason: str
     params: dict  # 策略特定参数
+
+
+def classify_volatile_subtype(
+    fear_greed_value: float,
+    volatility_state: str,
+    settings: dict | None = None,
+) -> str | None:
+    """volatile regime 细分：normal/fear/greed，未启用时返回 None"""
+    if settings is None:
+        settings = load_settings()
+    cfg = settings.get("volatile_strategy", {})
+    # 自适应模式: 从 volatile_toggle 状态文件读取; 手动模式: 读 enabled 字段
+    from cryptobot.evolution.volatile_toggle import is_volatile_strategy_enabled
+    if not is_volatile_strategy_enabled(settings):
+        return None
+    if volatility_state != "high_vol":
+        return None
+    fear_threshold = cfg.get("fear_threshold", 20)
+    greed_threshold = cfg.get("greed_threshold", 80)
+    if fear_greed_value < fear_threshold:
+        return "volatile_fear"
+    if fear_greed_value > greed_threshold:
+        return "volatile_greed"
+    return "volatile_normal"
 
 
 def route_strategy(
@@ -24,6 +50,7 @@ def route_strategy(
     regime_confidence: float = 0.5,
     hurst: float = 0.5,
     volatility_state: str = "normal",
+    fear_greed_value: float = 50,
 ) -> StrategyRoute:
     """根据 regime 信息路由到合适的策略
 
@@ -40,13 +67,36 @@ def route_strategy(
     3. ranging (H<0.45, ADX<20) -> mean_reversion, weight=0.7
     4. 混合/不确定 -> ai_trend, weight=0.5
     """
-    # 1. 高波动 -> 观望
+    # 1. 高波动 -> 观望 or P14 子状态策略
     if regime == "volatile" or volatility_state == "high_vol":
+        subtype = classify_volatile_subtype(fear_greed_value, volatility_state)
+        if subtype is None:
+            return StrategyRoute(
+                strategy="observe",
+                weight=0.0,
+                reason=f"高波动市场观望 (regime={regime}, vol={volatility_state})",
+                params={},
+            )
+        if subtype == "volatile_fear":
+            return StrategyRoute(
+                strategy="funding_arb",
+                weight=0.6,
+                reason=f"高波动恐惧: 费率套利 (FG={fear_greed_value})",
+                params={"volatile_mode": True},
+            )
+        if subtype == "volatile_greed":
+            return StrategyRoute(
+                strategy="ai_trend",
+                weight=0.4,
+                reason=f"高波动贪婪: 做空策略 (FG={fear_greed_value})",
+                params={"direction_bias": "short", "min_confidence": 80},
+            )
+        # volatile_normal
         return StrategyRoute(
-            strategy="observe",
-            weight=0.0,
-            reason=f"高波动市场观望 (regime={regime}, vol={volatility_state})",
-            params={},
+            strategy="ai_trend",
+            weight=0.3,
+            reason=f"高波动中性: 保守趋势 (FG={fear_greed_value})",
+            params={"max_leverage": 1, "min_confidence": 75},
         )
 
     # 2. 趋势市
@@ -82,6 +132,7 @@ def route_strategies(
     regime_confidence: float = 0.5,
     hurst: float = 0.5,
     volatility_state: str = "normal",
+    fear_greed_value: float = 50,
 ) -> list[StrategyRoute]:
     """返回多个策略路由（按权重降序排序）
 
@@ -93,14 +144,48 @@ def route_strategies(
     """
     from cryptobot.strategy.weight_tracker import get_weights
 
-    # 高波动 → observe
+    # 高波动 → observe or P14 子状态策略
     if regime == "volatile" or volatility_state == "high_vol":
-        return [StrategyRoute(
-            strategy="observe",
-            weight=0.0,
-            reason=f"高波动市场观望 (regime={regime}, vol={volatility_state})",
-            params={},
-        )]
+        subtype = classify_volatile_subtype(fear_greed_value, volatility_state)
+        if subtype is None:
+            return [StrategyRoute(
+                strategy="observe",
+                weight=0.0,
+                reason=f"高波动市场观望 (regime={regime}, vol={volatility_state})",
+                params={},
+            )]
+        # P14: 使用子状态权重
+        allocation = get_weights(subtype)
+        routes: list[StrategyRoute] = []
+        for sw in allocation.weights:
+            if sw.weight <= 0:
+                continue
+            params: dict = {}
+            if sw.strategy == "funding_arb":
+                params = {"volatile_mode": True}
+            elif sw.strategy == "grid":
+                params = {"wide_mode": True}
+            elif sw.strategy == "ai_trend":
+                params = {"max_leverage": 1, "hurst": hurst}
+                if subtype == "volatile_greed":
+                    params["direction_bias"] = "short"
+                    params["min_confidence"] = 80
+                elif subtype == "volatile_normal":
+                    params["min_confidence"] = 75
+            routes.append(StrategyRoute(
+                strategy=sw.strategy,
+                weight=sw.weight,
+                reason=f"{sw.reason} (FG={fear_greed_value})",
+                params=params,
+            ))
+        if not routes:
+            return [StrategyRoute(
+                strategy="observe",
+                weight=0.0,
+                reason=f"P14 子状态 {subtype} 权重全 0",
+                params={},
+            )]
+        return sorted(routes, key=lambda r: -r.weight)
 
     allocation = get_weights(regime)
     routes: list[StrategyRoute] = []

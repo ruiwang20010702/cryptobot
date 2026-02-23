@@ -34,6 +34,28 @@ _REGIME_PARAMS = {
         "trailing_stop": True,
         "description": "剧烈波动: ATR 显著放大，恐惧贪婪极端。降低杠杆，严格止损。",
     },
+    "volatile_normal": {
+        "min_confidence": 75,
+        "max_leverage": 1,
+        "max_positions": 1,
+        "trailing_stop": True,
+        "description": "高波动(中性): 保守趋势跟踪，1x 杠杆，仅最高置信度信号。",
+    },
+    "volatile_fear": {
+        "min_confidence": 90,
+        "max_leverage": 1,
+        "max_positions": 1,
+        "trailing_stop": False,
+        "description": "高波动(恐惧): 费率套利+宽网格，禁止方向性交易。",
+    },
+    "volatile_greed": {
+        "min_confidence": 80,
+        "max_leverage": 1,
+        "max_positions": 1,
+        "direction_bias": "short",
+        "trailing_stop": True,
+        "description": "高波动(贪婪): 仅做空，80+ 置信度，过热回调策略。",
+    },
 }
 
 
@@ -121,6 +143,7 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
         "trend_strength": regime_result.get("trend_strength", "weak"),
         "volatility_state": regime_result.get("volatility_state", "normal"),
         "timeframe_details": regime_result.get("timeframe_details", {}),
+        "fear_greed_value": fg_val,
     }
 
 
@@ -163,6 +186,14 @@ def collect_data(state: WorkflowState) -> dict:
     # 市场状态检测
     regime = _detect_market_regime(market_data, fear_greed)
     _console.print(f"    市场状态: {regime['regime']} (置信度 {regime['confidence']}%)")
+
+    # 记录 volatile 周期（仅累计，不做决策）
+    try:
+        from cryptobot.evolution.volatile_toggle import record_volatile_cycle
+        is_observe = regime["regime"] == "volatile"
+        record_volatile_cycle(regime["regime"], is_observe)
+    except Exception as e:
+        logger.debug("volatile_toggle 记录跳过: %s", e)
 
     # DXY 美元指数 (单独获取，不扩展 fetch_market_data tuple)
     dxy_data = {}

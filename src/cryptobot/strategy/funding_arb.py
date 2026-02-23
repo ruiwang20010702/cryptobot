@@ -48,17 +48,20 @@ def _annualize_rate(rate_8h: float) -> float:
 def scan_funding_opportunities(
     symbols: list[str] | None = None,
     min_rate: float | None = None,
+    volatile_mode: bool = False,
 ) -> list[FundingArbSignal]:
     """扫描正资金费率机会
 
     条件: funding_rate > min_rate AND 连续 3 期正费率
+    volatile_mode=True 时提高阈值 (0.01% → 0.03%) 以过滤低质量机会
     """
     cfg = _get_arb_config()
     if not cfg.get("enabled", False):
         return []
 
     if min_rate is None:
-        min_rate = cfg.get("min_funding_rate", 0.01) / 100  # 配置是百分比
+        base_rate = cfg.get("min_funding_rate", 0.01) / 100  # 配置是百分比
+        min_rate = base_rate * 3 if volatile_mode else base_rate
 
     if symbols is None:
         from cryptobot.config import get_all_symbols
@@ -160,7 +163,7 @@ def check_arb_positions(
     portfolio: VirtualPortfolio,
     current_rates: dict[str, float],
 ) -> list[FundingArbSignal]:
-    """检查现有套利仓位: 费率转负 → 平仓信号"""
+    """检查现有套利仓位: 费率转负/反转 → 平仓信号"""
     cfg = _get_arb_config()
     min_rate = cfg.get("min_funding_rate", 0.01) / 100
 
@@ -172,7 +175,13 @@ def check_arb_positions(
         rate = current_rates.get(pos.symbol, 0)
         exit_threshold = min_rate * 0.3
 
-        if rate < exit_threshold:
+        # 费率反转保护: short 持仓但费率转正（不利），long 持仓但费率转负（不利）
+        rate_reversed = (pos.side == "short" and rate < 0) or (
+            pos.side == "long" and rate > 0
+        )
+
+        if rate < exit_threshold or rate_reversed:
+            reason = "费率反转" if rate_reversed else "费率低于阈值"
             close_signals.append(FundingArbSignal(
                 symbol=pos.symbol,
                 funding_rate=rate,
@@ -182,6 +191,10 @@ def check_arb_positions(
                 exit_threshold=exit_threshold,
                 confidence=80,
             ))
+            logger.info(
+                "套利平仓信号 %s: %s (rate=%.4f%%, threshold=%.4f%%)",
+                pos.symbol, reason, rate * 100, exit_threshold * 100,
+            )
 
     return close_signals
 

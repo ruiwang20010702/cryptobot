@@ -84,3 +84,30 @@ def test_immutability():
         raise AssertionError("Should be frozen")
     except AttributeError:
         pass
+
+
+# ─── P14: volatile 子状态权重 ──────────────────────────────
+
+
+def test_get_weights_volatile_normal():
+    alloc = get_weights("volatile_normal")
+    assert alloc.regime == "volatile_normal"
+    by_name = {w.strategy: w.weight for w in alloc.weights}
+    assert by_name["ai_trend"] == 0.3
+    assert by_name["grid"] == 0.2
+
+
+def test_get_weights_volatile_fear():
+    alloc = get_weights("volatile_fear")
+    assert alloc.regime == "volatile_fear"
+    by_name = {w.strategy: w.weight for w in alloc.weights}
+    assert by_name["funding_arb"] == 0.6
+    assert by_name["grid"] == 0.2
+
+
+def test_get_weights_volatile_greed():
+    alloc = get_weights("volatile_greed")
+    assert alloc.regime == "volatile_greed"
+    by_name = {w.strategy: w.weight for w in alloc.weights}
+    assert by_name["ai_trend"] == 0.4
+    assert len(alloc.weights) == 1
