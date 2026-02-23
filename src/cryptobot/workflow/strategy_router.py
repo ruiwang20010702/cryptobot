@@ -25,6 +25,8 @@ def classify_volatile_subtype(
     fear_greed_value: float,
     volatility_state: str,
     settings: dict | None = None,
+    *,
+    regime: str = "",
 ) -> str | None:
     """volatile regime 细分：normal/fear/greed，未启用时返回 None"""
     if settings is None:
@@ -34,7 +36,8 @@ def classify_volatile_subtype(
     from cryptobot.evolution.volatile_toggle import is_volatile_strategy_enabled
     if not is_volatile_strategy_enabled(settings):
         return None
-    if volatility_state != "high_vol":
+    # regime=="volatile" (如 FG 极端值升级) 或 ATR 高波动均可触发子状态分类
+    if regime != "volatile" and volatility_state != "high_vol":
         return None
     fear_threshold = cfg.get("fear_threshold", 20)
     greed_threshold = cfg.get("greed_threshold", 80)
@@ -69,7 +72,9 @@ def route_strategy(
     """
     # 1. 高波动 -> 观望 or P14 子状态策略
     if regime == "volatile" or volatility_state == "high_vol":
-        subtype = classify_volatile_subtype(fear_greed_value, volatility_state)
+        subtype = classify_volatile_subtype(
+            fear_greed_value, volatility_state, regime=regime,
+        )
         if subtype is None:
             return StrategyRoute(
                 strategy="observe",
@@ -146,7 +151,9 @@ def route_strategies(
 
     # 高波动 → observe or P14 子状态策略
     if regime == "volatile" or volatility_state == "high_vol":
-        subtype = classify_volatile_subtype(fear_greed_value, volatility_state)
+        subtype = classify_volatile_subtype(
+            fear_greed_value, volatility_state, regime=regime,
+        )
         if subtype is None:
             return [StrategyRoute(
                 strategy="observe",
