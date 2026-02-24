@@ -77,15 +77,15 @@ def send_message(text: str, parse_mode: str = "Markdown", *, retries: int = 1) -
 
 # ─── 预置消息模板 ──────────────────────────────────────────────────────────
 
-def _approx_price(price) -> str:
-    """将精确价格转为模糊范围 (如 62150.00 → ~62.2k)"""
+def _format_price(price) -> str:
+    """格式化价格为精确显示（去除尾部多余零）"""
     if not isinstance(price, (int, float)) or price <= 0:
         return "?"
     if price >= 1000:
-        return f"~{price / 1000:.1f}k"
+        return f"{price:.2f}".rstrip("0").rstrip(".")
     if price >= 1:
-        return f"~{price:.0f}"
-    return f"~{price:.4f}"
+        return f"{price:.4f}".rstrip("0").rstrip(".")
+    return f"{price:.6f}".rstrip("0").rstrip(".")
 
 
 def notify_new_signal(signal: dict) -> bool:
@@ -98,10 +98,10 @@ def notify_new_signal(signal: dict) -> bool:
     size = signal.get("position_size_usdt", "?")
 
     entry_str = (
-        f"{_approx_price(entry[0])} - {_approx_price(entry[1])}"
+        f"{_format_price(entry[0])} - {_format_price(entry[1])}"
         if entry and len(entry) == 2 else "?"
     )
-    sl_str = _approx_price(signal.get("stop_loss"))
+    sl_str = _format_price(signal.get("stop_loss"))
 
     text = (
         f"📊 *新信号*\n\n"
