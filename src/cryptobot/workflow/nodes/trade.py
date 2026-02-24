@@ -184,8 +184,30 @@ def trade(state: WorkflowState) -> dict:
 
         # P14: volatile_fear → 跳过 LLM，走 funding_arb/grid
         if route.strategy == "funding_arb":
-            decisions.append(_route_funding(symbol, current_price, route))
-            continue
+            result = _route_funding(symbol, current_price, route)
+            if result.get("confidence", 0) > 0:
+                decisions.append(result)
+                continue
+            # P15: 无套利信号 + 趋势空头 → fallback 保守做空
+            regime_info = regime if regime else {}
+            trend_dir = regime_info.get("trend_direction", "")
+            hurst = regime_info.get("hurst_exponent", 0.5)
+            if trend_dir == "bearish" and hurst > 0.55:
+                route = StrategyRoute(
+                    strategy="ai_trend",
+                    weight=0.3,
+                    reason=f"volatile_fear 套利无信号, 趋势空头 fallback (H={hurst:.2f})",
+                    params={
+                        "direction_bias": "short",
+                        "max_leverage": 1,
+                        "min_confidence": 80,
+                    },
+                )
+                strategy_routes[symbol] = route
+                # fall through 到 ai_trend LLM 流程
+            else:
+                decisions.append(result)
+                continue
 
         # mean_reversion -> 规则化信号，不走 LLM
         if route.strategy == "mean_reversion":

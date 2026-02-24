@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from cryptobot.workflow.llm import call_claude, call_claude_parallel
 from cryptobot.workflow.graph import (
     screen,
+    should_analyze,
     should_risk_review,
     should_execute,
     _decision_to_signal,
@@ -241,6 +242,91 @@ class TestConditionalEdges:
     def test_should_execute_empty(self):
         state: WorkflowState = {"approved_signals": []}
         assert should_execute(state) == "__end__"
+
+
+# ─── P15: 早期终止路由 ──────────────────────────────────────────────
+
+_VOL_ENABLED = {"volatile_strategy": {"enabled": True, "fear_threshold": 20, "greed_threshold": 80}}
+
+
+class TestShouldAnalyze:
+    def test_non_volatile_always_analyze(self):
+        """非 volatile regime → 始终走 analyze"""
+        state: WorkflowState = {
+            "market_regime": {"regime": "trending"},
+            "screened_symbols": ["BTCUSDT"],
+        }
+        assert should_analyze(state) == "analyze"
+
+    @patch("cryptobot.workflow.strategy_router.load_settings", return_value=_VOL_ENABLED)
+    def test_volatile_fear_no_trend_skips_analyze(self, _mock):
+        """volatile + fear + 无空头趋势 → 跳过 analyze"""
+        state: WorkflowState = {
+            "market_regime": {
+                "regime": "volatile",
+                "volatility_state": "high_vol",
+                "fear_greed_value": 10,
+                "regime_confidence": 0.7,
+                "hurst_exponent": 0.45,
+                "trend_direction": "neutral",
+            },
+            "screened_symbols": ["BTCUSDT", "ETHUSDT"],
+        }
+        assert should_analyze(state) == "trade"
+
+    @patch("cryptobot.workflow.strategy_router.load_settings", return_value=_VOL_ENABLED)
+    def test_volatile_fear_bearish_trend_needs_analyze(self, _mock):
+        """volatile + fear + 空头趋势 (H>0.55) → 需要 analyze (fallback)"""
+        state: WorkflowState = {
+            "market_regime": {
+                "regime": "volatile",
+                "volatility_state": "high_vol",
+                "fear_greed_value": 10,
+                "regime_confidence": 0.7,
+                "hurst_exponent": 0.62,
+                "trend_direction": "bearish",
+            },
+            "screened_symbols": ["BTCUSDT"],
+        }
+        assert should_analyze(state) == "analyze"
+
+    @patch("cryptobot.workflow.strategy_router.load_settings", return_value=_VOL_ENABLED)
+    def test_volatile_greed_needs_analyze(self, _mock):
+        """volatile + greed → ai_trend (做空) → 需要 analyze"""
+        state: WorkflowState = {
+            "market_regime": {
+                "regime": "volatile",
+                "volatility_state": "high_vol",
+                "fear_greed_value": 90,
+                "regime_confidence": 0.7,
+                "hurst_exponent": 0.5,
+                "trend_direction": "bullish",
+            },
+            "screened_symbols": ["BTCUSDT"],
+        }
+        assert should_analyze(state) == "analyze"
+
+    def test_volatile_disabled_skips_analyze(self):
+        """volatile + 策略未启用 → observe → 跳过 analyze"""
+        state: WorkflowState = {
+            "market_regime": {
+                "regime": "volatile",
+                "volatility_state": "normal",
+                "fear_greed_value": 50,
+                "regime_confidence": 0.5,
+                "hurst_exponent": 0.5,
+            },
+            "screened_symbols": ["BTCUSDT"],
+        }
+        assert should_analyze(state) == "trade"
+
+    def test_empty_symbols_skips_analyze(self):
+        """volatile + 无筛选币种 → 跳过 analyze"""
+        state: WorkflowState = {
+            "market_regime": {"regime": "volatile"},
+            "screened_symbols": [],
+        }
+        assert should_analyze(state) == "trade"
 
 
 # ─── CLI 命令 ─────────────────────────────────────────────────────────────
@@ -509,16 +595,18 @@ def _passthrough_smoother(regime, confirm_cycles=2, *, is_volatile_upgrade=False
 class TestDetectMarketRegime:
     """测试 _detect_market_regime (多 TF regime 检测 + 恐惧贪婪升级)"""
 
-    def _mock_regime(self, regime="trending", direction="bullish", strength="strong"):
+    def _mock_regime(self, regime="trending", direction="bullish", strength="strong",
+                     hurst=0.5, adx_values=None):
+        adx_vals = adx_values or {"1h": 30.0, "4h": 28.0, "1d": 32.0}
         return {
             "regime": regime,
             "trend_direction": direction,
             "trend_strength": strength,
             "volatility_state": "normal",
+            "hurst_exponent": hurst,
             "timeframe_details": {
-                "1h": {"trend": direction, "strength": strength, "adx": 30.0},
-                "4h": {"trend": direction, "strength": strength, "adx": 28.0},
-                "1d": {"trend": direction, "strength": strength, "adx": 32.0},
+                tf: {"trend": direction, "strength": strength, "adx": adx}
+                for tf, adx in adx_vals.items()
             },
             "description": f"{regime}市",
         }
@@ -541,11 +629,57 @@ class TestDetectMarketRegime:
 
     @patch("cryptobot.indicators.regime.detect_regime")
     def test_volatile_from_fear_greed(self, mock_detect, _mock_smoother):
-        """恐惧贪婪极端值 → 升级为 volatile"""
-        mock_detect.return_value = self._mock_regime("trending", "bullish", "strong")
+        """恐惧贪婪极端值 + 弱趋势 → 升级为 volatile"""
+        mock_detect.return_value = self._mock_regime(
+            "trending", "bullish", "weak",
+            hurst=0.48, adx_values={"1h": 18.0, "4h": 15.0, "1d": 20.0},
+        )
         result = _detect_market_regime({}, {"current_value": 15})
         assert result["regime"] == "volatile"
         assert result["params"]["max_leverage"] == 2
+
+    @patch("cryptobot.indicators.regime.detect_regime")
+    def test_fg_extreme_strong_trend_no_upgrade(self, mock_detect, _mock_smoother):
+        """P15: FG 极端 + 强趋势 (H>0.55, ADX>25) → 不升级 volatile"""
+        mock_detect.return_value = self._mock_regime(
+            "trending", "bearish", "strong",
+            hurst=0.62, adx_values={"1h": 58.0, "4h": 45.0, "1d": 40.0},
+        )
+        result = _detect_market_regime({}, {"current_value": 5})
+        assert result["regime"] == "trending"
+        assert result.get("fg_extreme") is True
+        assert "极度恐惧确认空头" in result["description"]
+
+    @patch("cryptobot.indicators.regime.detect_regime")
+    def test_fg_extreme_greed_strong_trend_no_upgrade(self, mock_detect, _mock_smoother):
+        """P15: FG>80 + 强趋势 → 不升级，注入贪婪警告"""
+        mock_detect.return_value = self._mock_regime(
+            "trending", "bullish", "strong",
+            hurst=0.60, adx_values={"1h": 35.0, "4h": 30.0, "1d": 28.0},
+        )
+        result = _detect_market_regime({}, {"current_value": 90})
+        assert result["regime"] == "trending"
+        assert "极度贪婪警告反转" in result["description"]
+
+    @patch("cryptobot.indicators.regime.detect_regime")
+    def test_fg_extreme_weak_trend_still_upgrades(self, mock_detect, _mock_smoother):
+        """P15: FG 极端 + 弱趋势 (H<0.55) → 仍升级 volatile"""
+        mock_detect.return_value = self._mock_regime(
+            "trending", "bearish", "weak",
+            hurst=0.50, adx_values={"1h": 30.0, "4h": 28.0, "1d": 20.0},
+        )
+        result = _detect_market_regime({}, {"current_value": 10})
+        assert result["regime"] == "volatile"
+
+    @patch("cryptobot.indicators.regime.detect_regime")
+    def test_fg_extreme_high_hurst_low_adx_still_upgrades(self, mock_detect, _mock_smoother):
+        """P15: H>0.55 但所有 ADX<25 → 仍升级 volatile"""
+        mock_detect.return_value = self._mock_regime(
+            "trending", "bearish", "strong",
+            hurst=0.60, adx_values={"1h": 20.0, "4h": 22.0, "1d": 18.0},
+        )
+        result = _detect_market_regime({}, {"current_value": 10})
+        assert result["regime"] == "volatile"
 
     @patch("cryptobot.indicators.regime.detect_regime")
     def test_detect_regime_failure_fallback(self, mock_detect, _mock_smoother):

@@ -191,6 +191,38 @@ class TestVolatileMode:
         assert len(volatile_signals) == 0
 
 
+# ─── P15: volatile_mode 绕过全局 enabled ──────────────────
+
+
+class TestVolatileModeBypassEnabled:
+    @patch("cryptobot.strategy.funding_arb._get_arb_config")
+    @patch("cryptobot.data.onchain.get_funding_rate")
+    def test_volatile_mode_bypasses_disabled(self, mock_rate, mock_cfg):
+        """P15: volatile_mode=True 时即使 enabled=False 也能扫描"""
+        mock_cfg.return_value = {
+            "enabled": False,
+            "min_funding_rate": 0.01,
+            "consecutive_positive": 3,
+            "max_positions": 3,
+        }
+        mock_rate.return_value = {
+            "rates": [{"rate": 0.0005}, {"rate": 0.0005}, {"rate": 0.0005}],
+        }
+        # volatile_mode=False → 被 enabled=False 拦截
+        assert scan_funding_opportunities(symbols=["BTCUSDT"], volatile_mode=False) == []
+        # volatile_mode=True → 绕过 enabled 检查
+        signals = scan_funding_opportunities(
+            symbols=["BTCUSDT"], volatile_mode=True, min_rate=0.0003,
+        )
+        assert len(signals) == 1
+
+    @patch("cryptobot.strategy.funding_arb._get_arb_config")
+    def test_normal_mode_respects_disabled(self, mock_cfg):
+        """P15: 非 volatile_mode 仍遵守 enabled=False"""
+        mock_cfg.return_value = {"enabled": False}
+        assert scan_funding_opportunities(symbols=["BTCUSDT"]) == []
+
+
 class TestRateReversalProtection:
     @patch("cryptobot.strategy.funding_arb._get_arb_config")
     def test_short_pos_negative_rate_triggers_close(self, mock_cfg):

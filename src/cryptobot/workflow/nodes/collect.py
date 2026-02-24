@@ -104,12 +104,32 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
     is_volatile_upgrade = False
     old_regime = regime_result["regime"]  # 升级前保存
     if (fg_val < 20 or fg_val > 80) and regime_result["regime"] != "volatile":
-        regime_result = {
-            **regime_result,
-            "regime": "volatile",
-            "description": regime_result["description"] + " (恐惧贪婪极端值触发升级)",
-        }
-        is_volatile_upgrade = True
+        # P15: 强趋势保护 — H>0.55 且任一 TF ADX>25 时不升级
+        is_strong_trend = (
+            regime_result.get("hurst_exponent", 0.5) > 0.55
+            and any(
+                tf.get("adx", 0) > 25
+                for tf in regime_result.get("timeframe_details", {}).values()
+            )
+        )
+        if is_strong_trend:
+            # 有序恐惧/贪婪 — 保持趋势 regime，注入情绪上下文
+            sentiment_tag = "极度恐惧确认空头" if fg_val < 20 else "极度贪婪警告反转"
+            regime_result = {
+                **regime_result,
+                "description": (
+                    regime_result["description"] + f" ({sentiment_tag}, FG={fg_val})"
+                ),
+                "fg_extreme": True,
+            }
+        else:
+            # 非趋势市 + FG 极端 → 保留原升级逻辑
+            regime_result = {
+                **regime_result,
+                "regime": "volatile",
+                "description": regime_result["description"] + " (恐惧贪婪极端值触发升级)",
+            }
+            is_volatile_upgrade = True
 
     # 平滑 regime 切换 (防止边界反复跳动)
     from cryptobot.regime_smoother import smooth_regime_transition
@@ -149,6 +169,7 @@ def _detect_market_regime(market_data: dict, fear_greed: dict) -> dict:
         "fear_greed_value": fg_val,
         "hurst_exponent": regime_result.get("hurst_exponent", 0.5),
         "regime_confidence": regime_result.get("regime_confidence", 0.0),
+        "fg_extreme": regime_result.get("fg_extreme", False),
     }
 
 

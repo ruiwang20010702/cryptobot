@@ -9,20 +9,22 @@ AI 多角色工作流自动分析市场、生成交易信号，通过 Freqtrade 
 ```
 AI 工作流 (每 30min)              实时监控 (持续)              Freqtrade (5m K线)
 ─────────────────              ──────────────              ────────────────
-collect → screen →   ─写入→   pending_signals.json
-analyze → research →           价格进入 entry_range?
-trade → risk_review →          5m 指标确认?
-execute                        └─写入→ signal.json  ─读取→  自动开仓/平仓
+collect → screen ──┬─→ analyze → research ─┐
+                   │  (需要LLM时)          │  ─写入→ pending_signals.json
+                   └─→ trade ←─────────────┘        价格进入 entry_range?
+                       ↓                             5m 指标确认?
+                  ml_filter → risk_review →          └─写入→ signal.json
+                  execute                            ─读取→  自动开仓/平仓
 ```
 
-**8 个节点的 LangGraph 状态图**：采集数据 → 筛选币种 → 4 分析师分析 → 多空研究员辩论 → 交易决策 → ML 过滤 → 风控审核 → 写入信号。每轮约 40 次 LLM 调用。
+**8 个节点的 LangGraph 状态图**：采集数据 → 筛选币种 → (volatile 时可跳过) 4 分析师分析 → 多空研究员辩论 → 交易决策 → ML 过滤 → 风控审核 → 写入信号。每轮约 40 次 LLM 调用（volatile 纯规则路由时 0 次）。
 
 ## 特性
 
 - **AI 多角色协作** — 技术分析师、链上分析师、情绪分析师、基本面分析师、看多/看空研究员、交易员、风控经理
 - **16 个数据源** — 链上(CoinGlass)、情绪(Fear&Greed)、新闻、订单簿、期权、稳定币流、DXY、DeFi TVL、巨鲸追踪等
 - **市场状态感知** — ADX+Hurst 加权 Regime 检测（趋势/震荡/高波动），差异化参数 + Prompt 注入
-- **多策略路由** — 趋势市→AI 趋势策略 / 震荡市→BB 均值回归 / 高波动→三子状态自适应(normal→保守AI趋势, fear→仅套利+网格, greed→仅做空)
+- **多策略路由** — 趋势市→AI 趋势策略 / 震荡市→BB 均值回归 / 高波动→三子状态自适应(normal→保守AI趋势, fear→套利+网格+趋势空头fallback, greed→仅做空) + FG极端趋势保护(强趋势不误判volatile)
 - **虚拟盘策略** — 资金费率套利（delta 中性赚正费率）+ 网格交易（震荡区间低买高卖），虚拟盘独立运行
 - **资金感知策略** — 根据账户余额自动调整（micro/small/medium/large 四档），小账户更保守
 - **自动进化** — 绩效驱动 Prompt 迭代、分析师动态权重、多模型竞赛、策略顾问(自动发现失败模式 → 生成规则 → 14天评估 → 淘汰/续期)

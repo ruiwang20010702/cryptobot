@@ -45,6 +45,7 @@ __all__ = [
     "re_review",
     "collect_data_for_symbols",
     # Routing
+    "should_analyze",
     "should_risk_review",
     "should_execute",
     # Graph
@@ -91,6 +92,38 @@ def _save_archive_on_early_exit(state: WorkflowState) -> None:
         logger.warning("提前终止归档失败: %s", e)
 
 
+def should_analyze(state: WorkflowState) -> str:
+    """screen → analyze 或直接 trade（volatile 时跳过 LLM 节省调用）"""
+    regime = state.get("market_regime", {})
+    if regime.get("regime") != "volatile":
+        return "analyze"
+
+    # volatile 时检查是否有币需要 LLM 决策
+    from cryptobot.workflow.strategy_router import route_strategy
+
+    symbols = state.get("screened_symbols", [])
+    fg_val = regime.get("fear_greed_value", 50)
+    for sym_info in symbols:
+        route = route_strategy(
+            regime=regime.get("regime", ""),
+            regime_confidence=regime.get("regime_confidence", 0.5),
+            hurst=regime.get("hurst_exponent", 0.5),
+            volatility_state=regime.get("volatility_state", "normal"),
+            fear_greed_value=fg_val,
+        )
+        if route.strategy == "ai_trend":
+            return "analyze"  # 至少一个币需要 LLM
+        # P15: funding_arb + 趋势空头 → 可能 fallback 到 ai_trend
+        if route.strategy == "funding_arb":
+            trend_dir = regime.get("trend_direction", "")
+            hurst = regime.get("hurst_exponent", 0.5)
+            if trend_dir == "bearish" and hurst > 0.55:
+                return "analyze"
+
+    logger.info("所有币种策略均不需 LLM，跳过 analyze/research")
+    return "trade"
+
+
 def should_risk_review(state: WorkflowState) -> str:
     """trade → risk_review 或 END"""
     decisions = state.get("decisions", [])
@@ -132,7 +165,10 @@ def build_graph() -> StateGraph:
 
     # 线性边
     graph.add_edge("collect_data", "screen")
-    graph.add_edge("screen", "analyze")
+    graph.add_conditional_edges("screen", should_analyze, {
+        "analyze": "analyze",
+        "trade": "trade",
+    })
     graph.add_edge("analyze", "research")
     graph.add_edge("research", "trade")
 

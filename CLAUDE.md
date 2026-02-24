@@ -90,14 +90,17 @@ docker compose up -d                          # 启动服务
 ### 核心信号流
 
 ```
-AI 工作流 (30min 周期)                实时监控 (持续)              Freqtrade (5m K线)
-─────────────────                ──────────────              ────────────────
-collect → screen →    ─写入→    pending_signals.json
-analyze → research →            轮询 Binance (10s)
-trade → risk_review →           价格进入 entry_range?
-execute                         5m 指标确认?
-                                └─写入→ signal.json  ─读取→  AgentSignalStrategy
+AI 工作流 (30min 周期)                    实时监控 (持续)              Freqtrade (5m K线)
+─────────────────────                ──────────────              ────────────────
+collect → screen ──┬→ analyze →      pending_signals.json
+                   │  research ──┐   轮询 Binance (10s)
+                   └→ trade ←────┘   价格进入 entry_range?
+                      ml_filter →    5m 指标确认?
+                      risk_review →  └─写入→ signal.json  ─读取→  AgentSignalStrategy
+                      execute
 ```
+
+`screen → analyze` 有条件路由：volatile 时若所有币种不需 LLM 则直接跳到 trade。
 
 当 `config/settings.yaml` 中 `realtime.enabled: false` 时，execute 节点直接写 signal.json（跳过实时监控）。
 
@@ -114,7 +117,7 @@ execute                         5m 指标确认?
 
 | 模块 | 职责 |
 |------|------|
-| `workflow/graph.py` | LangGraph 8 节点状态图(含 ml_filter) + 独立 `re_review()` 持仓复审流程 |
+| `workflow/graph.py` | LangGraph 8 节点状态图(含 ml_filter) + `should_analyze` 条件路由(volatile 时跳过 LLM) + 独立 `re_review()` 持仓复审流程 |
 | `workflow/llm.py` | Claude CLI 子进程封装，内置速率限制和重试，支持 `role` 参数路由模型 |
 | `workflow/api_llm.py` | OpenAI 兼容 API 后端（DeepSeek/OpenAI/Groq 等），支持角色级模型选择 + token 用量追踪 |
 | `workflow/prompts.py` | 7 个 AI 角色的 system prompt + JSON schema（含 RE_REVIEWER） |
@@ -125,7 +128,7 @@ execute                         5m 指标确认?
 | `indicators/hurst.py` | Hurst 指数 (R/S 分析): H>0.55 趋势/H<0.45 均值回归，加权投票增强 regime 检测 |
 | `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API)、稳定币流(DefiLlama)、订单簿(Binance)、交易所储备(CoinGlass)、宏观日历(FinnHub)、期权(Deribit)、代币稀释(CoinGecko)、DXY美元指数(Yahoo Finance)、DeFi TVL(DefiLlama)、巨鲸追踪(Whale Alert) |
 | `regime_smoother.py` | 市场状态转换平滑：连续 N 周期确认才切换 regime，防止边界反复跳动 |
-| `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→三子状态(normal→保守AI趋势, fear→仅套利+网格, greed→仅做空) + 多策略权重分配 route_strategies() |
+| `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→三子状态(normal→保守AI趋势, fear→套利+网格+趋势空头fallback, greed→仅做空) + 多策略权重分配 route_strategies() |
 | `workflow/nodes/ml_filter.py` | ML 信号过滤节点: trade→ml_filter→risk_review，方向一致性+概率阈值过滤 |
 | `ml/feature_feedback.py` | ML 特征重要性反馈: top-5 特征按角色注入分析师 prompt |
 | `ml/retrainer.py` | 模型自动重训: 每周日重训 + AUC 对比回滚 + 版本管理 |
@@ -133,7 +136,7 @@ execute                         5m 指标确认?
 | `strategy/weight_tracker.py` | 策略权重管理: 按 regime 动态分配多策略权重(trending 80/20, ranging 50/30/20, volatile_normal/fear/greed 三组) |
 | `strategy/mean_reversion.py` | BB 均值回归策略: 下轨+RSI<35 做多 / 上轨+RSI>65 做空，仅 ranging 时启用 |
 | `strategy/virtual_portfolio.py` | 虚拟盘基础设施：不可变 VirtualPortfolio/VirtualPosition + 原子写入持久化 |
-| `strategy/funding_arb.py` | 资金费率套利：扫描正费率 → delta 中性开仓 → 费率转负平仓 + 费率反转保护 (虚拟盘) |
+| `strategy/funding_arb.py` | 资金费率套利：扫描正费率 → delta 中性开仓 → 费率转负平仓 + 费率反转保护 + volatile_mode 绕过全局 enabled (虚拟盘) |
 | `strategy/grid_trading.py` | 网格交易：支撑阻力间等距网格 + 价格触发自动买卖 (虚拟盘) |
 | `capital_strategy.py` | 资金感知策略：根据余额自动调整层级(micro/small/medium/large)，与 regime 正交叠加取更严格值 |
 | `evolution/prompt_manager.py` | Prompt 版本管理：版本化存储/切换/对比 addon，持久化 `prompt_versions.json` |

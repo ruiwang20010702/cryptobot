@@ -1,6 +1,6 @@
 # CryptoBot Roadmap
 
-> 版本: 2026-02-23 | 1442 tests passed | 27,000+ LOC | Lint clean | R5+R6 审计 91 问题全修复
+> 版本: 2026-02-24 | 1454 tests passed | 27,000+ LOC | Lint clean | R5+R6 审计 91 问题全修复
 >
 > 系统架构、模块职责、文件路径、CLI 命令等详见 [CLAUDE.md](../CLAUDE.md)。
 
@@ -25,8 +25,9 @@
 | P12 | 回放优化 | 5/7 | 置信度分层、方向偏差诊断、回撤优化、币种差异化分级 |
 | P13 | 多策略适应 | 11/11 | Hurst Regime、信号过滤、MFE 止盈、均值回归、费率套利、网格、多策略权重 |
 | P14 | 高波动市场策略 | 10/10 | volatile 三子状态(normal/fear/greed)、策略路由、成本模型 3x 滑点、自适应开关 |
+| P15 | Volatile 策略优化 | 4/4 | FG升级趋势保护、funding_arb绕过enabled、做空fallback、LLM早期终止 |
 | R5+R6 | 全量审计修复 | 91/91 | 60 文件 +2636/-1032 行，信号链路/风控/ML/回测/数据/系统全覆盖 |
-| **合计** | | **92/98** | |
+| **合计** | | **96/102** | |
 
 ---
 
@@ -39,46 +40,20 @@
 
 ---
 
-## 三、P14 高波动市场策略（已完成）
+## 三、P15 Volatile 策略优化（已完成）
 
 ### 背景
 
-当前 volatile regime 下系统完全观望（confidence=0, no_trade），浪费了高波动市场的交易机会。
-180d 回放数据显示：趋势市 +$16,509 vs 震荡市 -$1,012。高波动市目前 0 收益。
-4 周虚拟盘（$2000 mock_balance）可安全验证所有策略。
+VPS 部署后运行 26 轮分析全部 no_trade。根因：FG=5（极度恐惧）强制升级 regime 为 volatile，但实际市场是有序空头趋势（H=0.62, ADX=58）。volatile_fear 仅允许 funding_arb + grid，但 `enabled: false` 阻断一切。结果：明显做空机会全部错过，780 次 LLM 调用浪费。
 
-### 核心设计：volatile 细分为 3 种子状态
+### 4 项修复
 
-```
-恐贪指数 20-80 + ATR>3%  → volatile_normal   → 保守 AI 趋势(1x杠杆, 75+置信度) + 宽网格
-恐贪指数 <20（极度恐惧） → volatile_fear     → 仅费率套利 + 宽网格（禁止方向性交易）
-恐贪指数 >80（极度贪婪） → volatile_greed    → 仅做空(80+置信度, 1x杠杆)
-```
-
-### 风险缓解（内建到代码中）
-
-| 风险 | 缓解方案 |
-|------|----------|
-| Regime 误判 | volatile 子状态保持最严格参数：杠杆 1x，置信度 75+ |
-| 极端滑点 | 成本模型 volatile 滑点乘数 3x（0.05% → 0.15%） |
-| 费率突变 | funding_arb 费率方向反转自动平仓 |
-| 流动性枯竭 | volatile 下 max_positions=1 |
-| 复杂度/bug | 全量测试 + 4 周虚拟盘验证 |
-
-### 任务拆分
-
-| ID | 任务 | 复杂度 | 改动文件 | 说明 |
-|----|------|--------|----------|------|
-| 14.1 | volatile 子状态分类 | 低 | `strategy_router.py` | 新增 `_classify_volatile_subtype(fear_greed, volatility_state)` |
-| 14.2 | 策略路由器改造 | 中 | `strategy_router.py` | route_strategy/route_strategies 按子状态路由 |
-| 14.3 | 权重表更新 | 低 | `weight_tracker.py` | 新增 volatile_normal/fear/greed 三组权重 |
-| 14.4 | trade 节点适配 | 中 | `nodes/trade.py` | 子状态分发：fear→仅套利/网格，normal→严格LLM，greed→short-only LLM |
-| 14.5 | collect 节点参数细化 | 低 | `nodes/collect.py` | 3 组 volatile 参数（min_confidence/max_leverage/direction_bias） |
-| 14.6 | funding_arb 增强 | 中 | `funding_arb.py` | 费率反转保护 + volatile 高阈值(0.01%→0.03%) |
-| 14.7 | grid 宽网格模式 | 低 | `grid_trading.py` | volatile 下 2×ATR 间距 + 单网格浮亏 5% 自动关闭 |
-| 14.8 | 成本模型更新 | 低 | `cost_model.py` | 新增 `volatile_slippage_multiplier`（默认 3x） |
-| 14.9 | 配置项 | 低 | `settings.yaml` | 新增 `volatile_strategy` 节：子状态阈值、各策略开关 |
-| 14.10 | 测试覆盖 | 中 | `tests/` | 所有改动的单元测试，覆盖率 80%+ |
+| 改动 | 文件 | 效果 |
+|------|------|------|
+| FG 升级趋势保护 | `collect.py` | H>0.55 + ADX>25 时不升级 volatile，保持 trending 允许做空 |
+| funding_arb 绕过 enabled | `funding_arb.py` | volatile_mode 调用时跳过全局 enabled 开关 |
+| volatile_fear 做空 fallback | `trade.py` | 无套利信号 + 趋势空头 → 保守做空 (1x, 80%置信度) |
+| LLM 早期终止 | `graph.py` | 全部 observe/funding_arb/grid 时跳过 analyze/research 省 30 次 LLM |
 
 ---
 
@@ -86,8 +61,8 @@
 
 | 优先级 | 任务 | 说明 |
 |--------|------|------|
-| **立即** | 180d 回测对比 | R5+R6 修复后验证 Sharpe/胜率是否改善（对比修复前 4.01） |
-| **持续** | VPS 虚拟盘运行 | 积累 AI 信号，评估 P14 volatile 策略效果 |
+| **立即** | 180d 回测对比 | P15 修复后验证 Sharpe/胜率是否改善 |
+| **持续** | VPS 虚拟盘运行 | 积累 AI 信号，评估 P14+P15 策略效果 |
 
 ---
 
@@ -103,8 +78,9 @@
 ### 时间线总览
 
 ```
-2月23日 ─── 今天 (82/88 路线图) ─────────────────────────────────
-  │  12.5 VPS daemon 运行中（后台持续积累, 第 2 天）
+2月24日 ─── 今天 (96/102 路线图) ─────────────────────────────────
+  │  12.5 VPS daemon 运行中（后台持续积累, 第 3 天）
+  │  P15 Volatile 策略优化 ✅ 已完成
   │  P14 高波动市场策略 ✅ 已完成
   │  R5+R6 审计 91 问题 ✅ 全部修复
   │
@@ -172,4 +148,4 @@
 
 - 虚拟盘优先：所有新策略先跑 4 周虚拟盘，验证后才允许接入实盘
 - 最大回撤 91.7% 是实盘不可接受的，需通过仓位控制和策略分散降至 <30%
-- 高波动市策略（P14）需特别注意滑点和流动性风险
+- 高波动市策略（P14/P15）需特别注意滑点和流动性风险

@@ -56,7 +56,7 @@ def scan_funding_opportunities(
     volatile_mode=True 时提高阈值 (0.01% → 0.03%) 以过滤低质量机会
     """
     cfg = _get_arb_config()
-    if not cfg.get("enabled", False):
+    if not volatile_mode and not cfg.get("enabled", False):
         return []
 
     if min_rate is None:
