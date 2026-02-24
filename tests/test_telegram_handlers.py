@@ -235,15 +235,24 @@ class TestCmdWeights:
 
 
 class TestCmdBalance:
-    @patch("cryptobot.telegram.handlers._get_virtual_balance", return_value=(20000.0, 1000.0))
+    @patch("cryptobot.telegram.handlers._get_virtual_balance", return_value=(9800.0, 2000.0, True))
     @patch("cryptobot.freqtrade_api.ft_api_get")
     def test_virtual_fallback(self, mock_ft, mock_vb):
         """Freqtrade 离线时 fallback 到虚拟盘余额"""
         mock_ft.return_value = None
         result = handle_command("/balance")
         assert "虚拟盘" in result
-        assert "20000.00" in result
-        assert "1000.00" in result
+        assert "9800.00" in result
+        assert "2000.00" in result
+
+    @patch("cryptobot.telegram.handlers._get_virtual_balance", return_value=(0.0, 2000.0, False))
+    @patch("cryptobot.freqtrade_api.ft_api_get")
+    def test_virtual_no_data(self, mock_ft, mock_vb):
+        """无虚拟盘文件时显示暂无数据"""
+        mock_ft.return_value = None
+        result = handle_command("/balance")
+        assert "暂无数据" in result
+        assert "2000.00" in result
 
     @patch("cryptobot.freqtrade_api.ft_api_get")
     def test_with_balance(self, mock_ft):

@@ -328,12 +328,15 @@ def _cmd_balance() -> str:
         return "\n".join(lines)
 
     # Freqtrade 离线 → 虚拟盘 fallback
-    virtual_balance, mock_balance = _get_virtual_balance()
+    virtual_balance, mock_balance, has_virtual = _get_virtual_balance()
 
     lines = ["\U0001f4b5 *账户余额* \\[虚拟盘]\n"]
     if mock_balance > 0:
         lines.append(f"总资产参考: {mock_balance:.2f} USDT")
-    lines.append(f"虚拟盘净值: {virtual_balance:.2f} USDT")
+    if has_virtual:
+        lines.append(f"虚拟盘净值: {virtual_balance:.2f} USDT")
+    else:
+        lines.append("虚拟盘: 暂无数据")
     return "\n".join(lines)
 
 
@@ -377,14 +380,18 @@ def _fetch_binance_prices(symbols: list[str]) -> dict[str, float]:
 def _get_virtual_positions() -> tuple[list, dict[str, float]]:
     """加载所有虚拟盘持仓 + 实时价格
 
+    仅加载已存在的虚拟盘文件，不创建默认空盘。
+
     Returns:
         (positions, prices) — positions 包含 (VirtualPosition, strategy) 元组
     """
-    from cryptobot.strategy.virtual_portfolio import load_portfolio
+    from cryptobot.strategy.virtual_portfolio import load_portfolio, VIRTUAL_DIR
 
     all_positions = []
     symbols = set()
     for strategy in _VIRTUAL_STRATEGIES:
+        if not (VIRTUAL_DIR / f"{strategy}_portfolio.json").exists():
+            continue
         portfolio = load_portfolio(strategy)
         for pos in portfolio.positions:
             all_positions.append((pos, strategy))
@@ -394,19 +401,25 @@ def _get_virtual_positions() -> tuple[list, dict[str, float]]:
     return all_positions, prices
 
 
-def _get_virtual_balance() -> tuple[float, float]:
+def _get_virtual_balance() -> tuple[float, float, bool]:
     """获取虚拟盘合并余额
 
+    仅加载已存在的虚拟盘文件，不创建默认空盘。
+
     Returns:
-        (virtual_balance, mock_balance)
+        (virtual_balance, mock_balance, has_virtual) — has_virtual 表示是否有虚拟盘数据
     """
-    from cryptobot.strategy.virtual_portfolio import load_portfolio, get_unrealized_pnl
+    from cryptobot.strategy.virtual_portfolio import (
+        load_portfolio, get_unrealized_pnl, VIRTUAL_DIR,
+    )
     from cryptobot.config import load_settings
 
     total_balance = 0.0
     symbols = set()
     portfolios = []
     for strategy in _VIRTUAL_STRATEGIES:
+        if not (VIRTUAL_DIR / f"{strategy}_portfolio.json").exists():
+            continue
         portfolio = load_portfolio(strategy)
         total_balance += portfolio.current_balance
         portfolios.append(portfolio)
@@ -419,7 +432,7 @@ def _get_virtual_balance() -> tuple[float, float]:
     settings = load_settings()
     mock = settings.get("capital_strategy", {}).get("mock_balance", 0.0)
 
-    return total_balance + unrealized, float(mock)
+    return total_balance + unrealized, float(mock), len(portfolios) > 0
 
 
 def _cmd_unknown() -> str:
