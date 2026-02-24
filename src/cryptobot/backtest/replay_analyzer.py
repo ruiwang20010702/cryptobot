@@ -109,10 +109,34 @@ def _bucket_stats(group: list[TradeResult]) -> dict:
 # ── 方向分析 ──────────────────────────────────────────────────────────────
 
 
+def _direction_group_stats(group: list[TradeResult]) -> dict:
+    """方向分组统计: count/win_rate/avg_pnl_pct/total_pnl_usdt"""
+    if not group:
+        return {"count": 0, "win_rate": 0.0, "avg_pnl_pct": 0.0, "total_pnl_usdt": 0.0}
+    n = len(group)
+    wins = sum(1 for t in group if t.net_pnl_pct > 0)
+    return {
+        "count": n,
+        "win_rate": round(wins / n, 4),
+        "avg_pnl_pct": round(sum(t.net_pnl_pct for t in group) / n, 4),
+        "total_pnl_usdt": round(sum(t.net_pnl_usdt for t in group), 2),
+    }
+
+
+# P17 置信度×方向分桶
+_CONF_DIR_BUCKETS = [(60, 69, "60-69"), (70, 79, "70-79"), (80, 100, "80+")]
+
+# P17 杠杆×方向分桶
+_LEV_DIR_BUCKETS = [(1, 1, "1x"), (2, 2, "2x"), (3, 5, "3-5x")]
+
+
 def _direction_analysis(trades: list[TradeResult]) -> dict:
-    """方向分布 + 按月方向趋势 + 胜率对比"""
+    """方向分布 + 月×方向交叉表 + 置信度×方向 + 杠杆×方向"""
     if not trades:
-        return {"summary": {}, "monthly_trend": {}}
+        return {
+            "summary": {}, "monthly_trend": {},
+            "confidence_direction": {}, "leverage_direction": {},
+        }
 
     by_dir: dict[str, list[TradeResult]] = defaultdict(list)
     for t in trades:
@@ -131,15 +155,24 @@ def _direction_analysis(trades: list[TradeResult]) -> dict:
             "total_pnl_usdt": round(sum(t.net_pnl_usdt for t in group), 2),
         }
 
-    # 按月方向趋势
-    monthly: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    # P17: 月×方向交叉表 (扩展为 count/win_rate/avg_pnl_pct/total_pnl_usdt)
+    monthly_groups: dict[str, dict[str, list[TradeResult]]] = defaultdict(
+        lambda: defaultdict(list),
+    )
     for t in trades:
         month = t.entry_time[:7] if len(t.entry_time) >= 7 else "unknown"
-        monthly[month][t.action] += 1
+        monthly_groups[month][t.action].append(t)
 
     monthly_trend = {
-        m: dict(dirs) for m, dirs in sorted(monthly.items())
+        m: {action: _direction_group_stats(group) for action, group in sorted(dirs.items())}
+        for m, dirs in sorted(monthly_groups.items())
     }
+
+    # P17: 置信度×方向交叉表
+    conf_dir = _cross_table_by_buckets(trades, _CONF_DIR_BUCKETS, key_fn=lambda t: t.confidence)
+
+    # P17: 杠杆×方向交叉表
+    lev_dir = _cross_table_by_buckets(trades, _LEV_DIR_BUCKETS, key_fn=lambda t: t.leverage)
 
     # 偏差度量: 以 long/short 两方向为基准 (均衡=0.5)
     max_ratio = max((s["ratio"] for s in summary.values()), default=0)
@@ -148,8 +181,33 @@ def _direction_analysis(trades: list[TradeResult]) -> dict:
     return {
         "summary": summary,
         "monthly_trend": monthly_trend,
+        "confidence_direction": conf_dir,
+        "leverage_direction": lev_dir,
         "direction_bias": direction_bias,
         "dominant_direction": max(summary, key=lambda k: summary[k]["count"]) if summary else "",
+    }
+
+
+def _cross_table_by_buckets(
+    trades: list[TradeResult],
+    buckets: list[tuple[int, int, str]],
+    key_fn,
+) -> dict:
+    """按分桶 × 方向生成交叉表"""
+    matrix: dict[str, dict[str, list[TradeResult]]] = {
+        label: defaultdict(list) for _, _, label in buckets
+    }
+    for t in trades:
+        val = key_fn(t)
+        for lo, hi, label in buckets:
+            if lo <= val <= hi:
+                matrix[label][t.action].append(t)
+                break
+
+    return {
+        label: {action: _direction_group_stats(group) for action, group in sorted(dirs.items())}
+        for label, dirs in matrix.items()
+        if dirs  # 跳过空桶
     }
 
 
@@ -399,7 +457,42 @@ def _generate_recommendations(
                 f"{max_dir}({rates[max_dir]:.0%})，考虑降低 {min_dir} 仓位或杠杆"
             )
 
-    # 4. 回撤控制建议
+    # 4. P17: 做多专项建议
+    monthly_trend = direction.get("monthly_trend", {})
+    if monthly_trend:
+        # 连续 N 月做多亏损
+        consecutive_long_loss = 0
+        for _month, dirs in sorted(monthly_trend.items()):
+            long_stats = dirs.get("long", {})
+            if long_stats.get("count", 0) > 0 and long_stats.get("total_pnl_usdt", 0) < 0:
+                consecutive_long_loss += 1
+            else:
+                consecutive_long_loss = 0
+        if consecutive_long_loss >= 3:
+            recs.append(
+                f"做多连续 {consecutive_long_loss} 个月亏损，"
+                "建议提高做多置信度阈值至 75+ 或暂停做多"
+            )
+
+    conf_dir = direction.get("confidence_direction", {})
+    for bucket_label, dirs in conf_dir.items():
+        long_stats = dirs.get("long", {})
+        if long_stats.get("count", 0) >= 3 and long_stats.get("win_rate", 1) < 0.4:
+            recs.append(
+                f"置信度 {bucket_label} 区间做多胜率仅 {long_stats['win_rate']:.0%}"
+                f" (n={long_stats['count']})，建议过滤该区间做多信号"
+            )
+
+    lev_dir = direction.get("leverage_direction", {})
+    for lev_label, dirs in lev_dir.items():
+        long_stats = dirs.get("long", {})
+        if long_stats.get("count", 0) >= 3 and long_stats.get("total_pnl_usdt", 0) < 0:
+            recs.append(
+                f"{lev_label} 杠杆做多累计亏损 {long_stats['total_pnl_usdt']:+.0f} USDT"
+                f" (n={long_stats['count']})，建议限制做多杠杆"
+            )
+
+    # 5. 回撤控制建议
     no_ctrl = drawdown.get("no_control", {})
     if no_ctrl.get("max_drawdown_pct", 0) > 50:
         # 找最优 daily_limit

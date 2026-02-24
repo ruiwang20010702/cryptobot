@@ -573,6 +573,72 @@ def analyze_replay(report: str, json_output: bool):
         if dominant:
             console.print(f"  主导方向: {dominant} | 偏差度: {bias:.2f}")
 
+    # 2b. P17: 月×方向交叉表
+    monthly_trend = result.direction_analysis.get("monthly_trend", {})
+    if monthly_trend:
+        mt_table = Table(title="月×方向交叉表")
+        mt_table.add_column("月份")
+        mt_table.add_column("方向")
+        mt_table.add_column("笔数", justify="right")
+        mt_table.add_column("胜率", justify="right")
+        mt_table.add_column("平均盈亏", justify="right")
+        mt_table.add_column("总PnL USDT", justify="right")
+        for month, dirs in monthly_trend.items():
+            for action, stats in sorted(dirs.items()):
+                pnl_style = "green" if stats.get("total_pnl_usdt", 0) >= 0 else "red"
+                mt_table.add_row(
+                    month, action,
+                    str(stats.get("count", 0)),
+                    f"{stats.get('win_rate', 0) * 100:.0f}%",
+                    f"{stats.get('avg_pnl_pct', 0):+.2f}%",
+                    f"[{pnl_style}]{stats.get('total_pnl_usdt', 0):+.0f}[/{pnl_style}]",
+                )
+        console.print(mt_table)
+
+    # 2c. P17: 置信度×方向交叉表
+    conf_dir = result.direction_analysis.get("confidence_direction", {})
+    if conf_dir:
+        cd_table = Table(title="置信度×方向交叉表")
+        cd_table.add_column("置信度区间")
+        cd_table.add_column("方向")
+        cd_table.add_column("笔数", justify="right")
+        cd_table.add_column("胜率", justify="right")
+        cd_table.add_column("平均盈亏", justify="right")
+        cd_table.add_column("总PnL USDT", justify="right")
+        for bucket, dirs in conf_dir.items():
+            for action, stats in sorted(dirs.items()):
+                pnl_style = "green" if stats.get("total_pnl_usdt", 0) >= 0 else "red"
+                cd_table.add_row(
+                    bucket, action,
+                    str(stats.get("count", 0)),
+                    f"{stats.get('win_rate', 0) * 100:.0f}%",
+                    f"{stats.get('avg_pnl_pct', 0):+.2f}%",
+                    f"[{pnl_style}]{stats.get('total_pnl_usdt', 0):+.0f}[/{pnl_style}]",
+                )
+        console.print(cd_table)
+
+    # 2d. P17: 杠杆×方向交叉表
+    lev_dir = result.direction_analysis.get("leverage_direction", {})
+    if lev_dir:
+        ld_table = Table(title="杠杆×方向交叉表")
+        ld_table.add_column("杠杆区间")
+        ld_table.add_column("方向")
+        ld_table.add_column("笔数", justify="right")
+        ld_table.add_column("胜率", justify="right")
+        ld_table.add_column("平均盈亏", justify="right")
+        ld_table.add_column("总PnL USDT", justify="right")
+        for lev_label, dirs in lev_dir.items():
+            for action, stats in sorted(dirs.items()):
+                pnl_style = "green" if stats.get("total_pnl_usdt", 0) >= 0 else "red"
+                ld_table.add_row(
+                    lev_label, action,
+                    str(stats.get("count", 0)),
+                    f"{stats.get('win_rate', 0) * 100:.0f}%",
+                    f"{stats.get('avg_pnl_pct', 0):+.2f}%",
+                    f"[{pnl_style}]{stats.get('total_pnl_usdt', 0):+.0f}[/{pnl_style}]",
+                )
+        console.print(ld_table)
+
     # 3. 回撤控制模拟表
     if result.drawdown_simulation:
         dd_table = Table(title="回撤控制模拟")

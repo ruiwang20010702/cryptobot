@@ -134,18 +134,65 @@ class TestDirectionAnalysis:
 
     def test_monthly_trend(self):
         trades = [
-            _make_trade(action="short", entry_time="2025-11-15T00:00:00"),
-            _make_trade(action="long", entry_time="2025-11-20T00:00:00"),
-            _make_trade(action="short", entry_time="2025-12-01T00:00:00"),
+            _make_trade(action="short", entry_time="2025-11-15T00:00:00",
+                        net_pnl_pct=5.0, net_pnl_usdt=50.0),
+            _make_trade(action="long", entry_time="2025-11-20T00:00:00",
+                        net_pnl_pct=-3.0, net_pnl_usdt=-30.0),
+            _make_trade(action="short", entry_time="2025-12-01T00:00:00",
+                        net_pnl_pct=8.0, net_pnl_usdt=80.0),
         ]
         result = _direction_analysis(trades)
         assert "2025-11" in result["monthly_trend"]
-        assert result["monthly_trend"]["2025-11"]["short"] == 1
-        assert result["monthly_trend"]["2025-11"]["long"] == 1
+        # P17: monthly_trend 扩展为 dict 格式
+        assert result["monthly_trend"]["2025-11"]["short"]["count"] == 1
+        assert result["monthly_trend"]["2025-11"]["short"]["win_rate"] == 1.0
+        assert result["monthly_trend"]["2025-11"]["short"]["total_pnl_usdt"] == 50.0
+        assert result["monthly_trend"]["2025-11"]["long"]["count"] == 1
+        assert result["monthly_trend"]["2025-11"]["long"]["win_rate"] == 0.0
+
+    def test_confidence_direction(self):
+        """P17: 置信度×方向交叉表"""
+        trades = [
+            _make_trade(action="long", confidence=62, net_pnl_pct=-3.0, net_pnl_usdt=-30.0),
+            _make_trade(action="short", confidence=65, net_pnl_pct=5.0, net_pnl_usdt=50.0),
+            _make_trade(action="long", confidence=72, net_pnl_pct=2.0, net_pnl_usdt=20.0),
+            _make_trade(action="short", confidence=75, net_pnl_pct=-1.0, net_pnl_usdt=-10.0),
+            _make_trade(action="long", confidence=85, net_pnl_pct=10.0, net_pnl_usdt=100.0),
+        ]
+        result = _direction_analysis(trades)
+        cd = result["confidence_direction"]
+        assert "60-69" in cd
+        assert cd["60-69"]["long"]["count"] == 1
+        assert cd["60-69"]["short"]["count"] == 1
+        assert "70-79" in cd
+        assert cd["70-79"]["long"]["count"] == 1
+        assert cd["70-79"]["short"]["count"] == 1
+        assert "80+" in cd
+        assert cd["80+"]["long"]["count"] == 1
+
+    def test_leverage_direction(self):
+        """P17: 杠杆×方向交叉表"""
+        trades = [
+            _make_trade(action="long", leverage=1, net_pnl_pct=-2.0, net_pnl_usdt=-20.0),
+            _make_trade(action="short", leverage=2, net_pnl_pct=5.0, net_pnl_usdt=50.0),
+            _make_trade(action="long", leverage=3, net_pnl_pct=-4.0, net_pnl_usdt=-40.0),
+            _make_trade(action="short", leverage=5, net_pnl_pct=8.0, net_pnl_usdt=80.0),
+        ]
+        result = _direction_analysis(trades)
+        ld = result["leverage_direction"]
+        assert "1x" in ld
+        assert ld["1x"]["long"]["count"] == 1
+        assert "2x" in ld
+        assert ld["2x"]["short"]["count"] == 1
+        assert "3-5x" in ld
+        assert ld["3-5x"]["long"]["count"] == 1
+        assert ld["3-5x"]["short"]["count"] == 1
 
     def test_empty(self):
         result = _direction_analysis([])
         assert result["summary"] == {}
+        assert result["confidence_direction"] == {}
+        assert result["leverage_direction"] == {}
 
 
 # ── 回撤控制模拟 ──────────────────────────────────────────────────────────
@@ -294,6 +341,60 @@ class TestRecommendations:
         conf = {"55-64": {"count": 50, "win_rate": 0.35}, "65-74": {}, "75+": {}}
         recs = _generate_recommendations(conf, {"summary": {}}, {})
         assert any("55-64" in r for r in recs)
+
+    def test_consecutive_long_loss_rec(self):
+        """P17: 连续做多亏损月触发建议"""
+        direction = {
+            "summary": {},
+            "monthly_trend": {
+                "2025-09": {"long": {"count": 3, "win_rate": 0.33, "total_pnl_usdt": -100,
+                                     "avg_pnl_pct": -2.0}},
+                "2025-10": {"long": {"count": 4, "win_rate": 0.25, "total_pnl_usdt": -200,
+                                     "avg_pnl_pct": -3.0}},
+                "2025-11": {"long": {"count": 5, "win_rate": 0.20, "total_pnl_usdt": -300,
+                                     "avg_pnl_pct": -4.0}},
+            },
+            "confidence_direction": {},
+            "leverage_direction": {},
+        }
+        recs = _generate_recommendations({}, direction, {})
+        assert any("连续" in r and "做多" in r for r in recs)
+
+    def test_low_conf_long_win_rate_rec(self):
+        """P17: 低置信度区间做多胜率低触发建议"""
+        direction = {
+            "summary": {},
+            "monthly_trend": {},
+            "confidence_direction": {
+                "60-69": {
+                    "long": {"count": 10, "win_rate": 0.3, "avg_pnl_pct": -2.0,
+                             "total_pnl_usdt": -200},
+                    "short": {"count": 8, "win_rate": 0.6, "avg_pnl_pct": 3.0,
+                              "total_pnl_usdt": 240},
+                },
+            },
+            "leverage_direction": {},
+        }
+        recs = _generate_recommendations({}, direction, {})
+        assert any("60-69" in r and "做多" in r for r in recs)
+
+    def test_high_lev_long_loss_rec(self):
+        """P17: 高杠杆做多亏损触发建议"""
+        direction = {
+            "summary": {},
+            "monthly_trend": {},
+            "confidence_direction": {},
+            "leverage_direction": {
+                "3-5x": {
+                    "long": {"count": 8, "win_rate": 0.25, "avg_pnl_pct": -5.0,
+                             "total_pnl_usdt": -400},
+                    "short": {"count": 12, "win_rate": 0.58, "avg_pnl_pct": 4.0,
+                              "total_pnl_usdt": 480},
+                },
+            },
+        }
+        recs = _generate_recommendations({}, direction, {})
+        assert any("杠杆做多" in r for r in recs)
 
     def test_high_drawdown_rec(self):
         """高回撤时推荐控制策略"""
