@@ -156,7 +156,7 @@ def route_strategies(
 
     过滤掉 weight=0 的策略。如果全部 weight=0 → 返回 [observe]。
     """
-    from cryptobot.strategy.weight_tracker import get_weights
+    from cryptobot.strategy.weight_tracker import get_weights, save_weights
 
     # 高波动 → observe or P14 子状态策略
     if regime == "volatile" or volatility_state == "high_vol":
@@ -172,6 +172,7 @@ def route_strategies(
             )]
         # P14: 使用子状态权重
         allocation = get_weights(subtype)
+        save_weights(allocation)
         routes: list[StrategyRoute] = []
         for sw in allocation.weights:
             if sw.weight <= 0:
@@ -204,6 +205,7 @@ def route_strategies(
         return sorted(routes, key=lambda r: -r.weight)
 
     allocation = get_weights(regime)
+    save_weights(allocation)
     routes: list[StrategyRoute] = []
     for sw in allocation.weights:
         if sw.weight <= 0:
