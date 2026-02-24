@@ -6,7 +6,7 @@
     "stake_amount": "unlimited",
     "tradable_balance_ratio": 0.8,
     "dry_run": true,
-    "dry_run_wallet": 10000,
+    "dry_run_wallet": 2000,
     "cancel_open_orders_on_exit": true,
 
     "exchange": {
