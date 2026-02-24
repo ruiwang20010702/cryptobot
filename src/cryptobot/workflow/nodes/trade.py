@@ -153,6 +153,7 @@ def trade(state: WorkflowState) -> dict:
             hurst=regime_info.get("hurst_exponent", 0.5),
             volatility_state=regime_info.get("volatility_state", "normal"),
             fear_greed_value=fg_val,
+            trend_direction=regime_info.get("trend_direction", ""),
         )
         strategy_routes[symbol] = route
 
@@ -167,6 +168,7 @@ def trade(state: WorkflowState) -> dict:
                 hurst=regime_info.get("hurst_exponent", 0.5),
                 volatility_state=regime_info.get("volatility_state", "normal"),
                 fear_greed_value=fg_val,
+                trend_direction=regime_info.get("trend_direction", ""),
             )
             for aux in routes[1:]:
                 if aux.strategy == "grid" and aux.weight > 0:

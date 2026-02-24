@@ -372,17 +372,28 @@ def calc_position_size(
     # --- 方法 2: 凯利公式 (复用 _kelly_f) ---
     kelly_fraction = _kelly_f(win_rate, avg_win_loss_ratio)
     if kelly_fraction > 0:
-        # 动态半 Kelly 比例：基于 regime 和 confidence 查表
+        # P17-B3: 三维 Kelly 缩放 (regime, high_conf, is_long)
+        # 做多缩放系数降低 ~30%，反映加密市场结构性做空优势
         _KELLY_SCALE = {
-            ("trending", True): 0.6,
-            ("trending", False): 0.5,
-            ("ranging", True): 0.4,
-            ("ranging", False): 0.3,
-            ("volatile", True): 0.35,
-            ("volatile", False): 0.25,
+            ("trending", True, False): 0.6,
+            ("trending", True, True): 0.4,
+            ("trending", False, False): 0.5,
+            ("trending", False, True): 0.35,
+            ("ranging", True, False): 0.4,
+            ("ranging", True, True): 0.25,
+            ("ranging", False, False): 0.3,
+            ("ranging", False, True): 0.2,
+            ("volatile", True, False): 0.35,
+            ("volatile", True, True): 0.2,
+            ("volatile", False, False): 0.25,
+            ("volatile", False, True): 0.15,
         }
         high_conf = confidence >= 85 if confidence is not None else False
-        kelly_scale = _KELLY_SCALE.get((regime, high_conf), 0.5)
+        is_long = action == "long"
+        kelly_scale = _KELLY_SCALE.get(
+            (regime, high_conf, is_long),
+            0.25 if is_long else 0.5,
+        )
         kelly_fraction *= kelly_scale
 
     kelly_position = account_balance * kelly_fraction

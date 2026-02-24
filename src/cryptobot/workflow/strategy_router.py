@@ -54,6 +54,7 @@ def route_strategy(
     hurst: float = 0.5,
     volatility_state: str = "normal",
     fear_greed_value: float = 50,
+    trend_direction: str = "",
 ) -> StrategyRoute:
     """根据 regime 信息路由到合适的策略
 
@@ -62,11 +63,13 @@ def route_strategy(
         regime_confidence: regime 检测置信度 (0-1)
         hurst: Hurst 指数
         volatility_state: "normal" | "high_vol" | "low_vol"
+        trend_direction: "up" | "down" | "" (P17-A4)
 
     路由规则:
     1. volatile (ATR% > 3%) -> observe, weight=0.0
     2. trending (H>0.55, ADX>25) -> ai_trend, weight=1.0
        - 低置信度 (conf<0.5) -> ai_trend, weight=0.5
+       - P17: 下降趋势时注入 direction_bias: short
     3. ranging (H<0.45, ADX<20) -> mean_reversion, weight=0.7
     4. 混合/不确定 -> ai_trend, weight=0.5
     """
@@ -107,11 +110,16 @@ def route_strategy(
     # 2. 趋势市
     if regime == "trending":
         weight = 1.0 if regime_confidence >= 0.5 else 0.5
+        params: dict = {"hurst": hurst}
+        # P17-A4: 下降趋势时偏好做空
+        if trend_direction == "down":
+            params["direction_bias"] = "short"
+            params["min_confidence"] = 75  # 做多需更高置信度
         return StrategyRoute(
             strategy="ai_trend",
             weight=weight,
             reason=f"趋势市 AI 决策 (H={hurst:.2f}, conf={regime_confidence:.2f})",
-            params={"hurst": hurst},
+            params=params,
         )
 
     # 3. 震荡市
@@ -138,6 +146,7 @@ def route_strategies(
     hurst: float = 0.5,
     volatility_state: str = "normal",
     fear_greed_value: float = 50,
+    trend_direction: str = "",
 ) -> list[StrategyRoute]:
     """返回多个策略路由（按权重降序排序）
 
@@ -205,11 +214,16 @@ def route_strategies(
         elif sw.strategy == "ai_trend":
             # 低置信度降仓
             weight = sw.weight if regime_confidence >= 0.5 else sw.weight * 0.5
+            ai_params: dict = {"hurst": hurst}
+            # P17-A4: trending + 下降趋势 → 偏好做空
+            if regime == "trending" and trend_direction == "down":
+                ai_params["direction_bias"] = "short"
+                ai_params["min_confidence"] = 75
             routes.append(StrategyRoute(
                 strategy=sw.strategy,
                 weight=weight,
                 reason=f"{sw.reason} (H={hurst:.2f})",
-                params={"hurst": hurst},
+                params=ai_params,
             ))
             continue
         routes.append(StrategyRoute(

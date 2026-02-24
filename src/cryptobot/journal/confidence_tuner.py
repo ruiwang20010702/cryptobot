@@ -18,41 +18,14 @@ _MIN_CLOSED = 50  # 最少已平仓数量才启用动态调整
 _MIN_BUCKET_SAMPLES = 15  # 每个区间最少样本
 
 
-def calc_dynamic_threshold(days: int = 30) -> dict:
-    """基于历史校准数据计算推荐的最低置信度
+def _calc_calibration_adjustment(calibration: dict) -> tuple[int, list[str]]:
+    """从校准数据计算置信度调整值
 
     Returns:
-        {"recommended_min_confidence": int,
-         "current_regime_min": int,
-         "calibration_notes": [str],
-         "sample_size": int}
+        (adjustment, notes) — adjustment 基于 60 的偏移量
     """
-    from cryptobot.journal.analytics import calc_performance
-
-    try:
-        perf = calc_performance(days)
-    except Exception as e:
-        logger.warning("绩效数据获取失败: %s", e)
-        return {
-            "recommended_min_confidence": 60,
-            "current_regime_min": 60,
-            "calibration_notes": ["绩效数据不可用"],
-            "sample_size": 0,
-        }
-
-    closed_count = perf.get("closed", 0)
-    calibration = perf.get("confidence_calibration", {})
-
-    if closed_count < _MIN_CLOSED:
-        return {
-            "recommended_min_confidence": 60,
-            "current_regime_min": 60,
-            "calibration_notes": [f"样本不足 ({closed_count}/{_MIN_CLOSED})，使用默认阈值"],
-            "sample_size": closed_count,
-        }
-
-    notes = []
-    adjustment = 0  # 基于 60 的调整值
+    notes: list[str] = []
+    adjustment = 0
 
     for bucket_name, bucket_def in _BUCKETS.items():
         cal_data = calibration.get(bucket_name, {})
@@ -63,11 +36,9 @@ def calc_dynamic_threshold(days: int = 30) -> dict:
             continue
 
         midpoint = bucket_def["midpoint"]
-        # 假设: 区间中位数 ≈ 期望胜率 (简化近似, 未来可用校准曲线替代)
         expected_wr = midpoint / 100
 
         if actual_wr < expected_wr * 0.5:
-            # 偏差>50%: 大幅调整
             notes.append(
                 f"confidence {bucket_name}: 实际胜率 {actual_wr * 100:.0f}% "
                 f"远低于预期 {midpoint}%, 严重偏乐观"
@@ -75,7 +46,6 @@ def calc_dynamic_threshold(days: int = 30) -> dict:
             if bucket_def["min"] <= 70:
                 adjustment += 15
         elif actual_wr < expected_wr * 0.7:
-            # 偏差>30%: 中幅调整
             notes.append(
                 f"confidence {bucket_name}: 实际胜率 {actual_wr * 100:.0f}% "
                 f"远低于预期 {midpoint}%, 偏乐观"
@@ -83,7 +53,6 @@ def calc_dynamic_threshold(days: int = 30) -> dict:
             if bucket_def["min"] <= 70:
                 adjustment += 10
         elif actual_wr > expected_wr * 1.5:
-            # 偏差>50%: 大幅放宽
             notes.append(
                 f"confidence {bucket_name}: 实际胜率 {actual_wr * 100:.0f}% "
                 f"远高于预期 {midpoint}%, 严重偏保守"
@@ -91,7 +60,6 @@ def calc_dynamic_threshold(days: int = 30) -> dict:
             if bucket_def["min"] >= 70:
                 adjustment -= 15
         elif actual_wr > expected_wr * 1.2:
-            # 偏差>20%: 中幅放宽
             notes.append(
                 f"confidence {bucket_name}: 实际胜率 {actual_wr * 100:.0f}% "
                 f"高于预期 {midpoint}%, 偏保守"
@@ -99,10 +67,58 @@ def calc_dynamic_threshold(days: int = 30) -> dict:
             if bucket_def["min"] >= 70:
                 adjustment -= 10
 
+    return adjustment, notes
+
+
+def calc_dynamic_threshold(days: int = 30) -> dict:
+    """基于历史校准数据计算推荐的最低置信度
+
+    Returns:
+        {"recommended_min_confidence": int,
+         "recommended_long_min_confidence": int,
+         "current_regime_min": int,
+         "calibration_notes": [str],
+         "sample_size": int}
+    """
+    from cryptobot.journal.analytics import calc_performance
+
+    _default = {
+        "recommended_min_confidence": 60,
+        "recommended_long_min_confidence": 65,
+        "current_regime_min": 60,
+        "calibration_notes": [],
+        "sample_size": 0,
+    }
+
+    try:
+        perf = calc_performance(days)
+    except Exception as e:
+        logger.warning("绩效数据获取失败: %s", e)
+        return {**_default, "calibration_notes": ["绩效数据不可用"]}
+
+    closed_count = perf.get("closed", 0)
+    calibration = perf.get("confidence_calibration", {})
+
+    if closed_count < _MIN_CLOSED:
+        return {
+            **_default,
+            "calibration_notes": [f"样本不足 ({closed_count}/{_MIN_CLOSED})，使用默认阈值"],
+            "sample_size": closed_count,
+        }
+
+    adjustment, notes = _calc_calibration_adjustment(calibration)
     recommended = max(50, min(85, 60 + adjustment))
+
+    # P17-A1: 做多方向独立校准
+    long_cal = perf.get("confidence_calibration_long", {})
+    long_adj, long_notes = _calc_calibration_adjustment(long_cal)
+    recommended_long = max(60, min(90, 65 + long_adj))
+    for n in long_notes:
+        notes.append(f"[做多] {n}")
 
     return {
         "recommended_min_confidence": recommended,
+        "recommended_long_min_confidence": recommended_long,
         "current_regime_min": 60,
         "calibration_notes": notes if notes else ["校准正常，无需调整"],
         "sample_size": closed_count,

@@ -213,6 +213,12 @@ TRADER = """\
 - 40-54: 反向信号较多，仅弱势方向偏好
 - 0-39: 强烈反向信号，建议反向操作或观望
 
+## 做多特殊要求 (加密市场结构性做空优势)
+- 做多需要比做空更强的多源共振：至少需要趋势+资金流+情绪三重确认
+- 高波动/高资金费率环境下，优先选择不交易而非做多
+- 做多止损应更紧（ATR 1.5x vs 做空 2.5x），减少持仓时间
+- 做多置信度标准应比做空高 5-10 个百分点
+
 ## 输出格式
 严格按 JSON Schema 输出，包含 action (long/short/no_trade)、entry_price_range、
 stop_loss、take_profit (列表)、leverage、confidence、position_size_pct、reasoning。

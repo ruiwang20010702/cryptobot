@@ -80,6 +80,10 @@ def calc_performance(days: int = 30, *, with_ci: bool = False) -> dict:
             "avg_pnl_pct": round(stats["total_pnl_pct"] / stats["count"], 2) if stats["count"] > 0 else 0,
         }
 
+    # P17-A1: 方向分拆校准
+    calibration_long = _calc_confidence_calibration(closed, "bullish")
+    calibration_short = _calc_confidence_calibration(closed, "bearish")
+
     result = {
         "period_days": days,
         "total_signals": total_signals,
@@ -93,6 +97,8 @@ def calc_performance(days: int = 30, *, with_ci: bool = False) -> dict:
             sum(r.actual_pnl_usdt or 0 for r in closed), 2,
         ),
         "confidence_calibration": calibration,
+        "confidence_calibration_long": calibration_long,
+        "confidence_calibration_short": calibration_short,
         "by_direction": by_direction,
         "by_symbol": by_symbol_result,
     }
@@ -126,8 +132,20 @@ def calc_performance(days: int = 30, *, with_ci: bool = False) -> dict:
     return result
 
 
-def _calc_confidence_calibration(closed_records: list) -> dict:
-    """计算置信度区间的实际胜率"""
+def _calc_confidence_calibration(
+    closed_records: list, direction: str | None = None,
+) -> dict:
+    """计算置信度区间的实际胜率
+
+    Args:
+        closed_records: 已平仓记录
+        direction: 可选方向过滤 ("bullish"/"bearish")，None 表示全部
+    """
+    if direction:
+        closed_records = [
+            r for r in closed_records
+            if _normalize_direction(getattr(r, "action", "") or "") == direction
+        ]
     buckets = {
         "60-70": {"min": 60, "max": 70, "count": 0, "wins": 0},
         "70-80": {"min": 70, "max": 80, "count": 0, "wins": 0},
@@ -243,6 +261,15 @@ def build_performance_summary(days: int = 30) -> str:
             f"空单: {short_info.get('count', 0)} 笔 "
             f"胜率 {short_info.get('win_rate', 0) * 100:.0f}%"
         )
+
+    # P17-A2: 做多绩效预警
+    if long_info.get("count", 0) >= 5:
+        long_wr = long_info.get("win_rate", 0)
+        if long_wr < 0.4:
+            lines.append(
+                f"- **做多预警**: 近 {days}d 做多胜率仅 {long_wr * 100:.0f}%，"
+                "建议提高做多置信度要求或减少做多频率"
+            )
 
     # 置信度校准偏差
     cal = perf.get("confidence_calibration", {})

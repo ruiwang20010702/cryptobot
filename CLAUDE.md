@@ -120,7 +120,7 @@ collect → screen ──┬→ analyze →      pending_signals.json
 | `workflow/graph.py` | LangGraph 8 节点状态图(含 ml_filter) + `should_analyze` 条件路由(volatile 时跳过 LLM) + 独立 `re_review()` 持仓复审流程 |
 | `workflow/llm.py` | Claude CLI 子进程封装，内置速率限制和重试，支持 `role` 参数路由模型 |
 | `workflow/api_llm.py` | OpenAI 兼容 API 后端（DeepSeek/OpenAI/Groq 等），支持角色级模型选择 + token 用量追踪 |
-| `workflow/prompts.py` | 7 个 AI 角色的 system prompt + JSON schema（含 RE_REVIEWER） |
+| `workflow/prompts.py` | 7 个 AI 角色的 system prompt + JSON schema（含 RE_REVIEWER） + P17 做多特异性标准(多源共振/更紧止损/更高置信度) |
 | `signal/bridge.py` | signal.json / pending_signals.json 读写校验 + `update_signal_field` 动态更新 + fcntl 文件锁(跨进程安全) + 强制止损校验 |
 | `realtime/monitor.py` | 轮询 Binance 价格，等待入场区间 + 5m 指标确认后 promote 信号 |
 | `indicators/calculator.py` | 技术指标计算（TA-Lib），K 线数据加载（feather 优先 + Binance API fallback） |
@@ -128,7 +128,7 @@ collect → screen ──┬→ analyze →      pending_signals.json
 | `indicators/hurst.py` | Hurst 指数 (R/S 分析): H>0.55 趋势/H<0.45 均值回归，加权投票增强 regime 检测 |
 | `data/` | 外部数据获取：链上(CoinGlass)、情绪(Fear&Greed)、新闻(CryptoNews-API)、稳定币流(DefiLlama)、订单簿(Binance)、交易所储备(CoinGlass)、宏观日历(FinnHub)、期权(Deribit)、代币稀释(CoinGecko)、DXY美元指数(Yahoo Finance)、DeFi TVL(DefiLlama)、巨鲸追踪(Whale Alert) |
 | `regime_smoother.py` | 市场状态转换平滑：连续 N 周期确认才切换 regime，防止边界反复跳动 |
-| `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→三子状态(normal→保守AI趋势, fear→套利+网格+趋势空头fallback, greed→仅做空) + 多策略权重分配 route_strategies() |
+| `workflow/strategy_router.py` | Regime 感知策略路由: trending→AI趋势 / ranging→均值回归 / volatile→三子状态(normal→保守AI趋势, fear→套利+网格+趋势空头fallback, greed→仅做空) + 多策略权重分配 route_strategies() + P17 trend_direction 路由(trending+下降趋势→direction_bias:short) |
 | `workflow/nodes/ml_filter.py` | ML 信号过滤节点: trade→ml_filter→risk_review，方向一致性+概率阈值过滤 |
 | `ml/feature_feedback.py` | ML 特征重要性反馈: top-5 特征按角色注入分析师 prompt |
 | `ml/retrainer.py` | 模型自动重训: 每周日重训 + AUC 对比回滚 + 版本管理 |
@@ -147,7 +147,7 @@ collect → screen ──┬→ analyze →      pending_signals.json
 | `evolution/model_competition.py` | 多模型竞赛：并行调用多模型决策，consensus/best_performer 策略择优（2 模型分歧时选 no_trade 保守策略） |
 | `volatile_toggle.py` | Volatile 策略自适应开关：根据虚拟盘绩效自动启停 volatile 子策略 |
 | `journal/regime_evaluator.py` | Regime 感知评估：按市场状态分组 Welch t-test 对比前后绩效 |
-| `risk/position_sizer.py` | 仓位计算：Kelly 5级 fallback + 相关性折算 + 波动率自适应杠杆 + 币种分级杠杆限制 |
+| `risk/position_sizer.py` | 仓位计算：Kelly 5级 fallback + 相关性折算 + 波动率自适应杠杆 + 币种分级杠杆限制 + P17 Kelly 三维查表(regime×confidence×is_long，做多缩放降30%) |
 | `risk/monthly_circuit_breaker.py` | 月度亏损熔断：连续 2 月亏损降仓 50%+暂停做多; 连续 3 月暂停 7 天 |
 | `risk/symbol_profile.py` | 币种差异化：按 180d 历史 A/B/C/D 四档分级，差异化杠杆/置信度/过滤 |
 | `risk/correlation.py` | 跨币种 Pearson 相关性矩阵 + 组合风控（高相关同向限仓） |
@@ -156,7 +156,7 @@ collect → screen ──┬→ analyze →      pending_signals.json
 | `notify.py` | Telegram 通知：信号/风控/告警/日报/错误推送（silent fallback） |
 | `telegram/bot.py` | Telegram Bot 长轮询：接收命令 → handlers 处理 → 回复 |
 | `telegram/handlers.py` | 11 个命令处理器 + Freqtrade 离线自动 fallback 虚拟盘 + 离线体验优化(信号待执行提示/连接状态/离线告警) |
-| `journal/` | 交易记录与绩效：SignalRecord 生命周期(含 model_id) + 胜率/盈亏比/置信度校准 + prompt 注入 + 分析师动态权重 + 动态置信度阈值 |
+| `journal/` | 交易记录与绩效：SignalRecord 生命周期(含 model_id) + 胜率/盈亏比/置信度校准 + prompt 注入 + 分析师动态权重 + 动态置信度阈值 + P17 方向分拆校准(long/short独立) + 做多专属阈值 + 做多绩效预警注入 |
 | `events/` | 价格异动监控：30s 轮询检测 5min/15min 大幅波动 → 紧急复审 + 通知 |
 | `journal/edge.py` | Edge 仪表盘：期望值/SQN/R分布/Regime分组/7d-vs-30d对比/衰减检测 |
 | `cli/scheduler.py` | APScheduler 调度器：12 个定时任务(含日报 cron + prompt 优化 + 过拟合检查 + ML 周重训) + 可选事件监控线程 |
@@ -208,7 +208,7 @@ collect → screen ──┬→ analyze →      pending_signals.json
 - 策略权重: `data/output/evolution/strategy_weights.json`
 - 虚拟盘: `data/output/virtual/{strategy}_portfolio.json`
 - 网格状态: `data/output/virtual/grid_{symbol}_state.json`
-- 配置: `config/settings.yaml`、`config/pairs.yaml`
+- 配置: `config/settings.yaml`（含 `risk.long_max_leverage: 2` P17做多杠杆上限）、`config/pairs.yaml`
 
 ### 交易对配置
 

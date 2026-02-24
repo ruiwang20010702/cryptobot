@@ -200,6 +200,7 @@ def _apply_hard_rules(
     cb_state, merged_params: dict, account_balance: float,
     positions: list, approved: list, preloaded_records: list | None,
     total_used: float, long_used: float, short_used: float,
+    route_params: dict | None = None,
 ) -> dict:
     """硬性规则检查（不依赖 AI 判断）
 
@@ -270,6 +271,52 @@ def _apply_hard_rules(
             hard_checks.append({"rule": "long_min_confidence", "passed": False, "reason": reason})
             return _reject(reason)
         hard_checks.append({"rule": "long_min_confidence", "passed": True})
+
+        # ── P17-B2: direction_bias 硬性拦截 ──
+        _route_params = route_params or {}
+        direction_bias = _route_params.get("direction_bias", "")
+        if direction_bias == "short":
+            return _reject(f"策略要求仅做空 (direction_bias={direction_bias})")
+
+        # ── P17-B1: 做多杠杆上限 ──
+        long_max_lev = risk_cfg.get("long_max_leverage", 2)
+        if leverage > long_max_lev:
+            hard_checks.append({
+                "rule": "long_max_leverage", "passed": True,
+                "note": f"杠杆 {leverage} → {long_max_lev}",
+            })
+            logger.info("做多杠杆钳位 %s: %dx → %dx", symbol, leverage, long_max_lev)
+            _console.print(
+                f"    [yellow]{symbol}: 杠杆 {leverage}x → "
+                f"{long_max_lev}x (做多上限)[/yellow]"
+            )
+            decision = {**decision, "leverage": long_max_lev}
+            leverage = long_max_lev
+
+        # ── P17-B4: 做多 30d 滚动胜率门控 ──
+        if preloaded_records is not None:
+            from datetime import timedelta
+            cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+            recent_longs = [
+                r for r in preloaded_records
+                if getattr(r, "action", "") == "long"
+                and r.status == "closed"
+                and r.timestamp >= cutoff_30d
+            ]
+            if len(recent_longs) >= 10:
+                long_wins = sum(1 for r in recent_longs if (r.actual_pnl_pct or 0) > 0)
+                long_wr = long_wins / len(recent_longs)
+                if long_wr < 0.30:
+                    return _reject(f"做多 30d 胜率 {long_wr:.0%} < 30%，暂停做多")
+                if long_wr < 0.40:
+                    max_lev = max(1, leverage - 1)
+                    if max_lev != leverage:
+                        hard_checks.append({
+                            "rule": "long_degraded", "passed": True,
+                            "note": f"做多 30d 胜率 {long_wr:.0%}，杠杆降至 {max_lev}",
+                        })
+                        decision = {**decision, "leverage": max_lev}
+                        leverage = max_lev
 
     # ── P13.7: 震荡市日交易数限制 ──
     if regime_name == "ranging" and preloaded_records is not None:
@@ -785,15 +832,22 @@ def risk_review(state: WorkflowState) -> dict:
     # 构建所有风控审核任务
     all_tasks = []
     task_decisions = []
+    strategy_routes = state.get("strategy_routes", {})
 
     for decision in decisions:
         if decision.get("action") == "no_trade":
             continue
 
+        # P17-B2: 获取策略路由参数
+        _sym = decision.get("symbol", "")
+        _route = strategy_routes.get(_sym)
+        _route_params = _route.params if _route else None
+
         hr = _apply_hard_rules(
             decision, regime, risk_cfg, settings, cb_state, merged_params,
             account_balance, positions, approved, _preloaded_records,
             total_used, long_used, short_used,
+            route_params=_route_params,
         )
         hard_rule_results.append(hr["hard_result"])
         if not hr["passed"]:

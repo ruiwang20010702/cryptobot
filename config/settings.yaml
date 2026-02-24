@@ -67,6 +67,7 @@ risk:
   # P13.3: 做多加严
   long_min_confidence: 65             # 做多最低置信度
   ranging_block_long: true            # 震荡市禁止做多
+  long_max_leverage: 2                # P17: 做多最大杠杆（独立于全局 5x）
 
   # 止损规则
   stoploss:

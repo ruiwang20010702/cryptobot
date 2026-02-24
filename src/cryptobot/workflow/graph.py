@@ -110,6 +110,7 @@ def should_analyze(state: WorkflowState) -> str:
             hurst=regime.get("hurst_exponent", 0.5),
             volatility_state=regime.get("volatility_state", "normal"),
             fear_greed_value=fg_val,
+            trend_direction=regime.get("trend_direction", ""),
         )
         if route.strategy == "ai_trend":
             return "analyze"  # 至少一个币需要 LLM

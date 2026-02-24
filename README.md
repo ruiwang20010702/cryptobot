@@ -29,7 +29,7 @@ collect → screen ──┬─→ analyze → research ─┐
 - **资金感知策略** — 根据账户余额自动调整（micro/small/medium/large 四档），小账户更保守
 - **自动进化** — 绩效驱动 Prompt 迭代、分析师动态权重、多模型竞赛、策略顾问(自动发现失败模式 → 生成规则 → 14天评估 → 淘汰/续期)
 - **量化回测** — 成本模型(手续费+滑点+资金费率) + 逐根K线模拟 + MFE自适应止盈 + Walk-forward验证 + 历史回放(LLM驱动) + 基线对照 + 统计检验
-- **全链路风控** — 最大杠杆/仓位/方向/相关性硬性限制 + 置信度下限过滤(60/65) + 做多加严(≥65) + 震荡市禁多 + 币种分级(A/B/C/D) + 月度亏损熔断 + AI 软审核
+- **全链路风控** — 最大杠杆/仓位/方向/相关性硬性限制 + 置信度下限过滤(60/65) + 做多加严(≥65) + 震荡市禁多 + 币种分级(A/B/C/D) + 月度亏损熔断 + AI 软审核 + P17 做多不对称约束(杠杆上限2x/30d胜率门控/Kelly三维缩放/direction_bias硬拦截/趋势下行强制做空偏好)
 - **ML 信号评分** — LightGBM 二分类器(TimeSeriesSplit CV)预测涨跌概率 + 多因子 lead-lag 相关性分析识别预测因子
 - **Telegram 双向交互** — 11 个命令(status/signals/positions/balance/liq/pnl/edge/weights/risk/alerts/help) + 生命周期通知，Freqtrade 离线自动 fallback 虚拟盘
 - **决策归档** — 每轮工作流完整决策链(筛选/分析/风控/信号)持久化，支持 CLI 回溯
@@ -210,6 +210,7 @@ freqtrade_strategies/
 | 配置 | 默认 | 说明 |
 |------|------|------|
 | `risk.max_leverage` | 5 | 最大杠杆 |
+| `risk.long_max_leverage` | 2 | 做多最大杠杆 (P17) |
 | `risk.max_single_position_pct` | 25% | 单币种最大仓位 |
 | `risk.max_loss.per_trade_pct` | 2% | 单笔最大亏损 |
 | `schedule.full_cycle_minutes` | 30 | 分析周期 (分钟) |
