@@ -155,7 +155,7 @@ collect → screen ──┬→ analyze →      pending_signals.json
 | `risk/liquidation_calc.py` | 爆仓距离计算 + 预警分级 |
 | `notify.py` | Telegram 通知：信号/风控/告警/日报/错误推送（silent fallback） |
 | `telegram/bot.py` | Telegram Bot 长轮询：接收命令 → handlers 处理 → 回复 |
-| `telegram/handlers.py` | 11 个命令处理器 + Freqtrade 离线自动 fallback 虚拟盘（positions/balance/liq） |
+| `telegram/handlers.py` | 11 个命令处理器 + Freqtrade 离线自动 fallback 虚拟盘 + 离线体验优化(信号待执行提示/连接状态/离线告警) |
 | `journal/` | 交易记录与绩效：SignalRecord 生命周期(含 model_id) + 胜率/盈亏比/置信度校准 + prompt 注入 + 分析师动态权重 + 动态置信度阈值 |
 | `events/` | 价格异动监控：30s 轮询检测 5min/15min 大幅波动 → 紧急复审 + 通知 |
 | `journal/edge.py` | Edge 仪表盘：期望值/SQN/R分布/Regime分组/7d-vs-30d对比/衰减检测 |

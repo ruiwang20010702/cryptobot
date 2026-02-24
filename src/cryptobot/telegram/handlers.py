@@ -48,18 +48,24 @@ def _cmd_help() -> str:
 def _cmd_status() -> str:
     from cryptobot.signal.bridge import read_signals
     from cryptobot.journal.analytics import calc_performance
+    from cryptobot.freqtrade_api import ft_api_get
 
     signals = read_signals(filter_expired=True)
     perf = calc_performance(30)
+    ft_online = ft_api_get("/status") is not None
 
     active_count = len(signals)
     closed = perf.get("closed", 0)
     win_rate = perf.get("win_rate", 0) * 100
     avg_pnl = perf.get("avg_pnl_pct", 0)
 
+    mode = "实盘" if ft_online else "虚拟盘 (Freqtrade 离线)"
+    signal_suffix = " (待执行)" if not ft_online and active_count > 0 else ""
+
     return (
         "\U0001f4ca *系统状态*\n\n"
-        f"活跃信号: {active_count}\n"
+        f"运行模式: {mode}\n"
+        f"活跃信号: {active_count}{signal_suffix}\n"
         f"30天已平仓: {closed}\n"
         f"胜率: {win_rate:.0f}%\n"
         f"平均盈亏: {avg_pnl:+.2f}%"
@@ -107,7 +113,8 @@ def _cmd_positions() -> str:
     # Freqtrade 离线 → 虚拟盘 fallback
     vpositions, prices = _get_virtual_positions()
     if not vpositions:
-        return "\U0001f4ad 当前无持仓"
+        # 无虚拟持仓 → 检查是否有待执行信号
+        return _positions_signal_hint()
 
     lines = [f"\U0001f4b0 *持仓* ({len(vpositions)}) \\[虚拟盘]\n"]
     for pos, strategy in vpositions:
@@ -133,16 +140,27 @@ def _cmd_alerts() -> str:
 
     signals = read_signals(filter_expired=False)
     positions = ft_api_get("/status")
+    ft_online = positions is not None
 
     if positions:
         alerts = _build_position_alerts(positions, signals)
     else:
         alerts = _build_signal_only_alerts(signals)
 
+    # FT 离线 + 有活跃信号 → 追加一条离线告警
+    if not ft_online:
+        active = [s for s in signals if not s.get("expired")]
+        if active:
+            alerts = list(alerts)  # 确保可变
+            alerts.append({
+                "level": "INFO",
+                "message": f"Freqtrade 离线，{len(active)} 个信号待执行",
+            })
+
     if not alerts:
         return "\u2705 无告警"
 
-    icons = {"CRITICAL": "\U0001f534", "WARNING": "\U0001f7e1"}
+    icons = {"CRITICAL": "\U0001f534", "WARNING": "\U0001f7e1", "INFO": "\U0001f7e1"}
     lines = [f"\u26a0\ufe0f *告警* ({len(alerts)})\n"]
     for a in alerts:
         icon = icons.get(a["level"], "\u26aa")
@@ -248,6 +266,10 @@ def _cmd_liq() -> str:
     # Freqtrade 离线 → 虚拟盘 fallback
     vpositions, prices = _get_virtual_positions()
     if not vpositions:
+        from cryptobot.signal.bridge import read_signals as _read_sig
+        sig_count = len(_read_sig(filter_expired=True))
+        if sig_count > 0:
+            return f"\U0001f4ad 无持仓 — 有 {sig_count} 个信号待 Freqtrade 执行"
         return "\U0001f4ad 无持仓，无需计算爆仓距离"
 
     lines = ["\U0001f4a3 *爆仓距离* \\[虚拟盘]\n"]
@@ -433,6 +455,29 @@ def _get_virtual_balance() -> tuple[float, float, bool]:
     mock = settings.get("capital_strategy", {}).get("mock_balance", 0.0)
 
     return total_balance + unrealized, float(mock), len(portfolios) > 0
+
+
+def _positions_signal_hint() -> str:
+    """FT 离线 + 无虚拟持仓时，检查是否有待执行信号"""
+    from cryptobot.signal.bridge import read_signals
+    from cryptobot.notify import _format_price
+
+    signals = read_signals(filter_expired=True)
+    if not signals:
+        return "\U0001f4ad 当前无持仓"
+
+    lines = ["\U0001f4e1 *信号待执行* (Freqtrade 离线)\n"]
+    for s in signals:
+        action = s.get("action", "?").upper()
+        symbol = s.get("symbol", "?")
+        leverage = s.get("leverage", "?")
+        entry = s.get("entry_price_range", [])
+        entry_str = (
+            f"{_format_price(entry[0])}-{_format_price(entry[1])}"
+            if entry and len(entry) == 2 else "?"
+        )
+        lines.append(f"{action} {symbol} {leverage}x  入场: {entry_str}")
+    return "\n".join(lines)
 
 
 def _cmd_unknown() -> str:

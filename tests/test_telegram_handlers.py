@@ -32,16 +32,42 @@ class TestHandleCommand:
 
 
 class TestCmdStatus:
+    @patch("cryptobot.freqtrade_api.ft_api_get", return_value=[])
     @patch("cryptobot.journal.analytics.calc_performance")
     @patch("cryptobot.signal.bridge.read_signals")
-    def test_status(self, mock_signals, mock_perf):
+    def test_status_online(self, mock_signals, mock_perf, mock_ft):
         mock_signals.return_value = [{"symbol": "BTCUSDT"}, {"symbol": "ETHUSDT"}]
         mock_perf.return_value = {
             "closed": 10, "win_rate": 0.6, "avg_pnl_pct": 1.5,
         }
         result = handle_command("/status")
-        assert "2" in result  # 2 active signals
-        assert "60%" in result  # win rate
+        assert "实盘" in result
+        assert "活跃信号: 2" in result
+        assert "待执行" not in result
+        assert "60%" in result
+
+    @patch("cryptobot.freqtrade_api.ft_api_get", return_value=None)
+    @patch("cryptobot.journal.analytics.calc_performance")
+    @patch("cryptobot.signal.bridge.read_signals")
+    def test_status_offline_with_signals(self, mock_signals, mock_perf, mock_ft):
+        """FT 离线 + 有信号 → 显示虚拟盘模式 + 待执行"""
+        mock_signals.return_value = [{"symbol": "BTCUSDT"}]
+        mock_perf.return_value = {"closed": 0, "win_rate": 0, "avg_pnl_pct": 0}
+        result = handle_command("/status")
+        assert "虚拟盘" in result
+        assert "Freqtrade 离线" in result
+        assert "待执行" in result
+
+    @patch("cryptobot.freqtrade_api.ft_api_get", return_value=None)
+    @patch("cryptobot.journal.analytics.calc_performance")
+    @patch("cryptobot.signal.bridge.read_signals")
+    def test_status_offline_no_signals(self, mock_signals, mock_perf, mock_ft):
+        """FT 离线 + 无信号 → 虚拟盘模式但不显示待执行"""
+        mock_signals.return_value = []
+        mock_perf.return_value = {"closed": 0, "win_rate": 0, "avg_pnl_pct": 0}
+        result = handle_command("/status")
+        assert "虚拟盘" in result
+        assert "待执行" not in result
 
 
 class TestCmdSignals:
@@ -66,9 +92,10 @@ class TestCmdSignals:
 
 
 class TestCmdPositions:
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
     @patch("cryptobot.telegram.handlers._get_virtual_positions", return_value=([], {}))
     @patch("cryptobot.freqtrade_api.ft_api_get")
-    def test_no_positions(self, mock_ft, mock_vp):
+    def test_no_positions(self, mock_ft, mock_vp, mock_sig):
         mock_ft.return_value = None
         result = handle_command("/positions")
         assert "无持仓" in result
@@ -103,6 +130,29 @@ class TestCmdPositions:
         assert "SHORT" in result
         assert "funding_arb" in result
 
+    @patch("cryptobot.signal.bridge.read_signals")
+    @patch("cryptobot.telegram.handlers._get_virtual_positions", return_value=([], {}))
+    @patch("cryptobot.freqtrade_api.ft_api_get", return_value=None)
+    def test_offline_no_positions_with_signals(self, mock_ft, mock_vp, mock_sig):
+        """FT 离线 + 无虚拟持仓 + 有信号 → 显示信号摘要"""
+        mock_sig.return_value = [
+            {
+                "symbol": "BTCUSDT", "action": "long", "leverage": 3,
+                "entry_price_range": [94000, 96000],
+            },
+            {
+                "symbol": "ETHUSDT", "action": "short", "leverage": 5,
+                "entry_price_range": [2800, 2900],
+            },
+        ]
+        result = handle_command("/positions")
+        assert "信号待执行" in result
+        assert "Freqtrade 离线" in result
+        assert "BTCUSDT" in result
+        assert "LONG" in result
+        assert "ETHUSDT" in result
+        assert "SHORT" in result
+
 
 class TestCmdAlerts:
     @patch("cryptobot.cli.monitor._build_signal_only_alerts", return_value=[])
@@ -111,6 +161,21 @@ class TestCmdAlerts:
     def test_no_alerts(self, mock_signals, mock_ft, mock_alerts):
         result = handle_command("/alerts")
         assert "无告警" in result
+
+    @patch("cryptobot.cli.monitor._build_signal_only_alerts", return_value=[])
+    @patch("cryptobot.freqtrade_api.ft_api_get", return_value=None)
+    @patch("cryptobot.signal.bridge.read_signals")
+    def test_offline_with_signals(self, mock_signals, mock_ft, mock_alerts):
+        """FT 离线 + 有活跃信号 → 追加离线告警"""
+        mock_signals.return_value = [
+            {"symbol": "BTCUSDT", "action": "long"},
+            {"symbol": "ETHUSDT", "action": "short"},
+        ]
+        result = handle_command("/alerts")
+        assert "告警" in result
+        assert "Freqtrade 离线" in result
+        assert "2 个信号待执行" in result
+        assert "INFO" in result
 
 
 class TestCmdPnl:
@@ -156,9 +221,10 @@ class TestCmdEdge:
 
 
 class TestCmdLiq:
+    @patch("cryptobot.signal.bridge.read_signals", return_value=[])
     @patch("cryptobot.telegram.handlers._get_virtual_positions", return_value=([], {}))
     @patch("cryptobot.freqtrade_api.ft_api_get")
-    def test_no_positions(self, mock_ft, mock_vp):
+    def test_no_positions(self, mock_ft, mock_vp, mock_sig):
         mock_ft.return_value = None
         result = handle_command("/liq")
         assert "无持仓" in result
@@ -200,6 +266,15 @@ class TestCmdLiq:
         assert "BTCUSDT" in result
         assert "LONG" in result
         assert "爆仓价" in result
+
+    @patch("cryptobot.signal.bridge.read_signals")
+    @patch("cryptobot.telegram.handlers._get_virtual_positions", return_value=([], {}))
+    @patch("cryptobot.freqtrade_api.ft_api_get", return_value=None)
+    def test_offline_no_positions_with_signals(self, mock_ft, mock_vp, mock_sig):
+        """FT 离线 + 无持仓 + 有信号 → 显示信号待执行提示"""
+        mock_sig.return_value = [{"symbol": "A"}, {"symbol": "B"}]
+        result = handle_command("/liq")
+        assert "2 个信号待 Freqtrade 执行" in result
 
 
 class TestCmdWeights:
