@@ -178,31 +178,33 @@ def validate_signal(signal: dict, *, regime: str = "") -> dict:
     }
 
 
-def cleanup_expired() -> int:
-    """清理过期信号，返回清理数量"""
+def cleanup_expired() -> list[dict]:
+    """清理过期信号，返回被清理的信号列表"""
     with _signal_lock:
         if not SIGNAL_FILE.exists():
-            return 0
+            return []
 
         try:
             data = json.loads(SIGNAL_FILE.read_text())
         except json.JSONDecodeError:
-            return 0
+            return []
 
         now = datetime.now(timezone.utc)
-        before = len(data.get("signals", []))
-        data["signals"] = [
-            s for s in data.get("signals", [])
-            if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now
-        ]
-        after = len(data["signals"])
-        removed = before - after
+        all_signals = data.get("signals", [])
+        kept = []
+        expired = []
+        for s in all_signals:
+            if _ensure_utc(datetime.fromisoformat(s["expires_at"])) > now:
+                kept.append(s)
+            else:
+                expired.append(s)
 
-        if removed > 0:
+        if expired:
+            data["signals"] = kept
             data["last_updated"] = now.isoformat()
             _atomic_write_json(SIGNAL_FILE, data)
 
-    return removed
+    return expired
 
 
 UPDATABLE_FIELDS = {"stop_loss", "trailing_stop_pct", "take_profit", "expires_at"}

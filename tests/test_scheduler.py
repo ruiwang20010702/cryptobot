@@ -97,15 +97,19 @@ class TestJobReReview:
 # ─── job_cleanup ───────────────────────────────────────────────────────────
 
 class TestJobCleanup:
-    @patch("cryptobot.signal.bridge.cleanup_expired", return_value=3)
-    def test_logs_removed_count(self, mock_cleanup, caplog):
-        """清理成功时记录数量"""
+    @patch("cryptobot.cli.scheduler.notify_signal_expired", create=True)
+    @patch("cryptobot.signal.bridge.cleanup_expired",
+           return_value=[{"symbol": "BTCUSDT", "action": "long"},
+                         {"symbol": "ETHUSDT", "action": "short"},
+                         {"symbol": "SOLUSDT", "action": "long"}])
+    def test_logs_removed_count(self, mock_cleanup, mock_notify, caplog):
+        """清理成功时记录数量并推送通知"""
         import logging
         with caplog.at_level(logging.INFO):
             job_cleanup()
         assert "3 个" in caplog.text
 
-    @patch("cryptobot.signal.bridge.cleanup_expired", return_value=0)
+    @patch("cryptobot.signal.bridge.cleanup_expired", return_value=[])
     def test_no_log_when_zero(self, mock_cleanup, caplog):
         """无过期信号时不记录"""
         import logging

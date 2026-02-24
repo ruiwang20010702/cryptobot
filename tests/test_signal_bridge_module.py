@@ -110,8 +110,9 @@ class TestCleanup:
         # 写入一个有效信号
         write_signal({"symbol": "ETHUSDT", "action": "short", "stop_loss": 3500})
 
-        removed = cleanup_expired()
-        assert removed == 1
+        expired = cleanup_expired()
+        assert len(expired) == 1
+        assert expired[0]["symbol"] == "BTCUSDT"
         signals = read_signals(filter_expired=False)
         assert len(signals) == 1
         assert signals[0]["symbol"] == "ETHUSDT"

@@ -14,6 +14,9 @@ from cryptobot.notify import (
     notify_stop_loss_adjusted,
     notify_alert,
     notify_workflow_error,
+    notify_trade_closed,
+    notify_signal_expired,
+    notify_signal_activated,
 )
 
 
@@ -140,6 +143,62 @@ class TestNotifyTemplates:
         text = mock_send.call_args[0][0]
         assert "3" in text
         assert "err1" in text
+
+
+class TestLifecycleNotifications:
+    """测试生命周期通知"""
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    def test_notify_trade_closed_profit(self, mock_send):
+        record = {
+            "symbol": "BTCUSDT",
+            "action": "long",
+            "pnl_pct": 5.32,
+            "entry_price": 94000,
+            "close_price": 99000,
+            "leverage": 3,
+        }
+        result = notify_trade_closed(record)
+        assert result is True
+        text = mock_send.call_args[0][0]
+        assert "BTCUSDT" in text
+        assert "+5.32%" in text
+        assert "\u2705" in text  # profit icon
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    def test_notify_trade_closed_loss(self, mock_send):
+        record = {
+            "symbol": "ETHUSDT",
+            "action": "short",
+            "pnl_pct": -2.5,
+            "entry_price": 3500,
+            "close_price": 3600,
+            "leverage": 5,
+        }
+        result = notify_trade_closed(record)
+        assert result is True
+        text = mock_send.call_args[0][0]
+        assert "ETHUSDT" in text
+        assert "-2.50%" in text
+        assert "\u274c" in text  # loss icon
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    def test_notify_signal_expired(self, mock_send):
+        result = notify_signal_expired("BTCUSDT", "long")
+        assert result is True
+        text = mock_send.call_args[0][0]
+        assert "LONG" in text
+        assert "BTCUSDT" in text
+        assert "过期" in text
+
+    @patch("cryptobot.notify.send_message", return_value=True)
+    def test_notify_signal_activated(self, mock_send):
+        result = notify_signal_activated("SOLUSDT", "short", 185.5)
+        assert result is True
+        text = mock_send.call_args[0][0]
+        assert "SHORT" in text
+        assert "SOLUSDT" in text
+        assert "185.5" in text
 
 
 class TestSilentWhenNotConfigured:

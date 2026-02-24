@@ -199,6 +199,41 @@ def notify_workflow_summary(
     return send_message(text)
 
 
+def notify_trade_closed(record: dict) -> bool:
+    """通知: 交易关闭（journal_sync 同步后触发）"""
+    symbol = record.get("symbol", "?")
+    action = record.get("action", "?").upper()
+    pnl = record.get("pnl_pct", 0)
+    icon = "\u2705" if pnl >= 0 else "\u274c"
+    pnl_str = f"{pnl:+.2f}%"
+    entry = _format_price(record.get("entry_price"))
+    exit_p = _format_price(record.get("close_price"))
+    leverage = record.get("leverage", "?")
+    text = (
+        f"{icon} *交易关闭*\n\n"
+        f"*{action} {symbol}* {leverage}x\n"
+        f"入场: {entry} \u2192 出场: {exit_p}\n"
+        f"盈亏: {pnl_str}"
+    )
+    return send_message(text)
+
+
+def notify_signal_expired(symbol: str, action: str) -> bool:
+    """通知: 信号过期未入场"""
+    text = f"\u23f0 *信号过期*\n\n{action.upper()} {symbol}\n未在有效期内入场，已清除"
+    return send_message(text)
+
+
+def notify_signal_activated(symbol: str, action: str, entry_price: float) -> bool:
+    """通知: 信号入场激活"""
+    text = (
+        f"\U0001f7e2 *信号激活*\n\n"
+        f"{action.upper()} {symbol}\n"
+        f"入场价: {_format_price(entry_price)}"
+    )
+    return send_message(text)
+
+
 def notify_workflow_error(error_count: int, errors: list[str]) -> bool:
     """通知: 工作流异常"""
     detail = "\n".join(f"• {e[:100]}" for e in errors[:5])

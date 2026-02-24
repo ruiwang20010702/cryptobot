@@ -241,9 +241,12 @@ def job_cleanup() -> None:
     from cryptobot.signal.bridge import cleanup_expired
 
     try:
-        removed = cleanup_expired()
-        if removed:
-            logger.info("[调度] 清理过期信号: %d 个", removed)
+        expired = cleanup_expired()
+        if expired:
+            logger.info("[调度] 清理过期信号: %d 个", len(expired))
+            from cryptobot.notify import notify_signal_expired
+            for s in expired:
+                notify_signal_expired(s.get("symbol", "?"), s.get("action", "?"))
     except Exception as e:
         logger.error("[调度] 信号清理失败: %s", e, exc_info=True)
 
@@ -530,6 +533,16 @@ def job_journal_sync() -> None:
                     duration_hours=duration_hours,
                 )
                 synced += 1
+                # 推送交易关闭通知
+                from cryptobot.notify import notify_trade_closed
+                notify_trade_closed({
+                    "symbol": record.symbol,
+                    "action": record.action,
+                    "pnl_pct": round(pnl_pct, 2),
+                    "entry_price": trade.get("open_rate"),
+                    "close_price": trade.get("close_rate"),
+                    "leverage": record.leverage,
+                })
                 break
 
         if synced:
@@ -779,6 +792,14 @@ def start(run_now: bool, verbose: bool):
         console.print("  事件监控: 已启用 (后台线程)")
     else:
         console.print("  事件监控: 未启用")
+
+    # Telegram Bot 长轮询 (后台线程)
+    from cryptobot.telegram.bot import start_bot_thread
+    bot_thread = start_bot_thread()
+    if bot_thread:
+        console.print("  Telegram Bot: 已启用 (长轮询)")
+    else:
+        console.print("  Telegram Bot: 未启用")
 
     console.print("\n按 Ctrl+C 停止\n")
 
