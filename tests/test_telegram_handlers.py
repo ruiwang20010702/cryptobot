@@ -66,8 +66,9 @@ class TestCmdSignals:
 
 
 class TestCmdPositions:
+    @patch("cryptobot.telegram.handlers._get_virtual_positions", return_value=([], {}))
     @patch("cryptobot.freqtrade_api.ft_api_get")
-    def test_no_positions(self, mock_ft):
+    def test_no_positions(self, mock_ft, mock_vp):
         mock_ft.return_value = None
         result = handle_command("/positions")
         assert "无持仓" in result
@@ -83,6 +84,24 @@ class TestCmdPositions:
         result = handle_command("/positions")
         assert "BTCUSDT" in result
         assert "LONG" in result
+
+    @patch("cryptobot.telegram.handlers._get_virtual_positions")
+    @patch("cryptobot.freqtrade_api.ft_api_get")
+    def test_virtual_fallback(self, mock_ft, mock_vp):
+        """Freqtrade 离线时 fallback 到虚拟盘"""
+        from cryptobot.strategy.virtual_portfolio import VirtualPosition
+        mock_ft.return_value = None
+        pos = VirtualPosition(
+            symbol="ETHUSDT", side="short", entry_price=3000.0,
+            amount=0.5, leverage=5, opened_at="2026-02-01T00:00:00Z",
+            strategy="funding_arb",
+        )
+        mock_vp.return_value = ([(pos, "funding_arb")], {"ETHUSDT": 2900.0})
+        result = handle_command("/positions")
+        assert "虚拟盘" in result
+        assert "ETHUSDT" in result
+        assert "SHORT" in result
+        assert "funding_arb" in result
 
 
 class TestCmdAlerts:
@@ -137,8 +156,9 @@ class TestCmdEdge:
 
 
 class TestCmdLiq:
+    @patch("cryptobot.telegram.handlers._get_virtual_positions", return_value=([], {}))
     @patch("cryptobot.freqtrade_api.ft_api_get")
-    def test_no_positions(self, mock_ft):
+    def test_no_positions(self, mock_ft, mock_vp):
         mock_ft.return_value = None
         result = handle_command("/liq")
         assert "无持仓" in result
@@ -157,11 +177,29 @@ class TestCmdLiq:
         mock_liq.return_value = {
             "distance_pct": 18.5,
             "liquidation_price": 77000,
-            "alert_level": "WARNING",
+            "risk_level": "warning",
         }
         result = handle_command("/liq")
         assert "BTCUSDT" in result
         assert "18.5%" in result
+
+    @patch("cryptobot.telegram.handlers._get_virtual_positions")
+    @patch("cryptobot.freqtrade_api.ft_api_get")
+    def test_virtual_fallback(self, mock_ft, mock_vp):
+        """Freqtrade 离线时 fallback 到虚拟盘爆仓计算"""
+        from cryptobot.strategy.virtual_portfolio import VirtualPosition
+        mock_ft.return_value = None
+        pos = VirtualPosition(
+            symbol="BTCUSDT", side="long", entry_price=95000.0,
+            amount=0.01, leverage=5, opened_at="2026-02-01T00:00:00Z",
+            strategy="grid",
+        )
+        mock_vp.return_value = ([(pos, "grid")], {"BTCUSDT": 96000.0})
+        result = handle_command("/liq")
+        assert "虚拟盘" in result
+        assert "BTCUSDT" in result
+        assert "LONG" in result
+        assert "爆仓价" in result
 
 
 class TestCmdWeights:
@@ -197,11 +235,15 @@ class TestCmdWeights:
 
 
 class TestCmdBalance:
+    @patch("cryptobot.telegram.handlers._get_virtual_balance", return_value=(20000.0, 1000.0))
     @patch("cryptobot.freqtrade_api.ft_api_get")
-    def test_no_connection(self, mock_ft):
+    def test_virtual_fallback(self, mock_ft, mock_vb):
+        """Freqtrade 离线时 fallback 到虚拟盘余额"""
         mock_ft.return_value = None
         result = handle_command("/balance")
-        assert "无法获取" in result
+        assert "虚拟盘" in result
+        assert "20000.00" in result
+        assert "1000.00" in result
 
     @patch("cryptobot.freqtrade_api.ft_api_get")
     def test_with_balance(self, mock_ft):

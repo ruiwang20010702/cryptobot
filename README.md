@@ -31,7 +31,7 @@ collect → screen ──┬─→ analyze → research ─┐
 - **量化回测** — 成本模型(手续费+滑点+资金费率) + 逐根K线模拟 + MFE自适应止盈 + Walk-forward验证 + 历史回放(LLM驱动) + 基线对照 + 统计检验
 - **全链路风控** — 最大杠杆/仓位/方向/相关性硬性限制 + 置信度下限过滤(60/65) + 做多加严(≥65) + 震荡市禁多 + 币种分级(A/B/C/D) + 月度亏损熔断 + AI 软审核
 - **ML 信号评分** — LightGBM 二分类器(TimeSeriesSplit CV)预测涨跌概率 + 多因子 lead-lag 相关性分析识别预测因子
-- **Telegram 通知** — 信号/告警/日报/摘要，极端市场无信号也推送分析摘要
+- **Telegram 双向交互** — 11 个命令(status/signals/positions/balance/liq/pnl/edge/weights/risk/alerts/help) + 生命周期通知，Freqtrade 离线自动 fallback 虚拟盘
 - **决策归档** — 每轮工作流完整决策链(筛选/分析/风控/信号)持久化，支持 CLI 回溯
 - **Web Dashboard** — FastAPI + HTMX 实时面板 + K 线图
 
@@ -188,10 +188,11 @@ src/cryptobot/
 ├── backtest/              # 量化回测 (成本模型/模拟器/净值追踪/基线/统计检验/历史回放/walk-forward/bootstrap CI/过拟合检测)
 ├── web/                   # Dashboard (FastAPI + HTMX)
 ├── archive/               # AI 决策归档 (写入/读取/历史)
+├── telegram/              # Telegram Bot 双向交互 (11 命令 + 虚拟盘 fallback)
 ├── cli/                   # 27 个 CLI 子命令
 ├── capital_strategy.py    # 资金感知策略
 ├── regime_smoother.py     # 市场状态平滑
-├── notify.py              # Telegram 通知
+├── notify.py              # Telegram 通知 (信号/告警/日报)
 └── config.py              # 配置加载
 
 config/
