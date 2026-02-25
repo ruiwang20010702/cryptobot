@@ -403,6 +403,15 @@ def _parse_to_signal(
             elif isinstance(tp, (int, float)):
                 tp_list.append({"price": tp, "ratio": 1.0 / max(1, len(take_profit))})
 
+    # P17: 做多硬性约束
+    if action == "long":
+        from cryptobot.config import load_settings
+        settings = load_settings()
+        long_max_lev = settings.get("risk", {}).get("long_max_leverage", 2)
+        leverage = min(leverage, long_max_lev)
+        if confidence < 65:
+            return None
+
     return {
         "symbol": snapshot.symbol,
         "action": action,

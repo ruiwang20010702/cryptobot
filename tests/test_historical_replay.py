@@ -303,10 +303,35 @@ class TestParseToSignal:
             "stop_loss": 95.0,
             "take_profit": [105.0],
             "leverage": 2,
-            "confidence": 60,
+            "confidence": 65,
             "reasoning": "OK",
         })
         sig = _parse_to_signal(llm_str, self._snapshot())
+        assert sig is not None
+
+    def test_long_below_p17_confidence_rejected(self):
+        """P17: 做多 confidence < 65 被过滤"""
+        llm = {
+            "action": "long",
+            "entry_price_range": [99.0, 101.0],
+            "stop_loss": 95.0,
+            "leverage": 2,
+            "confidence": 60,
+            "reasoning": "OK",
+        }
+        assert _parse_to_signal(llm, self._snapshot()) is None
+
+    def test_short_low_confidence_still_passes(self):
+        """做空 confidence 55-64 仍然通过（P17 仅约束做多）"""
+        llm = {
+            "action": "short",
+            "entry_price_range": [99.0, 101.0],
+            "stop_loss": 105.0,
+            "leverage": 3,
+            "confidence": 60,
+            "reasoning": "OK",
+        }
+        sig = _parse_to_signal(llm, self._snapshot())
         assert sig is not None
 
     def test_missing_entry_range(self):
@@ -335,7 +360,22 @@ class TestParseToSignal:
         }
         sig = _parse_to_signal(llm, self._snapshot())
         assert sig is not None
-        assert sig["leverage"] <= 5
+        # P17: 做多杠杆受 long_max_leverage (默认2) 钳位
+        assert sig["leverage"] <= 2
+
+    def test_short_leverage_capped_at_5(self):
+        """做空杠杆仍按全局上限 5x"""
+        llm = {
+            "action": "short",
+            "entry_price_range": [99.0, 101.0],
+            "stop_loss": 105.0,
+            "leverage": 20,
+            "confidence": 70,
+            "reasoning": "X",
+        }
+        sig = _parse_to_signal(llm, self._snapshot())
+        assert sig is not None
+        assert sig["leverage"] == 5
 
     def test_error_output_dict(self):
         sig = _parse_to_signal({"error": "timeout"}, self._snapshot())
