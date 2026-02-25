@@ -134,7 +134,8 @@ def sync(json_output: bool):
     from cryptobot.freqtrade_api import ft_api_get
 
     # 获取 Freqtrade 已平仓交易
-    trades = ft_api_get("/trades") or []
+    resp = ft_api_get("/trades") or {}
+    trades = resp.get("trades", []) if isinstance(resp, dict) else resp
     closed_trades = [t for t in trades if t.get("is_open") is False]
 
     # 获取 active 记录

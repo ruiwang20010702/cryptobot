@@ -480,7 +480,8 @@ def job_journal_sync() -> None:
         from cryptobot.journal.storage import get_records_by_status, update_record
         from cryptobot.freqtrade_api import ft_api_get
 
-        trades = ft_api_get("/trades") or []
+        resp = ft_api_get("/trades") or {}
+        trades = resp.get("trades", []) if isinstance(resp, dict) else resp
         closed_trades = [t for t in trades if t.get("is_open") is False]
         active_records = get_records_by_status("active")
 
