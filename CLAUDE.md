@@ -163,12 +163,12 @@ collect → screen ──┬→ analyze →      pending_signals.json
 | `cli/prompt.py` | Prompt 版本管理 CLI：list/new-version/activate/show |
 | `backtest/evaluator.py` | 信号回测评估：胜率/盈亏比/连胜连败 + K 线复盘(MFE/MAE) |
 | `backtest/cost_model.py` | 交易成本建模：手续费/滑点/资金费率，杠杆敏感 + volatile 滑点 3x 乘数 |
-| `backtest/trade_simulator.py` | 逐根 1h K 线扫描，分批止盈，MFE/MAE，MFE 自适应尾随止损(2×ATR 保本)，净 PnL |
+| `backtest/trade_simulator.py` | 逐根 1h K 线扫描，分批止盈，MFE/MAE，MFE 自适应尾随止损(2×ATR 保本)，净 PnL，regime 感知成本(volatile 3x 滑点) |
 | `backtest/equity_tracker.py` | 净值曲线 + Sharpe/Sortino/MaxDD/Calmar/月度收益 |
 | `backtest/baselines.py` | 随机/MA交叉/RSI/布林通道 4 种基线信号生成 |
 | `backtest/stats.py` | Welch's t-test + Permutation test 统计检验 (无 scipy) |
-| `backtest/engine.py` | 完整回测编排：信号加载→模拟→统计→报告持久化 |
-| `backtest/historical_replay.py` | 历史回放引擎：历史K线→技术快照→LLM批次决策→信号生成→交易模拟（断点续跑，按配置隔离进度） |
+| `backtest/engine.py` | 完整回测编排：信号加载→模拟(含regime传递)→统计(by_direction分组)→报告持久化 |
+| `backtest/historical_replay.py` | 历史回放引擎：历史K线→技术快照→LLM批次决策→信号生成→交易模拟（断点续跑，按配置隔离进度）+ P17做多约束(杠杆钳位+置信度65门槛+direction_bias拦截) + regime/trend_direction检测与实盘对齐 |
 | `backtest/bootstrap.py` | Percentile bootstrap 置信区间（纯 Python），支持 mean/median/win_rate/sharpe/profit_factor |
 | `backtest/walk_forward.py` | Walk-forward 滚动验证: 60d 训练/30d 测试/30d 步进，IS/OOS Sharpe 对比防过拟合 |
 | `backtest/_sharpe_utils.py` | 统一 Sharpe 年化工具: `annualize_sharpe(returns, trades_per_year)` 全局复用 |
