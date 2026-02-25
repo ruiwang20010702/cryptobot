@@ -51,6 +51,7 @@ def simulate_trade(
     max_bars: int = _MAX_BARS,
     mfe_trailing: bool = False,
     atr_pct: float | None = None,
+    regime: str = "",
 ) -> TradeResult | None:
     """模拟单笔交易
 
@@ -61,6 +62,7 @@ def simulate_trade(
         cost_config: 成本配置，None 用默认
         position_usdt: 仓位金额 (USDT 保证金)
         max_bars: 最大扫描K线数 (默认168 = 7天)
+        regime: 市场状态，volatile 时滑点 3x
 
     Returns:
         TradeResult 或 None (数据不足)
@@ -190,7 +192,8 @@ def simulate_trade(
     gross_pnl_pct = direction * (exit_price - entry_price) / entry_price * leverage * 100
 
     duration_hours = max(1.0, float((exit_bar_idx + 1)))
-    costs = calc_trade_costs(cost_config, duration_hours, leverage)
+    sig_regime = regime or signal.get("regime", "")
+    costs = calc_trade_costs(cost_config, duration_hours, leverage, regime=sig_regime)
 
     net_pnl_pct = gross_pnl_pct - costs.total_pct
     net_pnl_usdt = position_usdt * leverage * net_pnl_pct / 100

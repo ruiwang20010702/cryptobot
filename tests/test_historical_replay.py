@@ -377,6 +377,59 @@ class TestParseToSignal:
         assert sig is not None
         assert sig["leverage"] == 5
 
+    def test_trending_bearish_blocks_long(self):
+        """P2: trending + bearish trend_direction → 拦截做多"""
+        llm = {
+            "action": "long",
+            "entry_price_range": [99.0, 101.0],
+            "stop_loss": 95.0,
+            "leverage": 2,
+            "confidence": 70,
+            "reasoning": "OK",
+        }
+        sig = _parse_to_signal(llm, self._snapshot(), regime="trending", trend_direction="bearish")
+        assert sig is None
+
+    def test_trending_bearish_allows_short(self):
+        """P2: trending + bearish → 做空不受影响"""
+        llm = {
+            "action": "short",
+            "entry_price_range": [99.0, 101.0],
+            "stop_loss": 105.0,
+            "leverage": 3,
+            "confidence": 65,
+            "reasoning": "OK",
+        }
+        sig = _parse_to_signal(llm, self._snapshot(), regime="trending", trend_direction="bearish")
+        assert sig is not None
+
+    def test_trending_bullish_allows_long(self):
+        """trending + bullish → 做多通过"""
+        llm = {
+            "action": "long",
+            "entry_price_range": [99.0, 101.0],
+            "stop_loss": 95.0,
+            "leverage": 2,
+            "confidence": 70,
+            "reasoning": "OK",
+        }
+        sig = _parse_to_signal(llm, self._snapshot(), regime="trending", trend_direction="bullish")
+        assert sig is not None
+
+    def test_signal_contains_regime(self):
+        """信号 dict 包含 regime 字段"""
+        llm = {
+            "action": "short",
+            "entry_price_range": [99.0, 101.0],
+            "stop_loss": 105.0,
+            "leverage": 2,
+            "confidence": 65,
+            "reasoning": "OK",
+        }
+        sig = _parse_to_signal(llm, self._snapshot(), regime="volatile")
+        assert sig is not None
+        assert sig["regime"] == "volatile"
+
     def test_error_output_dict(self):
         sig = _parse_to_signal({"error": "timeout"}, self._snapshot())
         assert sig is None
@@ -539,9 +592,10 @@ class TestRunReplayMocked:
             symbol=sym, as_of=as_of.isoformat(),
         )
 
-        # Phase 3: LLM 返回有效信号
+        # Phase 3: LLM 返回有效信号 + regime_infos
         def fake_llm(snapshots, config):
             results = []
+            regime_infos = []
             for snap in snapshots:
                 price = snap.current_price
                 results.append({
@@ -552,11 +606,12 @@ class TestRunReplayMocked:
                         {"price": price * 1.05, "ratio": 0.5},
                         {"price": price * 1.10, "ratio": 0.5},
                     ],
-                    "leverage": 3,
+                    "leverage": 2,
                     "confidence": 70,
                     "reasoning": "Test signal",
                 })
-            return results
+                regime_infos.append(("trending", "bullish"))
+            return results, regime_infos
 
         mock_llm_batch.side_effect = fake_llm
 
@@ -611,7 +666,10 @@ class TestRunReplayMocked:
         mock_symbols.return_value = ["BTCUSDT"]
         mock_dl_full.return_value = _make_cache(["BTCUSDT"], days=150)
         mock_build_snap.return_value = _make_snapshot()
-        mock_llm_batch.return_value = [{"action": "no_trade", "confidence": 30, "reasoning": "X"}]
+        mock_llm_batch.return_value = (
+            [{"action": "no_trade", "confidence": 30, "reasoning": "X"}],
+            [("ranging", "neutral")],
+        )
         mock_dl_pag.return_value = _make_klines(500)
         mock_sim.return_value = None
 
@@ -631,7 +689,7 @@ class TestRunReplayMocked:
 
 class TestDetectReplayRegime:
     def test_detect_trending(self):
-        """ADX > 25, ATR% < 3 → trending"""
+        """ADX > 25, ATR% < 3, bullish direction → trending"""
         snap = ReplaySnapshot(
             symbol="BTCUSDT",
             as_of="2026-01-01T00:00:00",
@@ -640,10 +698,29 @@ class TestDetectReplayRegime:
                 "trend": {"adx": 30.0},
                 "volatility": {"atr_pct": 2.0},
             },
-            multi_timeframe={},
+            multi_timeframe={"aligned_direction": "bullish"},
             support_resistance={},
         )
-        assert _detect_replay_regime(snap) == "trending"
+        regime, trend_dir = _detect_replay_regime(snap)
+        assert regime == "trending"
+        assert trend_dir == "bullish"
+
+    def test_trending_neutral_falls_to_ranging(self):
+        """ADX > 25 但 direction neutral → ranging (P3 修复)"""
+        snap = ReplaySnapshot(
+            symbol="BTCUSDT",
+            as_of="2026-01-01T00:00:00",
+            current_price=100.0,
+            tech_indicators={
+                "trend": {"adx": 30.0},
+                "volatility": {"atr_pct": 2.0},
+            },
+            multi_timeframe={"aligned_direction": "mixed"},
+            support_resistance={},
+        )
+        regime, trend_dir = _detect_replay_regime(snap)
+        assert regime == "ranging"
+        assert trend_dir == "neutral"
 
     def test_detect_volatile(self):
         """ATR% > 3 → volatile (优先于 ADX 判断)"""
@@ -658,7 +735,8 @@ class TestDetectReplayRegime:
             multi_timeframe={},
             support_resistance={},
         )
-        assert _detect_replay_regime(snap) == "volatile"
+        regime, _ = _detect_replay_regime(snap)
+        assert regime == "volatile"
 
     def test_detect_ranging(self):
         """低 ADX 低 ATR → ranging"""
@@ -673,7 +751,8 @@ class TestDetectReplayRegime:
             multi_timeframe={},
             support_resistance={},
         )
-        assert _detect_replay_regime(snap) == "ranging"
+        regime, _ = _detect_replay_regime(snap)
+        assert regime == "ranging"
 
     def test_missing_keys(self):
         """缺字段 → ranging (安全默认)"""
@@ -685,7 +764,8 @@ class TestDetectReplayRegime:
             multi_timeframe={},
             support_resistance={},
         )
-        assert _detect_replay_regime(snap) == "ranging"
+        regime, _ = _detect_replay_regime(snap)
+        assert regime == "ranging"
 
     @patch("cryptobot.workflow.llm.call_claude_parallel")
     @patch("cryptobot.evolution.regime_prompts.get_regime_addon")
@@ -704,12 +784,12 @@ class TestDetectReplayRegime:
                 "trend": {"adx": 30.0},
                 "volatility": {"atr_pct": 2.0},
             },
-            multi_timeframe={},
+            multi_timeframe={"aligned_direction": "bullish"},
             support_resistance={},
         )
 
         config = ReplayConfig(max_leverage=5)
-        _run_llm_batch([snap], config)
+        results, regime_infos = _run_llm_batch([snap], config)
 
         # 验证 call_claude_parallel 收到的 system_prompt 包含 regime addon
         tasks = mock_parallel.call_args[0][0]
@@ -717,3 +797,5 @@ class TestDetectReplayRegime:
         assert "[REGIME:trending]" in tasks[0]["system_prompt"]
         # 验证 role 字段被设置
         assert tasks[0].get("role") == "trader"
+        # 验证返回 regime_infos
+        assert regime_infos == [("trending", "bullish")]

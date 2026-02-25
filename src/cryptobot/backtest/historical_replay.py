@@ -248,21 +248,28 @@ REPLAY_TRADER_PROMPT = """\
 - 分批止盈（至少 2 级）
 - 杠杆不超过 {max_leverage}x
 
+## 做多特殊要求 (加密市场结构性做空优势)
+- 做多需要比做空更强的多源共振：至少需要趋势+动量+多TF共振三重确认
+- 高波动环境下，优先选择不交易而非做多
+- 做多止损应更紧（ATR 1.5x vs 做空 2.5x），减少持仓时间
+- 做多置信度标准应比做空高 5-10 个百分点
+
 ## 输出格式
 严格按 JSON Schema 输出。
 """
 
 
-def _detect_replay_regime(snapshot: ReplaySnapshot) -> str:
-    """基于快照技术指标 + Hurst 指数推断 regime + 平滑
+def _detect_replay_regime(snapshot: ReplaySnapshot) -> tuple[str, str]:
+    """基于快照技术指标 + Hurst 指数推断 regime + trend_direction + 平滑
 
     规则:
     - ATR% > 3 → volatile (优先)
-    - ADX(0.7) + Hurst(0.3) 加权评分 > 0.5 → trending
+    - ADX(0.7) + Hurst(0.3) 加权评分 > 0.5 且 trend_direction != neutral → trending
     - 其他 → ranging
 
-    回放模式下调用 regime_smoother (is_simulation=True) 做平滑，
-    并标注 regime_source: "replay_estimated"。
+    Returns:
+        (regime, trend_direction): regime 为 trending/ranging/volatile,
+        trend_direction 为 bullish/bearish/neutral
     """
     from cryptobot.indicators.hurst import calc_hurst_exponent, classify_hurst
     from cryptobot.regime_smoother import smooth_regime_transition
@@ -273,6 +280,13 @@ def _detect_replay_regime(snapshot: ReplaySnapshot) -> str:
 
     atr_pct = volatility.get("atr_pct", 0)
     adx = trend.get("adx", 0)
+
+    # 从 multi_timeframe 获取趋势方向 (与实盘 detect_regime 对齐)
+    multi_tf = snapshot.multi_timeframe or {}
+    trend_direction = multi_tf.get("aligned_direction", "mixed")
+    # mixed → neutral 对齐实盘命名
+    if trend_direction == "mixed":
+        trend_direction = "neutral"
 
     if atr_pct > 3:
         raw_regime = "volatile"
@@ -292,11 +306,15 @@ def _detect_replay_regime(snapshot: ReplaySnapshot) -> str:
             hurst_trending = 0.0
         trending_score = adx_score * 0.7 + hurst_trending * 0.3
 
-        raw_regime = "trending" if trending_score > 0.5 else "ranging"
+        # P3: 与实盘对齐，trending 需要 trend_direction != neutral
+        if trending_score > 0.5 and trend_direction != "neutral":
+            raw_regime = "trending"
+        else:
+            raw_regime = "ranging"
 
     # 回放模式平滑 (is_simulation=True 跳过持久化)
     smoothed, _ = smooth_regime_transition(raw_regime, is_simulation=True)
-    return smoothed
+    return smoothed, trend_direction
 
 
 def _format_snapshot_prompt(snapshot: ReplaySnapshot, max_leverage: int) -> str:
@@ -321,8 +339,12 @@ def _format_snapshot_prompt(snapshot: ReplaySnapshot, max_leverage: int) -> str:
 def _run_llm_batch(
     snapshots: list[ReplaySnapshot],
     config: ReplayConfig,
-) -> list[dict | str]:
-    """批量 LLM 调用（每个快照独立 regime addon）"""
+) -> tuple[list[dict | str], list[tuple[str, str]]]:
+    """批量 LLM 调用（每个快照独立 regime addon）
+
+    Returns:
+        (llm_results, regime_infos): regime_infos 为 [(regime, trend_direction), ...]
+    """
     from cryptobot.workflow.llm import call_claude_parallel
     from cryptobot.workflow.prompts import TRADE_SCHEMA
     from cryptobot.evolution.regime_prompts import get_regime_addon
@@ -330,11 +352,13 @@ def _run_llm_batch(
     base_prompt = REPLAY_TRADER_PROMPT.format(max_leverage=config.max_leverage)
 
     tasks = []
+    regime_infos: list[tuple[str, str]] = []
     for snap in snapshots:
         prompt = _format_snapshot_prompt(snap, config.max_leverage)
 
-        # 检测 regime → 注入对应 addon
-        regime = _detect_replay_regime(snap)
+        # 检测 regime + trend_direction → 注入对应 addon
+        regime, trend_dir = _detect_replay_regime(snap)
+        regime_infos.append((regime, trend_dir))
         regime_addon = get_regime_addon(regime, "TRADER")
         system_prompt = base_prompt + regime_addon
 
@@ -346,7 +370,8 @@ def _run_llm_batch(
             "json_schema": TRADE_SCHEMA,
         })
 
-    return call_claude_parallel(tasks, max_workers=config.max_concurrent)
+    results = call_claude_parallel(tasks, max_workers=config.max_concurrent)
+    return results, regime_infos
 
 
 # ── 信号解析 ──────────────────────────────────────────────────────────────
@@ -355,6 +380,8 @@ def _run_llm_batch(
 def _parse_to_signal(
     llm_output: dict | str | None,
     snapshot: ReplaySnapshot,
+    regime: str = "",
+    trend_direction: str = "neutral",
 ) -> dict | None:
     """将 LLM 输出解析为标准信号 dict"""
     if llm_output is None:
@@ -412,6 +439,10 @@ def _parse_to_signal(
         if confidence < 65:
             return None
 
+    # P2: trending + 下降趋势 → direction_bias:short，拦截做多
+    if regime == "trending" and trend_direction == "bearish" and action == "long":
+        return None
+
     return {
         "symbol": snapshot.symbol,
         "action": action,
@@ -422,6 +453,7 @@ def _parse_to_signal(
         "confidence": confidence,
         "timestamp": snapshot.as_of,
         "signal_source": "replay",
+        "regime": regime,
         "regime_source": "replay_estimated",
         "reasoning": llm_output.get("reasoning", ""),
     }
@@ -577,10 +609,12 @@ def run_historical_replay(
                 continue
 
             # LLM 批次决策
-            llm_results = _run_llm_batch(snapshots, config)
+            llm_results, regime_infos = _run_llm_batch(snapshots, config)
 
-            for snap, llm_out in zip(snapshots, llm_results):
-                sig = _parse_to_signal(llm_out, snap)
+            for snap, llm_out, (regime, trend_dir) in zip(
+                snapshots, llm_results, regime_infos
+            ):
+                sig = _parse_to_signal(llm_out, snap, regime, trend_dir)
                 if sig is not None:
                     day_signals.append(sig)
 
@@ -622,7 +656,7 @@ def run_historical_replay(
         kl = klines_1h.get(sym)
         if kl is None or kl.empty:
             continue
-        result = simulate_trade(sig, kl, cost_config)
+        result = simulate_trade(sig, kl, cost_config, regime=sig.get("regime", ""))
         if result is not None:
             trades.append(result)
 
