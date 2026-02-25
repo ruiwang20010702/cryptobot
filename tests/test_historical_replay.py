@@ -233,6 +233,7 @@ class TestParseToSignal:
         assert sig["action"] == "long"
         assert sig["symbol"] == "BTCUSDT"
         assert sig["confidence"] == 70
+        assert sig["leverage"] <= 2  # P17: 做多杠杆受 long_max_leverage 钳位
         assert sig["signal_source"] == "replay"
         assert len(sig["take_profit"]) == 2
 

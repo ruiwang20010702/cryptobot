@@ -301,6 +301,7 @@ def _simulate_all(
         result = simulate_trade(
             sig, kl, cost_config,
             mfe_trailing=mfe_trailing, atr_pct=atr_pct,
+            regime=sig.get("regime", ""),
         )
         if result is not None:
             trades.append(result)
